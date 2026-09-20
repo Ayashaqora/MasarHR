@@ -1,0 +1,13 @@
+# Optional local Redis 7 for development. Bound to localhost only; no data persisted.
+name: masarhr-dev
+
+services:
+  redis:
+    image: redis:7
+    ports:
+      - "127.0.0.1:6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 3s
+      retries: 5

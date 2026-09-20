@@ -1,0 +1,47 @@
+/* Design tokens. Component styles must use these variables, not raw values. */
+:root {
+  /* Colour */
+  --color-bg: #f3f5f8;
+  --color-surface: #ffffff;
+  --color-border: #d5dbe3;
+  --color-text: #17263a;
+  --color-text-muted: #4a5a6c;
+
+  --color-primary: #0f3a5f;
+  --color-primary-strong: #0a2a46;
+  --color-on-primary: #ffffff;
+  --color-accent: #0d7d74;
+  --color-focus: #0a5fd8;
+
+  --color-success-bg: #e8f5ec;
+  --color-success-fg: #17612f;
+  --color-error-bg: #fdeaea;
+  --color-error-fg: #8a1c1c;
+  --color-info-bg: #e7eff8;
+  --color-info-fg: #1b4b78;
+
+  /* Typography */
+  --font-sans: 'IBM Plex Sans Arabic', 'Segoe UI', Tahoma, system-ui, sans-serif;
+  --font-size-base: 1rem;
+  --font-size-sm: 0.875rem;
+  --font-size-lg: 1.125rem;
+  --font-size-xl: 1.5rem;
+  --line-height: 1.7;
+
+  /* Spacing (4px scale) */
+  --space-1: 0.25rem;
+  --space-2: 0.5rem;
+  --space-3: 0.75rem;
+  --space-4: 1rem;
+  --space-6: 1.5rem;
+  --space-8: 2rem;
+
+  /* Shape */
+  --radius: 8px;
+  --shadow-card: 0 1px 2px rgb(15 42 70 / 8%), 0 2px 8px rgb(15 42 70 / 6%);
+
+  /* Layout */
+  --header-height: 4rem;
+  --nav-width: 15rem;
+  --content-max-width: 72rem;
+}

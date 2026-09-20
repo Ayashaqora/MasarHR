@@ -1,0 +1,81 @@
+# =====================================================================
+# MasarHR — repository-level ignore rules
+# This is an HR system: real employee data and secrets must NEVER be committed.
+# =====================================================================
+
+# --- Environment files & secrets (only *.example files are versioned) ---
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+*.p12
+*.pfx
+*.crt
+*.secret
+*.secrets
+secrets/
+credentials/
+credentials*.json
+auth.json
+id_rsa*
+id_ed25519*
+
+# --- Dependencies ---
+vendor/
+node_modules/
+
+# --- Build artifacts ---
+dist/
+dist-ssr/
+build/
+coverage/
+*.tsbuildinfo
+**/public/build/
+**/public/hot
+
+# --- Logs & caches ---
+*.log
+npm-debug.log*
+.phpunit.cache/
+.phpunit.result.cache
+.eslintcache
+.cache/
+.vite/
+
+# --- IDE / OS / local-machine noise ---
+.idea/
+.vscode/*
+!.vscode/extensions.json
+*.suo
+*.sw?
+.DS_Store
+Thumbs.db
+Desktop.ini
+.claude/settings.local.json
+CLAUDE.local.md
+
+# --- Database dumps & backups (never commit real or production data) ---
+*.dump
+*.pgdump
+*.sql
+*.sql.gz
+*.sql.zip
+*.bak
+*.backup
+
+# --- Real HR data: spreadsheets, generated PDFs, report exports, import/export temp files ---
+# Synthetic test fixtures may be versioned later, only when explicitly authorized.
+*.xlsx
+*.xls
+*.xlsm
+*.xlsb
+*.ods
+*.csv
+*.pdf
+exports/
+imports/
+reports-output/
+tmp/
+temp/
+*.tmp
