@@ -75,8 +75,12 @@ curl http://127.0.0.1:8000/api/v1/health
 | Auto-format | `composer format` |
 | DB connectivity | `php artisan db:show` |
 
-`php artisan migrate` applies only Laravel's framework-standard tables (see
-[architecture-foundation.md](architecture-foundation.md)). There is no HR schema in S01.
+`php artisan migrate` enables the `btree_gist` extension and creates the eight empty schema
+namespaces; it creates no tables other than Laravel's `migrations` bookkeeping table. See
+[database-persistence-foundation.md](database-persistence-foundation.md).
+
+The test suite runs only against `masarhr_test` (enforced by a guard that aborts on any other
+database) and needs no manual migration. Never run `migrate:fresh` or `db:wipe` against `masarhr`.
 
 ## Frontend (React 19 + Vite)
 
@@ -119,6 +123,6 @@ the phpredis extension to verify it.
 
 ## Stage governance
 
-Work proceeds in stages authorized by the Architecture Authority. The current stage is **S01 —
-Project Foundation**. No later stage may start, and nothing may be committed, pushed, tagged or
+Work proceeds in stages authorized by the Architecture Authority. The current stage is **S02 —
+Database & Persistence Foundation** (S01 is closed). No later stage may start, and nothing may be committed, pushed, tagged or
 released, without explicit authorization. See `CLAUDE.md`.

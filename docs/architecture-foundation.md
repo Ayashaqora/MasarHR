@@ -37,16 +37,14 @@ pre-created.
 
 ## Database
 
-PostgreSQL only. S01 adds no HR tables. The only migrations are Laravel's framework-standard ones:
+PostgreSQL only. There are no HR or business tables yet. S02 added the extension, eight empty schema
+namespaces (`hr`, `ref`, `org`, `reporting`, `security`, `audit`, `automation`, `migration`), and the
+UUID, time, temporal, transaction and migration conventions; see
+[database-persistence-foundation.md](database-persistence-foundation.md).
 
-| Migration | Tables | Purpose |
-| --- | --- | --- |
-| `0001_01_01_000000_create_users_table` | `users`, `password_reset_tokens`, `sessions` | Framework default; not an HR/identity design |
-| `0001_01_01_000001_create_cache_table` | `cache`, `cache_locks` | Framework default |
-| `0001_01_01_000002_create_jobs_table` | `jobs`, `job_batches`, `failed_jobs` | Framework default |
-
-These are skeleton artifacts, not MasarHR domain schema. Authentication/RBAC is a later stage; the
-default `User` model and `users` migration exist only because Laravel ships them.
+Laravel's skeleton migrations (users/sessions, cache, jobs) are preserved, unmodified, in
+`backend/database/migrations/_deferred_framework/` and do not run: identity is S03's decision and
+cache/queue use Redis.
 
 ## Frontend layout
 
@@ -78,7 +76,7 @@ frontend/src/
   and parse failures; user-facing text is localized and never shows raw server messages.
 - Backend: standard Laravel behavior with JSON rendering for API routes.
 
-## Out of scope in S01
+## Out of scope (S01 and S02)
 
-HR schema, reference data, employees, organization, contracts, leave, reporting, imports/exports,
+HR business tables, reference data, employees, organization, contracts, leave, reporting, imports/exports,
 authentication/RBAC, dashboards, production deployment, and every later stage.

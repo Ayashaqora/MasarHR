@@ -97,6 +97,10 @@ return [
             'prefix_indexes' => true,
             'search_path' => 'public',
             'sslmode' => env('DB_SSLMODE', 'prefer'),
+            // Fixed (not environment-driven): every session runs in UTC so that timestamptz
+            // rendering and any accidental timestamptz -> date cast are deterministic.
+            // Business dates use DATE and never depend on this setting. See docs/database-persistence-foundation.md.
+            'timezone' => 'UTC',
         ],
 
         'sqlsrv' => [
