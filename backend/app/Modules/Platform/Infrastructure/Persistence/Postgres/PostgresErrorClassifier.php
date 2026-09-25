@@ -32,6 +32,13 @@ final class PostgresErrorClassifier
 
     public const LOCK_NOT_AVAILABLE = '55P03';
 
+    /**
+     * Deliberately non-standard, application-owned SQLSTATE raised by the
+     * audit.reject_audit_mutation() trigger function (S04 §12/D6) when an UPDATE or DELETE is
+     * attempted against audit.audit_entries. Never a built-in PostgreSQL error class.
+     */
+    public const AUDIT_IMMUTABILITY_VIOLATION = 'MA001';
+
     /** Returns the 5-character SQLSTATE found anywhere in the exception chain, or null. */
     public static function sqlState(Throwable $error): ?string
     {
@@ -87,6 +94,11 @@ final class PostgresErrorClassifier
     public static function isDeadlock(Throwable $error): bool
     {
         return self::sqlState($error) === self::DEADLOCK_DETECTED;
+    }
+
+    public static function isAuditImmutabilityViolation(Throwable $error): bool
+    {
+        return self::sqlState($error) === self::AUDIT_IMMUTABILITY_VIOLATION;
     }
 
     /**

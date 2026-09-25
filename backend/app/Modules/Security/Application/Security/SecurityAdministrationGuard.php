@@ -19,6 +19,14 @@ use Illuminate\Support\Facades\DB;
  * it always re-checks capability against the post-first-operation state. This is the minimal
  * primitive for the job — no new locking architecture beyond what S02 already established
  * (PostgreSQL row/transaction locking) and no generic saga/outbox machinery.
+ *
+ * S04 ERRATA-02: audited mutations must not intentionally depend on nested
+ * DB::transaction/SAVEPOINT behavior. protect() therefore opens no transaction of its own — it
+ * only takes the advisory lock, runs $operation, and checks the invariant — so it can be called
+ * from inside a transaction someone else already owns (AuditedCommandExecutor). run() remains as a
+ * transaction-opening convenience wrapper around protect(), preserved only for callers outside the
+ * audited execution path (e.g. tests exercising the guard directly); it is never invoked from the
+ * new audited controllers/commands.
  */
 final class SecurityAdministrationGuard
 {
@@ -31,8 +39,38 @@ final class SecurityAdministrationGuard
     public function __construct(private readonly EffectivePermissionsResolver $effectivePermissions) {}
 
     /**
-     * Runs $operation inside a transaction, serialized against every other guarded operation, and
-     * rolls the whole transaction back if the result leaves no capable ACTIVE principal.
+     * Takes the advisory lock, runs $operation, and throws if the result leaves no capable ACTIVE
+     * principal — without opening a transaction of its own. Must be called from inside a
+     * transaction the caller already owns (e.g. AuditedCommandExecutor::run()), so that a thrown
+     * LastSecurityAdministratorException rolls back the mutation along with everything else in that
+     * transaction.
+     *
+     * @template T
+     *
+     * @param  callable(): T  $operation
+     * @return T
+     *
+     * @throws LastSecurityAdministratorException
+     */
+    public function protect(callable $operation): mixed
+    {
+        DB::statement('select pg_advisory_xact_lock(?)', [self::ADVISORY_LOCK_KEY]);
+
+        $result = $operation();
+
+        if (! $this->atLeastOneCapableActivePrincipalExists()) {
+            throw new LastSecurityAdministratorException;
+        }
+
+        return $result;
+    }
+
+    /**
+     * Convenience wrapper for callers outside the audited execution path: opens its own
+     * transaction and delegates to protect(). Not used by the S04-retrofitted controllers/commands
+     * (they call protect() from inside AuditedCommandExecutor's transaction instead), but preserved
+     * for existing direct callers (e.g. LastAdminTest) that rely on this method's original
+     * transactional, all-or-nothing behavior.
      *
      * @template T
      *
@@ -43,17 +81,7 @@ final class SecurityAdministrationGuard
      */
     public function run(callable $operation): mixed
     {
-        return DB::transaction(function () use ($operation) {
-            DB::statement('select pg_advisory_xact_lock(?)', [self::ADVISORY_LOCK_KEY]);
-
-            $result = $operation();
-
-            if (! $this->atLeastOneCapableActivePrincipalExists()) {
-                throw new LastSecurityAdministratorException;
-            }
-
-            return $result;
-        });
+        return DB::transaction(fn () => $this->protect($operation));
     }
 
     private function atLeastOneCapableActivePrincipalExists(): bool

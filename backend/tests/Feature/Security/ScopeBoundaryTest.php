@@ -36,10 +36,19 @@ class ScopeBoundaryTest extends SecurityTestCase
 
     public function test_no_permanent_audit_log_table_was_introduced_by_s03(): void
     {
-        // S03 may pass a security-event handoff boundary to S04, but must not build a permanent
-        // audit architecture itself (§25 of the S03 authorization).
-        $count = DB::table('information_schema.tables')->where('table_schema', 'audit')->count();
-        $this->assertSame(0, $count);
+        // S03 itself introduces no permanent audit architecture (§25 of the S03 authorization) — it
+        // passes a security-event handoff boundary to S04, which is the stage authorized to build
+        // one (see docs/audit-command-infrastructure-specification.md). This is verified by
+        // migration provenance rather than by the audit schema being empty: as of S04, it
+        // legitimately is not (audit.audit_entries is created by a 2026_09_25_* migration).
+        $s03Migrations = collect(glob(base_path('database/migrations/2026_09_23_*.php')))
+            ->map(fn (string $path) => pathinfo($path, PATHINFO_FILENAME));
+
+        $this->assertNotEmpty($s03Migrations);
+
+        foreach ($s03Migrations as $migration) {
+            $this->assertStringNotContainsString('audit', $migration, "an S03 migration must never touch the audit schema: {$migration}");
+        }
     }
 
     public function test_no_organization_scope_columns_exist_on_the_principals_table(): void

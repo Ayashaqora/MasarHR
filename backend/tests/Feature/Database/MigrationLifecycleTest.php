@@ -84,10 +84,12 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
     public function test_rollback_removes_the_namespaces_and_extension_and_migrating_again_restores_them(): void
     {
         // This round-trip is only meaningful while every schema the S02 migration owns is empty —
-        // by the time S03 exists, `security` legitimately is not (see docs/security-access-foundation.md),
-        // so this test drains it first and restores it via migrateTestDatabase() in tearDown, the
-        // same way it always restores S02's own probe objects.
+        // by the time S03/S04 exist, `security` and `audit` legitimately are not (see
+        // docs/security-access-foundation.md and docs/audit-command-infrastructure-specification.md),
+        // so this test drains both first and restores them via migrateTestDatabase() in tearDown,
+        // the same way it always restores S02's own probe objects.
         $this->dropSecuritySchemaObjects();
+        $this->dropAuditSchemaObjects();
 
         $this->assertSame(8, $this->schemaCount());
         $this->assertTrue($this->extensionInstalled());
@@ -105,22 +107,25 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
 
     public function test_rollback_refuses_to_destroy_a_non_empty_schema_and_leaves_everything_intact(): void
     {
-        // `security` already holds S03's tables, so it is itself sufficient to prove the
+        // `audit` already holds S04's audit_entries table, so it is itself sufficient to prove the
         // protection; the schemas are dropped in reverse of SCHEMAS order (migration, automation,
-        // audit, security, reporting, org, ref, hr), and `security` is reached before `hr`.
+        // audit, security, reporting, org, ref, hr), and `audit` is reached before `security`.
         $migrationsBefore = (int) $this->scalar('select count(*) from migrations');
 
         $exception = $this->databaseError(fn () => $this->rollbackS02());
 
         $this->assertInstanceOf(RuntimeException::class, $exception);
         $this->assertStringContainsString('still contains objects', $exception->getMessage());
-        $this->assertStringContainsString('"security"', $exception->getMessage());
+        $this->assertStringContainsString('"audit"', $exception->getMessage());
 
         // PostgreSQL DDL is transactional: the schemas dropped before the failure were restored too.
         $this->assertSame(8, $this->schemaCount());
         $this->assertSame(6, (int) $this->scalar(
             "select count(*) from information_schema.tables where table_schema = 'security'"
         ), 'no S03 data was lost');
+        $this->assertSame(1, (int) $this->scalar(
+            "select count(*) from information_schema.tables where table_schema = 'audit'"
+        ), 'no S04 data was lost');
         $this->assertSame($migrationsBefore, (int) $this->scalar('select count(*) from migrations'), 'the migrations are still recorded as applied');
     }
 
@@ -130,6 +135,13 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
             $this->pg()->statement("drop table if exists security.{$table} cascade");
         }
         DB::table('migrations')->where('migration', 'like', '2026_09_23%')->delete();
+    }
+
+    private function dropAuditSchemaObjects(): void
+    {
+        $this->pg()->statement('drop table if exists audit.audit_entries cascade');
+        $this->pg()->statement('drop function if exists audit.reject_audit_mutation() cascade');
+        DB::table('migrations')->where('migration', 'like', '2026_09_25%')->delete();
     }
 
     public function test_extension_rollback_refuses_while_an_index_depends_on_it(): void

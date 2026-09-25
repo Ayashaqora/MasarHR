@@ -2,6 +2,12 @@
 
 namespace App\Modules\Security\Presentation\Console;
 
+use App\Modules\Audit\Application\AuditAppendService;
+use App\Modules\Audit\Domain\AuditSpec;
+use App\Modules\Platform\Application\Execution\CommandContext;
+use App\Modules\Platform\Domain\Actor;
+use App\Modules\Platform\Domain\CorrelationId;
+use App\Modules\Platform\Domain\Source;
 use App\Modules\Security\Application\Commands\AssignRoleToPrincipal;
 use App\Modules\Security\Application\Commands\CreatePrincipal;
 use App\Modules\Security\Application\Commands\SetInitialPassword;
@@ -32,6 +38,16 @@ use Illuminate\Support\Facades\DB;
  * BOOT-06/07 idempotent: refuses (no side effects) once a security-administration-capable ACTIVE
  *          principal already exists.
  * BOOT-08 does not offer any ongoing management here — that is the Security Administration API.
+ *
+ * S04 retrofit: writes two MUTATION audit entries — principal creation (CreatePrincipal +
+ * SetInitialPassword aggregated per ERRATA-04, extended here to this CLI workflow for the same
+ * reason: one logical operation, one audit entry, never a password value in it) and the role
+ * assignment — directly via AuditAppendService inside this command's own, pre-existing single
+ * DB::transaction (BOOT-04), rather than via AuditedCommandExecutor: wrapping the executor's own
+ * transaction inside this one would reintroduce the nested-transaction pattern ERRATA-02 removes
+ * elsewhere, and this call site already owns the one transaction the whole bootstrap needs. Actor
+ * is Actor::system('CLI_BOOTSTRAP') (never a Principal — no SYSTEM Principal is created), Source is
+ * CLI, and a fresh CorrelationId is generated once for the whole invocation.
  */
 class BootstrapAdminCommand extends Command
 {
@@ -41,7 +57,9 @@ class BootstrapAdminCommand extends Command
 
     private const SYSTEM_ROLE_CODE = 'SECURITY_ADMINISTRATOR';
 
-    public function handle(EffectivePermissionsResolver $resolver): int
+    private const ACTOR_LABEL = 'CLI_BOOTSTRAP';
+
+    public function handle(EffectivePermissionsResolver $resolver, AuditAppendService $auditAppendService): int
     {
         if ($this->aCapableAdministratorAlreadyExists($resolver)) {
             $this->components->error(
@@ -66,14 +84,51 @@ class BootstrapAdminCommand extends Command
             return self::FAILURE;
         }
 
+        $context = new CommandContext(
+            actor: Actor::system(self::ACTOR_LABEL),
+            correlationId: CorrelationId::generate(),
+            source: Source::Cli,
+        );
+
         try {
-            $principal = DB::transaction(function () use ($username, $displayName, $password) {
+            $principal = DB::transaction(function () use ($username, $displayName, $password, $context, $auditAppendService) {
                 $role = $this->findOrCreateSystemRole();
                 $this->grantAllBaselinePermissions($role);
 
                 $principal = app(CreatePrincipal::class)->handle($username, $displayName);
                 app(SetInitialPassword::class)->handle($principal, $password);
-                app(AssignRoleToPrincipal::class)->handle($principal, $role, null);
+
+                $auditAppendService->appendMutation(
+                    $context,
+                    new AuditSpec(
+                        action: 'security.principal.create',
+                        targetType: 'security_principal',
+                        targetId: fn (Principal $created) => $created->getKey(),
+                        changes: fn (Principal $created) => [
+                            'username' => $created->username,
+                            'display_name' => $created->display_name,
+                        ],
+                        // §16: identical allowlist to the HTTP path — no CLI-specific metadata; the
+                        // actor/source on $context already distinguish this as a CLI bootstrap entry.
+                        metadata: fn () => ['credential_established' => true],
+                    ),
+                    $principal,
+                );
+
+                $assignment = app(AssignRoleToPrincipal::class)->handle($principal, $role, null);
+
+                $auditAppendService->appendMutation(
+                    $context,
+                    new AuditSpec(
+                        action: 'security.role_assignment.create',
+                        targetType: 'security_principal_role',
+                        targetId: fn () => $principal->getKey().':'.$role->getKey(),
+                        // §16: allowlist is {} — identical shape to the HTTP path.
+                        changes: fn () => [],
+                        metadata: fn () => [],
+                    ),
+                    $assignment,
+                );
 
                 return $principal;
             });

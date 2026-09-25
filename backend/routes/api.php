@@ -33,7 +33,7 @@ Route::middleware('web')->group(function (): void {
         Route::get('/csrf-cookie', CsrfCookieController::class)->name('csrf-cookie');
         Route::post('/login', LoginController::class)->middleware('throttle:login')->name('login');
 
-        Route::middleware(['auth:web', 'principal.active'])->group(function (): void {
+        Route::middleware(['auth:web', 'principal.active', 'resolve.context'])->group(function (): void {
             Route::post('/logout', LogoutController::class)->name('logout');
             Route::get('/me', CurrentPrincipalController::class)->name('me');
             Route::put('/password', ChangeOwnPasswordController::class)->name('password');
@@ -42,7 +42,7 @@ Route::middleware('web')->group(function (): void {
 
     Route::prefix('security')
         ->name('api.v1.security.')
-        ->middleware(['auth:web', 'principal.active'])
+        ->middleware(['auth:web', 'principal.active', 'resolve.context'])
         ->group(function (): void {
             Route::get('/principals', [PrincipalController::class, 'index'])
                 ->middleware('permission:'.Perm::USERS_VIEW)->name('principals.index');

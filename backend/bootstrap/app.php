@@ -1,5 +1,6 @@
 <?php
 
+use App\Modules\Platform\Presentation\Http\Middleware\ResolveCommandContext;
 use App\Modules\Security\Domain\Exceptions\CredentialAlreadyExistsException;
 use App\Modules\Security\Domain\Exceptions\DuplicatePermissionGrantException;
 use App\Modules\Security\Domain\Exceptions\DuplicateRoleAssignmentException;
@@ -38,6 +39,7 @@ return Application::configure(basePath: dirname(__DIR__))
         $middleware->alias([
             'principal.active' => EnsurePrincipalIsActive::class,
             'permission' => RequirePermission::class,
+            'resolve.context' => ResolveCommandContext::class,
         ]);
     })
     ->withExceptions(function (Exceptions $exceptions): void {
