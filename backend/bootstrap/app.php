@@ -1,6 +1,9 @@
 <?php
 
 use App\Modules\Platform\Presentation\Http\Middleware\ResolveCommandContext;
+use App\Modules\Reference\Domain\Exceptions\DuplicateReferenceCodeException;
+use App\Modules\Reference\Domain\Exceptions\OverlappingBehaviorPeriodException;
+use App\Modules\Reference\Domain\Exceptions\StaleVersionException as ReferenceStaleVersionException;
 use App\Modules\Security\Domain\Exceptions\CredentialAlreadyExistsException;
 use App\Modules\Security\Domain\Exceptions\DuplicatePermissionGrantException;
 use App\Modules\Security\Domain\Exceptions\DuplicateRoleAssignmentException;
@@ -64,6 +67,9 @@ return Application::configure(basePath: dirname(__DIR__))
             CredentialAlreadyExistsException::class,
             IncorrectCurrentPasswordException::class,
             InvalidPasswordException::class,
+            ReferenceStaleVersionException::class,
+            DuplicateReferenceCodeException::class,
+            OverlappingBehaviorPeriodException::class,
         ]);
 
         // §22 of the S03 authorization: preserve stated HTTP semantics for Security domain
@@ -77,6 +83,14 @@ return Application::configure(basePath: dirname(__DIR__))
         $exceptions->render(fn (DuplicateRoleAssignmentException $e) => response()->json(['message' => $e->getMessage()], 409));
         $exceptions->render(fn (DuplicatePermissionGrantException $e) => response()->json(['message' => $e->getMessage()], 409));
         $exceptions->render(fn (CredentialAlreadyExistsException $e) => response()->json(['message' => $e->getMessage()], 409));
+
+        // S05 Reference-module domain failures (docs/reference-data-foundation-specification.md §14).
+        $exceptions->render(fn (ReferenceStaleVersionException $e) => response()->json(['message' => $e->getMessage()], 409));
+        $exceptions->render(fn (OverlappingBehaviorPeriodException $e) => response()->json(['message' => $e->getMessage()], 409));
+        $exceptions->render(fn (DuplicateReferenceCodeException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['code' => [$e->getMessage()]],
+        ], 422));
 
         $exceptions->render(fn (DuplicateUsernameException $e) => response()->json([
             'message' => $e->getMessage(),

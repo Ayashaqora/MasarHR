@@ -843,7 +843,22 @@ completeness.
 ## 29. Errata
 
 Post-freeze corrections identified during S04 implementation/closure review, each confirmed by
-Architecture Authority and binding once recorded here.
+Architecture Authority and binding once recorded here. ERRATA-01 through ERRATA-04 were confirmed
+during the PRE-S05 baseline verification and are recorded here as documentation-debt cleanup only
+(S05 authorization §21C) — they correct this document's text to match the already-implemented and
+already-verified S04 behavior; they do not change S04 architecture or require any code change.
+
+- **ERRATA-01:** SYSTEM/UNAUTHENTICATED is audit provenance only and grants no SYSTEM authority.
+
+- **ERRATA-02:** Audited production paths use one effective executor-owned transaction;
+  `SecurityAdministrationGuard::protect()` does not create a nested transaction.
+
+- **ERRATA-03:** An ordinary `StaleVersionException` is an application/concurrency conflict, not a
+  `SECURITY_EVENT`, by default.
+
+- **ERRATA-04:** `CreatePrincipal` + `SetInitialPassword` is one logical audited mutation in the
+  current creation workflow; this does not permanently make an independent future
+  `SetInitialPassword` workflow non-auditable.
 
 - **ERRATA-05:** `GrantPermissionToRole`'s `metadata` follows [§16](#16-s03-retrofit-matrix)/Q11 —
   `{}` (empty), never `{permission_code: ...}`. The permission identity is already carried by the

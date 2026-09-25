@@ -62,11 +62,21 @@ class ScopeBoundaryTest extends SecurityTestCase
         }
     }
 
-    public function test_only_security_module_permissions_were_seeded(): void
+    public function test_only_security_module_permissions_were_seeded_by_s03(): void
     {
-        $modules = DB::table('security.permissions')->distinct()->pluck('module');
+        // Scoped to S03's own migration provenance, not the live table (same pattern as
+        // test_no_permanent_audit_log_table_was_introduced_by_s03 below): a later, separately
+        // authorized stage legitimately adds its own module's permissions afterwards (S05 added
+        // 'reference' — see docs/reference-data-foundation-specification.md §16). This test only
+        // guarantees S03 itself never seeded anything but 'security'.
+        $s03SeedMigration = base_path('database/migrations/2026_09_23_000007_seed_security_baseline_permissions.php');
+        $this->assertFileExists($s03SeedMigration);
 
-        $this->assertSame(['security'], $modules->all());
+        $contents = file_get_contents($s03SeedMigration);
+        preg_match_all("/'module' => '([a-z_]+)'/", $contents, $matches);
+
+        $this->assertNotEmpty($matches[1]);
+        $this->assertSame(['security'], array_unique($matches[1]));
     }
 
     public function test_s02_migrations_remain_unaffected_and_still_pass_discipline_checks(): void

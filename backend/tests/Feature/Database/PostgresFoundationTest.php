@@ -56,15 +56,16 @@ class PostgresFoundationTest extends PostgresIntegrationTestCase
      * S02 itself creates no object inside any of the eight namespaces — each stays empty until its
      * owning stage populates it. As of S03, `security` is that stage's own schema (see
      * docs/security-access-foundation.md); as of S04, `audit` is also owned (see
-     * docs/audit-command-infrastructure-specification.md) and is expected to hold S04's
-     * audit_entries table; every namespace no authorized stage owns must still be empty. This is
-     * what durably matters here, not "nothing has run yet" — that claim is true only within S02's
-     * own isolated scope and breaks by construction the moment any later, authorized stage runs its
-     * migrations.
+     * docs/audit-command-infrastructure-specification.md); as of S05, `ref` is also owned (see
+     * docs/reference-data-foundation-specification.md) and is expected to hold S05's reference
+     * tables (16 originally, plus the CORRECTIVE-01 marital_status_aliases lookup table — see
+     * §22a); every namespace no authorized stage owns must still be empty. This is what durably
+     * matters here, not "nothing has run yet" — that claim is true only within S02's own isolated
+     * scope and breaks by construction the moment any later, authorized stage runs its migrations.
      */
     public function test_namespaces_not_owned_by_a_later_stage_remain_empty(): void
     {
-        $notYetOwned = array_values(array_diff(self::SCHEMAS, ['security', 'audit']));
+        $notYetOwned = array_values(array_diff(self::SCHEMAS, ['security', 'audit', 'ref']));
 
         $objects = $this->pg()->select(
             'select n.nspname, c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace '

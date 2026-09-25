@@ -1,6 +1,13 @@
 <?php
 
 use App\Modules\Platform\Presentation\Http\Controllers\HealthController;
+use App\Modules\Reference\Infrastructure\Authorization\ReferencePermissionCatalog as RefPerm;
+use App\Modules\Reference\Presentation\Http\Controllers\DecisionTypeController;
+use App\Modules\Reference\Presentation\Http\Controllers\EmploymentStatusCategoryController;
+use App\Modules\Reference\Presentation\Http\Controllers\EmploymentStatusDetailBehaviorController;
+use App\Modules\Reference\Presentation\Http\Controllers\EmploymentStatusDetailController;
+use App\Modules\Reference\Presentation\Http\Controllers\GenderController;
+use App\Modules\Reference\Presentation\Http\Controllers\MaritalStatusController;
 use App\Modules\Security\Infrastructure\Authorization\PermissionCatalog as Perm;
 use App\Modules\Security\Presentation\Http\Controllers\Auth\ChangeOwnPasswordController;
 use App\Modules\Security\Presentation\Http\Controllers\Auth\CsrfCookieController;
@@ -85,5 +92,50 @@ Route::middleware('web')->group(function (): void {
 
             Route::get('/permissions', [PermissionController::class, 'index'])
                 ->middleware('permission:'.Perm::PERMISSIONS_VIEW)->name('permissions.index');
+        });
+
+    Route::prefix('reference')
+        ->name('api.v1.reference.')
+        ->middleware(['auth:web', 'principal.active', 'resolve.context'])
+        ->group(function (): void {
+            $simpleFamilies = [
+                'genders' => [GenderController::class, 'gender'],
+                'marital-statuses' => [MaritalStatusController::class, 'maritalStatus'],
+                'decision-types' => [DecisionTypeController::class, 'decisionType'],
+                'employment-status-categories' => [EmploymentStatusCategoryController::class, 'employmentStatusCategory'],
+            ];
+
+            foreach ($simpleFamilies as $segment => [$controller, $param]) {
+                Route::get("/{$segment}", [$controller, 'index'])
+                    ->middleware('permission:'.RefPerm::REFERENCE_VIEW)->name("{$segment}.index");
+                Route::get("/{$segment}/{{$param}}", [$controller, 'show'])
+                    ->middleware('permission:'.RefPerm::REFERENCE_VIEW)->name("{$segment}.show");
+                Route::post("/{$segment}", [$controller, 'store'])
+                    ->middleware('permission:'.RefPerm::REFERENCE_MANAGE)->name("{$segment}.store");
+                Route::patch("/{$segment}/{{$param}}", [$controller, 'updateMetadata'])
+                    ->middleware('permission:'.RefPerm::REFERENCE_MANAGE)->name("{$segment}.update");
+                Route::post("/{$segment}/{{$param}}/activate", [$controller, 'activate'])
+                    ->middleware('permission:'.RefPerm::REFERENCE_MANAGE)->name("{$segment}.activate");
+                Route::post("/{$segment}/{{$param}}/deactivate", [$controller, 'deactivate'])
+                    ->middleware('permission:'.RefPerm::REFERENCE_MANAGE)->name("{$segment}.deactivate");
+            }
+
+            Route::get('/employment-status-details', [EmploymentStatusDetailController::class, 'index'])
+                ->middleware('permission:'.RefPerm::REFERENCE_VIEW)->name('employment-status-details.index');
+            Route::get('/employment-status-details/{employmentStatusDetail}', [EmploymentStatusDetailController::class, 'show'])
+                ->middleware('permission:'.RefPerm::REFERENCE_VIEW)->name('employment-status-details.show');
+            Route::post('/employment-status-details', [EmploymentStatusDetailController::class, 'store'])
+                ->middleware('permission:'.RefPerm::REFERENCE_MANAGE)->name('employment-status-details.store');
+            Route::patch('/employment-status-details/{employmentStatusDetail}', [EmploymentStatusDetailController::class, 'updateMetadata'])
+                ->middleware('permission:'.RefPerm::REFERENCE_MANAGE)->name('employment-status-details.update');
+            Route::post('/employment-status-details/{employmentStatusDetail}/activate', [EmploymentStatusDetailController::class, 'activate'])
+                ->middleware('permission:'.RefPerm::REFERENCE_MANAGE)->name('employment-status-details.activate');
+            Route::post('/employment-status-details/{employmentStatusDetail}/deactivate', [EmploymentStatusDetailController::class, 'deactivate'])
+                ->middleware('permission:'.RefPerm::REFERENCE_MANAGE)->name('employment-status-details.deactivate');
+
+            Route::get('/employment-status-details/{employmentStatusDetail}/behaviors', [EmploymentStatusDetailBehaviorController::class, 'index'])
+                ->middleware('permission:'.RefPerm::REFERENCE_VIEW)->name('employment-status-details.behaviors.index');
+            Route::post('/employment-status-details/{employmentStatusDetail}/behaviors', [EmploymentStatusDetailBehaviorController::class, 'store'])
+                ->middleware('permission:'.RefPerm::REFERENCE_MANAGE)->name('employment-status-details.behaviors.store');
         });
 });

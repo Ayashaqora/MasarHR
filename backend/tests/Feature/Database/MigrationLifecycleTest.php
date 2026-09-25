@@ -22,6 +22,10 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
 
     private const SCHEMAS = ['hr', 'ref', 'org', 'reporting', 'security', 'audit', 'automation', 'migration'];
 
+    private const MARITAL_STATUS_ALIASES_TABLE_MIGRATION = 'database/migrations/2026_09_26_000019_create_ref_marital_status_aliases_table.php';
+
+    private const MARITAL_STATUS_ALIASES_SEED_MIGRATION = 'database/migrations/2026_09_26_000020_seed_ref_marital_status_aliases.php';
+
     protected function tearDown(): void
     {
         // Whatever a test did, leave the test database fully migrated and free of probe objects.
@@ -84,12 +88,14 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
     public function test_rollback_removes_the_namespaces_and_extension_and_migrating_again_restores_them(): void
     {
         // This round-trip is only meaningful while every schema the S02 migration owns is empty —
-        // by the time S03/S04 exist, `security` and `audit` legitimately are not (see
-        // docs/security-access-foundation.md and docs/audit-command-infrastructure-specification.md),
-        // so this test drains both first and restores them via migrateTestDatabase() in tearDown,
-        // the same way it always restores S02's own probe objects.
+        // by the time S03/S04/S05 exist, `security`, `audit`, and `ref` legitimately are not (see
+        // docs/security-access-foundation.md, docs/audit-command-infrastructure-specification.md,
+        // and docs/reference-data-foundation-specification.md), so this test drains all three first
+        // and restores them via migrateTestDatabase() in tearDown, the same way it always restores
+        // S02's own probe objects.
         $this->dropSecuritySchemaObjects();
         $this->dropAuditSchemaObjects();
+        $this->dropReferenceSchemaObjects();
 
         $this->assertSame(8, $this->schemaCount());
         $this->assertTrue($this->extensionInstalled());
@@ -142,6 +148,56 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
         $this->pg()->statement('drop table if exists audit.audit_entries cascade');
         $this->pg()->statement('drop function if exists audit.reject_audit_mutation() cascade');
         DB::table('migrations')->where('migration', 'like', '2026_09_25%')->delete();
+    }
+
+    private function dropReferenceSchemaObjects(): void
+    {
+        // Dependency order: the behavior table references employment_status_details, which
+        // references employment_status_categories; marital_status_aliases references
+        // marital_statuses (S05 CORRECTIVE-01 — added on top of the original 16 S05 tables, so it
+        // must drop before the table it points to); every other ref table is a standalone simple
+        // reference-value table with no inbound foreign key.
+        foreach ([
+            'employment_status_detail_behaviors', 'employment_status_details', 'employment_status_categories',
+            'decision_types', 'marital_status_aliases', 'marital_statuses', 'genders',
+            'leave_statuses', 'leave_types', 'supervisory_titles', 'specialties', 'job_titles',
+            'academic_degrees', 'qualification_types', 'employment_categories', 'contract_types', 'employment_types',
+        ] as $table) {
+            $this->pg()->statement("drop table if exists ref.{$table} cascade");
+        }
+        DB::table('migrations')->where('migration', 'like', '2026_09_26%')->delete();
+    }
+
+    /**
+     * S05 CORRECTIVE-01 §12 ("migration rollback/reapply"): round-trips only the two corrective
+     * migrations directly, the same batch-independent way rollbackS02() exercises S02 — calling
+     * down()/up() directly rather than through `migrate:rollback`/`migrate`, which is what lets
+     * this run safely without disturbing any other migration's recorded batch.
+     */
+    public function test_marital_status_aliases_corrective_migrations_roll_back_and_reapply_cleanly(): void
+    {
+        $countBefore = (int) $this->scalar('select count(*) from ref.marital_status_aliases');
+        $this->assertGreaterThan(0, $countBefore, 'fixture assumption: the corrective seed migration already ran');
+
+        DB::transaction(function (): void {
+            $this->migration(self::MARITAL_STATUS_ALIASES_SEED_MIGRATION)->down();
+            DB::table('migrations')->where('migration', 'like', '%seed_ref_marital_status_aliases')->delete();
+        });
+        $this->assertSame(0, (int) $this->scalar('select count(*) from ref.marital_status_aliases'));
+
+        DB::transaction(function (): void {
+            $this->migration(self::MARITAL_STATUS_ALIASES_TABLE_MIGRATION)->down();
+            DB::table('migrations')->where('migration', 'like', '%create_ref_marital_status_aliases_table')->delete();
+        });
+        $this->assertSame(0, (int) $this->scalar(
+            "select count(*) from information_schema.tables where table_schema = 'ref' and table_name = 'marital_status_aliases'"
+        ), 'down() must drop the table itself, not just its rows');
+
+        // Reapply both — migrateTestDatabase() runs exactly the migrations missing from the
+        // `migrations` table, in filename order, so the table is created before it is seeded.
+        $this->migrateTestDatabase();
+
+        $this->assertSame($countBefore, (int) $this->scalar('select count(*) from ref.marital_status_aliases'));
     }
 
     public function test_extension_rollback_refuses_while_an_index_depends_on_it(): void

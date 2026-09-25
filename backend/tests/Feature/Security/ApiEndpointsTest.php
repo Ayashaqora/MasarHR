@@ -24,7 +24,14 @@ class ApiEndpointsTest extends SecurityTestCase
         $response = $this->getJson('/api/v1/security/permissions')->assertOk();
         $codes = collect($response->json('data'))->pluck('code')->all();
 
-        $this->assertEqualsCanonicalizing(PermissionCatalog::ALL, $codes);
+        // security.permissions is a cross-module catalog (S05 §16): by S05 it also
+        // contains the two Reference-module permission codes seeded alongside PermissionCatalog::ALL.
+        // Named literally here (not imported from the Reference module) so this Security test does
+        // not depend on the Reference module's own catalog class.
+        $this->assertEqualsCanonicalizing(
+            [...PermissionCatalog::ALL, 'reference.view', 'reference.manage'],
+            $codes,
+        );
     }
 
     public function test_role_lifecycle_create_activate_deactivate_via_http(): void

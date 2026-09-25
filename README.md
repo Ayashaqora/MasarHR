@@ -3,7 +3,7 @@
 مسار — نظام إدارة شؤون الموظفين والقوى العاملة
 Masar — Human Resources & Workforce Management System
 
-> **Status:** Stage S01 (Project Foundation). No HR functionality is implemented yet.
+> **Status:** Stages S01-S05 complete (Project Foundation, Database & Persistence Foundation, Security & Access Control, Audit and Command Infrastructure, Reference Data Foundation). No HR functionality (Person/Employee/Employment/Organization) is implemented yet.
 
 ## Stack
 
