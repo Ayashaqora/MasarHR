@@ -1,6 +1,6 @@
 <?php
 
-use App\Models\User;
+use App\Modules\Security\Infrastructure\Persistence\Eloquent\Principal;
 
 return [
 
@@ -17,7 +17,6 @@ return [
 
     'defaults' => [
         'guard' => env('AUTH_GUARD', 'web'),
-        'passwords' => env('AUTH_PASSWORD_BROKER', 'users'),
     ],
 
     /*
@@ -25,22 +24,17 @@ return [
     | Authentication Guards
     |--------------------------------------------------------------------------
     |
-    | Next, you may define every authentication guard for your application.
-    | Of course, a great default configuration has been defined for you
-    | which utilizes session storage plus the Eloquent user provider.
-    |
-    | All authentication guards have a user provider, which defines how the
-    | users are actually retrieved out of your database or other storage
-    | system used by the application. Typically, Eloquent is utilized.
-    |
-    | Supported: "session"
+    | S03 (Security & Access) authenticates against security.principals, not Laravel's default
+    | users table — a security Principal is deliberately not an HR employee (see
+    | docs/security-access-foundation.md). No public registration exists (§7/§19): principals are
+    | created only through the Security administration API or the bootstrap CLI command.
     |
     */
 
     'guards' => [
         'web' => [
             'driver' => 'session',
-            'provider' => 'users',
+            'provider' => 'principals',
         ],
     ],
 
@@ -53,53 +47,29 @@ return [
     | users are actually retrieved out of your database or other storage
     | system used by the application. Typically, Eloquent is utilized.
     |
-    | If you have multiple user tables or models you may configure multiple
-    | providers to represent the model / table. These providers may then
-    | be assigned to any extra authentication guards you have defined.
-    |
     | Supported: "database", "eloquent"
     |
     */
 
     'providers' => [
-        'users' => [
+        'principals' => [
             'driver' => 'eloquent',
-            'model' => env('AUTH_MODEL', User::class),
+            'model' => env('AUTH_MODEL', Principal::class),
         ],
-
-        // 'users' => [
-        //     'driver' => 'database',
-        //     'table' => 'users',
-        // ],
     ],
 
     /*
     |--------------------------------------------------------------------------
-    | Resetting Passwords
+    | Password Reset
     |--------------------------------------------------------------------------
     |
-    | These configuration options specify the behavior of Laravel's password
-    | reset functionality, including the table utilized for token storage
-    | and the user provider that is invoked to actually retrieve users.
-    |
-    | The expiry time is the number of minutes that each reset token will be
-    | considered valid. This security feature keeps tokens short-lived so
-    | they have less time to be guessed. You may change this as needed.
-    |
-    | The throttle setting is the number of seconds a user must wait before
-    | generating more password reset tokens. This prevents the user from
-    | quickly generating a very large amount of password reset tokens.
+    | Email/SMS password recovery is explicitly out of scope for S03 (§27), so no password-reset
+    | broker is configured. Administrative password reset is a Security administration use case
+    | (ResetPasswordAdministratively), not Laravel's password-reset flow.
     |
     */
 
-    'passwords' => [
-        'users' => [
-            'provider' => 'users',
-            'table' => env('AUTH_PASSWORD_RESET_TOKEN_TABLE', 'password_reset_tokens'),
-            'expire' => 60,
-            'throttle' => 60,
-        ],
-    ],
+    'passwords' => [],
 
     /*
     |--------------------------------------------------------------------------

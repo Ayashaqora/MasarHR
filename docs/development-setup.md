@@ -82,6 +82,17 @@ namespaces; it creates no tables other than Laravel's `migrations` bookkeeping t
 The test suite runs only against `masarhr_test` (enforced by a guard that aborts on any other
 database) and needs no manual migration. Never run `migrate:fresh` or `db:wipe` against `masarhr`.
 
+After migrating, create the first security administrator (there is no public registration
+endpoint — this is the only way in):
+
+```powershell
+php artisan masar:security:bootstrap-admin
+```
+
+It prompts interactively for a username, display name and password; nothing is printed, logged or
+committed to the repository. See [security-access-foundation.md](security-access-foundation.md)
+for the full security/authentication/RBAC model.
+
 ## Frontend (React 19 + Vite)
 
 ```powershell
@@ -123,6 +134,6 @@ the phpredis extension to verify it.
 
 ## Stage governance
 
-Work proceeds in stages authorized by the Architecture Authority. The current stage is **S02 —
-Database & Persistence Foundation** (S01 is closed). No later stage may start, and nothing may be committed, pushed, tagged or
-released, without explicit authorization. See `CLAUDE.md`.
+Work proceeds in stages authorized by the Architecture Authority. The current stage is **S03 —
+Security & Access** (S01 and S02 are closed). No later stage may start, and nothing may be
+committed, pushed, tagged or released, without explicit authorization. See `CLAUDE.md`.

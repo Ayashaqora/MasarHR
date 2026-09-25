@@ -52,15 +52,25 @@ class PostgresFoundationTest extends PostgresIntegrationTestCase
         $this->assertSame($expected, $found);
     }
 
-    public function test_namespaces_are_empty_because_s02_owns_no_business_tables(): void
+    /**
+     * S02 itself creates no object inside any of the eight namespaces — each stays empty until its
+     * owning stage populates it. As of S03, `security` is that stage's own schema (see
+     * docs/security-access-foundation.md) and is expected to hold S03's tables; every namespace S03
+     * does not own must still be empty. This is what durably matters here, not "nothing has run
+     * yet" — that claim is true only within S02's own isolated scope and breaks by construction the
+     * moment any later, authorized stage runs its migrations.
+     */
+    public function test_namespaces_not_owned_by_a_later_stage_remain_empty(): void
     {
+        $notYetOwned = array_values(array_diff(self::SCHEMAS, ['security']));
+
         $objects = $this->pg()->select(
             'select n.nspname, c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace '
-            .'where n.nspname in ('.implode(',', array_fill(0, count(self::SCHEMAS), '?')).')',
-            self::SCHEMAS,
+            .'where n.nspname in ('.implode(',', array_fill(0, count($notYetOwned), '?')).')',
+            $notYetOwned,
         );
 
-        $this->assertSame([], $objects, 'S02 must not create any object inside the HR namespaces');
+        $this->assertSame([], $objects, 'no object exists yet in a namespace no authorized stage has claimed');
     }
 
     public function test_each_namespace_documents_its_purpose(): void
@@ -90,17 +100,20 @@ class PostgresFoundationTest extends PostgresIntegrationTestCase
         $this->assertSame('read committed', $this->scalar('show transaction_isolation'));
     }
 
-    public function test_only_the_s02_migrations_have_run_and_no_authentication_schema_was_created(): void
+    /**
+     * The S02 migrations are present and applied (a later stage's migrations run alongside them,
+     * so this checks "at least", not "only", once S03+ exists) and, durably, the deferred Laravel
+     * framework skeleton (users/sessions/cache/jobs) is never accidentally activated by any stage.
+     */
+    public function test_the_s02_migrations_have_run_and_no_framework_authentication_schema_was_created(): void
     {
         $ran = collect($this->pg()->select('select migration from migrations order by migration'))->pluck('migration')->all();
 
-        $this->assertSame([
-            '2026_09_20_000001_enable_postgresql_btree_gist_extension',
-            '2026_09_20_000002_create_database_schema_namespaces',
-        ], $ran);
+        $this->assertContains('2026_09_20_000001_enable_postgresql_btree_gist_extension', $ran);
+        $this->assertContains('2026_09_20_000002_create_database_schema_namespaces', $ran);
 
         foreach (['users', 'password_reset_tokens', 'sessions', 'cache', 'cache_locks', 'jobs', 'job_batches', 'failed_jobs'] as $table) {
-            $this->assertNull($this->scalar('select to_regclass(?)', ["public.{$table}"]), "public.{$table} must not exist in S02");
+            $this->assertNull($this->scalar('select to_regclass(?)', ["public.{$table}"]), "public.{$table} must never exist (framework skeleton stays deferred)");
         }
     }
 }

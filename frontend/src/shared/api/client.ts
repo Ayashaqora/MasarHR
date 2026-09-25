@@ -8,8 +8,24 @@ export interface ApiRequestOptions {
   signal?: AbortSignal
 }
 
+const MUTATING_METHODS = new Set(['POST', 'PUT', 'PATCH', 'DELETE'])
+
 function buildUrl(path: string): string {
   return `${env.apiBaseUrl}/${path.replace(/^\/+/, '')}`
+}
+
+/**
+ * Session-cookie authentication (§12 of the S03 authorization) needs the browser to echo the
+ * XSRF-TOKEN cookie back as a header on state-changing requests — that is how Laravel's own CSRF
+ * middleware recognizes a same-site SPA request. GET requests never need it; sending it there too
+ * would be harmless but pointless.
+ */
+function csrfHeader(method: string): Record<string, string> {
+  if (!MUTATING_METHODS.has(method) || typeof document === 'undefined') {
+    return {}
+  }
+  const match = /(?:^|;\s*)XSRF-TOKEN=([^;]*)/.exec(document.cookie)
+  return match ? { 'X-XSRF-TOKEN': decodeURIComponent(match[1] ?? '') } : {}
 }
 
 async function readJson(response: Response): Promise<unknown> {
@@ -41,9 +57,13 @@ export async function apiRequest<T>(path: string, options: ApiRequestOptions = {
   try {
     response = await fetch(buildUrl(path), {
       method,
+      // Browser session + secure cookie authentication (§12): the session and XSRF-TOKEN cookies
+      // must be sent and accepted even when the SPA and API are served from different origins.
+      credentials: 'include',
       headers: {
         Accept: 'application/json',
         ...(body === undefined ? {} : { 'Content-Type': 'application/json' }),
+        ...csrfHeader(method),
         ...headers,
       },
       body: body === undefined ? undefined : JSON.stringify(body),

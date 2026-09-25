@@ -8,8 +8,10 @@ later; it implements no HR functionality.
 ```
 backend/app/
 └── Modules/
-    └── Platform/                      infrastructure-level module (S01)
-        └── Presentation/Http/Controllers/HealthController.php
+    ├── Platform/                      infrastructure-level module (S01)
+    │   └── Presentation/Http/Controllers/HealthController.php
+    └── Security/                      security/authentication/RBAC module (S03)
+        └── Domain/Application/Infrastructure/Presentation — see security-access-foundation.md
 ```
 
 Convention for every future module (to be confirmed by the Architecture Authority when the first
@@ -52,12 +54,13 @@ cache/queue use Redis.
 frontend/src/
 ├── app/          bootstrap: App, router, ErrorBoundary, navigation config
 ├── layouts/      AppShell (header, sidebar navigation, main landmark)
-├── pages/        route-level pages (home, navigation placeholders, not-found)
-├── features/     feature/module boundary — currently only `system-status`
+├── pages/        route-level pages (home, navigation placeholders, security admin, not-found)
+├── features/     feature/module boundary — `system-status`, `auth`, `security-admin` (S03)
 ├── shared/
-│   ├── api/      the only code that talks to /api/v1 (client + error normalization)
+│   ├── api/      the only code that talks to /api/v1 (client + error normalization + CSRF/session transport)
 │   ├── config/   env.ts — single source of runtime configuration
 │   ├── hooks/    shared hooks
+│   ├── security/ permission-code constants shared by auth and security-admin (S03)
 │   └── ui/       shared presentational components
 ├── i18n/         locale definitions, Arabic (source) and English catalogs, provider
 ├── styles/       design tokens + base + component CSS (logical properties for RTL)
@@ -67,8 +70,10 @@ frontend/src/
 - Arabic-first: `<html lang="ar" dir="rtl">`; the provider keeps `lang`/`dir` in sync with the locale.
 - Western digits: `Intl` formatting uses the `-u-nu-latn-ca-gregory` locale extension.
 - English-ready: `en` catalog is type-checked against the Arabic catalog; no language switcher is built.
-- The navigation entries (Home, Employees, Organizational structure, Reports, Settings) are
-  placeholders. Their pages show no data and no controls.
+- The Employees, Organizational structure, Reports and Settings navigation entries remain
+  placeholders; their pages still show no data and no controls. Security (S03) is the first
+  navigation entry with a real, working page behind it — see
+  [security-access-foundation.md](security-access-foundation.md).
 
 ## Error handling
 
@@ -80,3 +85,8 @@ frontend/src/
 
 HR business tables, reference data, employees, organization, contracts, leave, reporting, imports/exports,
 authentication/RBAC, dashboards, production deployment, and every later stage.
+
+Authentication/RBAC is no longer out of scope as of S03 — see
+[security-access-foundation.md](security-access-foundation.md) for what S03 added and what still
+remains for later stages (HR persons/employees, organization hierarchy and scope, audit
+infrastructure, and everything else listed there).

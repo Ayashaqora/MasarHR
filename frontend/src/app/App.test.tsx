@@ -2,7 +2,7 @@ import { screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import indexHtml from '../../index.html?raw'
-import { HEALTH_BODY, jsonResponse, renderApp, stubFetch } from '../test/render'
+import { renderApp, stubAppFetch } from '../test/render'
 
 describe('Masar application shell', () => {
   it('ships an RTL Arabic document root in index.html', () => {
@@ -11,7 +11,7 @@ describe('Masar application shell', () => {
   })
 
   it('renders the Arabic shell with RTL direction and no HR data', async () => {
-    stubFetch(() => jsonResponse(HEALTH_BODY))
+    stubAppFetch()
     renderApp()
 
     expect(document.documentElement).toHaveAttribute('dir', 'rtl')
@@ -32,7 +32,7 @@ describe('Masar application shell', () => {
   })
 
   it('provides a skip link to the main content', () => {
-    stubFetch(() => jsonResponse(HEALTH_BODY))
+    stubAppFetch()
     renderApp()
 
     expect(screen.getByRole('link', { name: 'تخطي إلى المحتوى الرئيسي' })).toHaveAttribute(
@@ -43,7 +43,7 @@ describe('Masar application shell', () => {
   })
 
   it('uses Western digits for dates', async () => {
-    stubFetch(() => jsonResponse(HEALTH_BODY))
+    stubAppFetch()
     renderApp()
 
     const time = await screen.findByText(/2026/)
@@ -52,7 +52,7 @@ describe('Masar application shell', () => {
   })
 
   it('navigates to a placeholder area that shows no functionality', async () => {
-    stubFetch(() => jsonResponse(HEALTH_BODY))
+    stubAppFetch()
     const user = userEvent.setup()
     renderApp()
 
@@ -66,14 +66,14 @@ describe('Masar application shell', () => {
   })
 
   it('shows a not-found page for unknown paths', () => {
-    stubFetch(() => jsonResponse(HEALTH_BODY))
+    stubAppFetch()
     renderApp('/no-such-page')
 
     expect(screen.getByRole('heading', { level: 1, name: 'الصفحة غير موجودة' })).toBeInTheDocument()
   })
 
   it('is English-ready: switches to LTR with English labels', () => {
-    stubFetch(() => jsonResponse(HEALTH_BODY))
+    stubAppFetch()
     renderApp('/', 'en')
 
     expect(document.documentElement).toHaveAttribute('dir', 'ltr')

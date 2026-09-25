@@ -43,6 +43,39 @@ describe('apiRequest', () => {
     })
   })
 
+  it('always sends credentials so the session cookie is included', async () => {
+    const fetchMock = stubFetch(() => jsonResponse({ status: 'ok' }))
+
+    await apiRequest('/health')
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect(init.credentials).toBe('include')
+  })
+
+  it('attaches the XSRF-TOKEN cookie as a header on mutating requests', async () => {
+    document.cookie = 'XSRF-TOKEN=abc%20123'
+    const fetchMock = stubFetch(() => jsonResponse({}))
+
+    await apiRequest('/things', { method: 'POST', body: { a: 1 } })
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect((init.headers as Record<string, string>)['X-XSRF-TOKEN']).toBe('abc 123')
+
+    document.cookie = 'XSRF-TOKEN=; Max-Age=0'
+  })
+
+  it('never sends the XSRF-TOKEN header on a GET request', async () => {
+    document.cookie = 'XSRF-TOKEN=abc123'
+    const fetchMock = stubFetch(() => jsonResponse({}))
+
+    await apiRequest('/things')
+
+    const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit]
+    expect((init.headers as Record<string, string>)['X-XSRF-TOKEN']).toBeUndefined()
+
+    document.cookie = 'XSRF-TOKEN=; Max-Age=0'
+  })
+
   it('normalizes a network failure', async () => {
     vi.stubGlobal('fetch', () => Promise.reject(new TypeError('Failed to fetch')))
 

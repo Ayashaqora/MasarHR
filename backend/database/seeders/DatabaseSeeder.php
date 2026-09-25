@@ -2,7 +2,6 @@
 
 namespace Database\Seeders;
 
-use App\Models\User;
 use Illuminate\Database\Console\Seeds\WithoutModelEvents;
 use Illuminate\Database\Seeder;
 
@@ -12,14 +11,10 @@ class DatabaseSeeder extends Seeder
 
     /**
      * Seed the application's database.
+     *
+     * MasarHR has no public registration and no synthetic default account (§7/§19 of the S03
+     * authorization): the first security principal is created only through
+     * `php artisan masar:security:bootstrap-admin`. This seeder intentionally does nothing.
      */
-    public function run(): void
-    {
-        // User::factory(10)->create();
-
-        User::factory()->create([
-            'name' => 'Test User',
-            'email' => 'test@example.com',
-        ]);
-    }
+    public function run(): void {}
 }

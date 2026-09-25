@@ -50,26 +50,52 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
         return require base_path($relativePath);
     }
 
-    private function rollbackS02(): int
+    /**
+     * Rolls back exactly the two S02 migrations by invoking their down() directly, rather than
+     * through `migrate:rollback --path=...`. Laravel's rollback command only ever considers the
+     * *last recorded batch* (see Migrator::getMigrationsForRollback) and `--path` merely narrows
+     * which of that batch's files are eligible — it does not reach into an earlier batch. Once a
+     * later stage's migrations exist, S02's two migrations are no longer reliably "the last
+     * batch" (that depended on nothing else having migrated since), so this drives the same
+     * down()/up() calls the command would make, directly and batch-independently. This is not a
+     * behavior change to the migrations themselves, only to how this isolated test exercises them.
+     *
+     * Laravel's Migrator normally wraps each migration's down() call in DB::transaction() when the
+     * connection supports transactional DDL (PostgreSQL does), so a real `migrate:rollback` run
+     * gets that atomicity for free. Calling ->down() directly bypasses the Migrator entirely, so
+     * this helper must supply that same atomicity itself: without it, a failure partway through
+     * (e.g. the schema-namespaces migration refusing to drop a still-populated `security` schema)
+     * would leave the schemas already dropped earlier in this method gone for good instead of
+     * rolled back with the rest.
+     */
+    private function rollbackS02(): void
     {
         TestDatabaseGuard::assertConnected();
 
-        return Artisan::call('migrate:rollback', [
-            '--path' => [self::EXTENSION_MIGRATION, self::SCHEMAS_MIGRATION],
-            '--force' => true,
-        ]);
+        DB::transaction(function (): void {
+            $this->migration(self::SCHEMAS_MIGRATION)->down();
+            DB::table('migrations')->where('migration', 'like', '%create_database_schema_namespaces')->delete();
+
+            $this->migration(self::EXTENSION_MIGRATION)->down();
+            DB::table('migrations')->where('migration', 'like', '%enable_postgresql_btree_gist_extension')->delete();
+        });
     }
 
     public function test_rollback_removes_the_namespaces_and_extension_and_migrating_again_restores_them(): void
     {
+        // This round-trip is only meaningful while every schema the S02 migration owns is empty —
+        // by the time S03 exists, `security` legitimately is not (see docs/security-access-foundation.md),
+        // so this test drains it first and restores it via migrateTestDatabase() in tearDown, the
+        // same way it always restores S02's own probe objects.
+        $this->dropSecuritySchemaObjects();
+
         $this->assertSame(8, $this->schemaCount());
         $this->assertTrue($this->extensionInstalled());
 
-        $this->assertSame(0, $this->rollbackS02());
+        $this->rollbackS02();
 
         $this->assertSame(0, $this->schemaCount(), 'empty namespaces are removed by rollback');
         $this->assertFalse($this->extensionInstalled());
-        $this->assertSame(0, (int) $this->scalar('select count(*) from migrations'));
 
         $this->migrateTestDatabase();
 
@@ -79,19 +105,31 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
 
     public function test_rollback_refuses_to_destroy_a_non_empty_schema_and_leaves_everything_intact(): void
     {
-        $this->pg()->statement('create table hr.s02_probe_nonempty (id uuid primary key)');
-        $this->pg()->insert('insert into hr.s02_probe_nonempty (id) values (?)', ['0190f3a0-0000-7000-8000-000000000001']);
+        // `security` already holds S03's tables, so it is itself sufficient to prove the
+        // protection; the schemas are dropped in reverse of SCHEMAS order (migration, automation,
+        // audit, security, reporting, org, ref, hr), and `security` is reached before `hr`.
+        $migrationsBefore = (int) $this->scalar('select count(*) from migrations');
 
         $exception = $this->databaseError(fn () => $this->rollbackS02());
 
         $this->assertInstanceOf(RuntimeException::class, $exception);
         $this->assertStringContainsString('still contains objects', $exception->getMessage());
-        $this->assertStringContainsString('"hr"', $exception->getMessage());
+        $this->assertStringContainsString('"security"', $exception->getMessage());
 
         // PostgreSQL DDL is transactional: the schemas dropped before the failure were restored too.
         $this->assertSame(8, $this->schemaCount());
-        $this->assertSame(1, (int) $this->scalar('select count(*) from hr.s02_probe_nonempty'), 'no data was lost');
-        $this->assertSame(2, (int) $this->scalar('select count(*) from migrations'), 'the migration is still recorded as applied');
+        $this->assertSame(6, (int) $this->scalar(
+            "select count(*) from information_schema.tables where table_schema = 'security'"
+        ), 'no S03 data was lost');
+        $this->assertSame($migrationsBefore, (int) $this->scalar('select count(*) from migrations'), 'the migrations are still recorded as applied');
+    }
+
+    private function dropSecuritySchemaObjects(): void
+    {
+        foreach (['role_permissions', 'principal_roles', 'credentials', 'permissions', 'roles', 'principals'] as $table) {
+            $this->pg()->statement("drop table if exists security.{$table} cascade");
+        }
+        DB::table('migrations')->where('migration', 'like', '2026_09_23%')->delete();
     }
 
     public function test_extension_rollback_refuses_while_an_index_depends_on_it(): void
