@@ -26,6 +26,19 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
 
     private const MARITAL_STATUS_ALIASES_SEED_MIGRATION = 'database/migrations/2026_09_26_000020_seed_ref_marital_status_aliases.php';
 
+    /** S06 migrations, in up() order (down() is applied in reverse — see rollbackS06()). */
+    private const S06_MIGRATIONS = [
+        'database/migrations/2026_09_26_000021_create_ref_monthly_cadre_categories_table.php',
+        'database/migrations/2026_09_26_000022_create_ref_contract_based_population_categories_table.php',
+        'database/migrations/2026_09_26_000023_create_ref_specialty_cadre_category_mappings_table.php',
+        'database/migrations/2026_09_26_000024_create_ref_job_title_administrator_classifications_table.php',
+        'database/migrations/2026_09_26_000025_create_ref_contract_type_population_mappings_table.php',
+        'database/migrations/2026_09_26_000026_seed_ref_employment_status_details.php',
+        'database/migrations/2026_09_26_000027_seed_ref_employment_status_detail_behaviors.php',
+        'database/migrations/2026_09_26_000028_seed_ref_monthly_cadre_categories.php',
+        'database/migrations/2026_09_26_000029_seed_ref_contract_based_population_categories.php',
+    ];
+
     protected function tearDown(): void
     {
         // Whatever a test did, leave the test database fully migrated and free of probe objects.
@@ -152,12 +165,15 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
 
     private function dropReferenceSchemaObjects(): void
     {
-        // Dependency order: the behavior table references employment_status_details, which
-        // references employment_status_categories; marital_status_aliases references
-        // marital_statuses (S05 CORRECTIVE-01 — added on top of the original 16 S05 tables, so it
-        // must drop before the table it points to); every other ref table is a standalone simple
-        // reference-value table with no inbound foreign key.
+        // Dependency order: the three S06 mapping tables reference specialties/job_titles/
+        // contract_types and the two new S06 catalogs, so they drop first; the behavior table
+        // references employment_status_details, which references employment_status_categories;
+        // marital_status_aliases references marital_statuses (S05 CORRECTIVE-01 — added on top of
+        // the original 16 S05 tables, so it must drop before the table it points to); every other
+        // ref table is a standalone simple reference-value table with no inbound foreign key.
         foreach ([
+            'specialty_cadre_category_mappings', 'job_title_administrator_classifications', 'contract_type_population_mappings',
+            'monthly_cadre_categories', 'contract_based_population_categories',
             'employment_status_detail_behaviors', 'employment_status_details', 'employment_status_categories',
             'decision_types', 'marital_status_aliases', 'marital_statuses', 'genders',
             'leave_statuses', 'leave_types', 'supervisory_titles', 'specialties', 'job_titles',
@@ -198,6 +214,52 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
         $this->migrateTestDatabase();
 
         $this->assertSame($countBefore, (int) $this->scalar('select count(*) from ref.marital_status_aliases'));
+    }
+
+    /**
+     * S06 spec §24 ("migration up/down, ... rollback atomicity ... migration rollback preserving
+     * S01–S05"): round-trips all 9 S06 migrations directly, the same batch-independent way
+     * test_marital_status_aliases_corrective_migrations_roll_back_and_reapply_cleanly() already
+     * exercises the two CORRECTIVE-01 migrations — down() in reverse dependency order (seeds
+     * before schema, mapping tables before the catalogs/details they reference), each wrapped in
+     * its own DB::transaction() for atomicity, then migrateTestDatabase() reapplies everything
+     * missing from the `migrations` table in filename order.
+     */
+    public function test_s06_migrations_roll_back_and_reapply_cleanly(): void
+    {
+        $cadreCategoriesBefore = (int) $this->scalar('select count(*) from ref.monthly_cadre_categories');
+        $populationCategoriesBefore = (int) $this->scalar('select count(*) from ref.contract_based_population_categories');
+        $detailsBefore = (int) $this->scalar('select count(*) from ref.employment_status_details');
+        $behaviorsBefore = (int) $this->scalar('select count(*) from ref.employment_status_detail_behaviors');
+
+        $this->assertSame(13, $detailsBefore, 'fixture assumption: the S06 employment_status_details seed already ran');
+        $this->assertSame(12, $cadreCategoriesBefore, 'fixture assumption: the S06 monthly_cadre_categories seed already ran');
+        $this->assertSame(2, $populationCategoriesBefore, 'fixture assumption: the S06 contract_based_population_categories seed already ran');
+
+        foreach (array_reverse(self::S06_MIGRATIONS) as $path) {
+            DB::transaction(function () use ($path): void {
+                $this->migration($path)->down();
+                $migrationName = pathinfo($path, PATHINFO_FILENAME);
+                DB::table('migrations')->where('migration', $migrationName)->delete();
+            });
+        }
+
+        $this->assertSame(0, (int) $this->scalar(
+            "select count(*) from information_schema.tables where table_schema = 'ref' and table_name in ('monthly_cadre_categories', 'contract_based_population_categories', 'specialty_cadre_category_mappings', 'job_title_administrator_classifications', 'contract_type_population_mappings')"
+        ), 'down() must drop every S06 table, not just its rows');
+        $this->assertSame(0, (int) $this->scalar('select count(*) from ref.employment_status_details'), 'the S06 detail seed rows must be gone');
+        $this->assertSame(0, (int) $this->scalar('select count(*) from ref.employment_status_detail_behaviors'), 'the S06 behavior seed rows must be gone');
+
+        // S01–S05 objects the S06 migrations never touched must survive untouched.
+        $this->assertSame(4, (int) $this->scalar('select count(*) from ref.marital_statuses'));
+        $this->assertGreaterThan(0, (int) $this->scalar('select count(*) from ref.marital_status_aliases'));
+
+        $this->migrateTestDatabase();
+
+        $this->assertSame($detailsBefore, (int) $this->scalar('select count(*) from ref.employment_status_details'));
+        $this->assertSame($behaviorsBefore, (int) $this->scalar('select count(*) from ref.employment_status_detail_behaviors'));
+        $this->assertSame($cadreCategoriesBefore, (int) $this->scalar('select count(*) from ref.monthly_cadre_categories'));
+        $this->assertSame($populationCategoriesBefore, (int) $this->scalar('select count(*) from ref.contract_based_population_categories'));
     }
 
     public function test_extension_rollback_refuses_while_an_index_depends_on_it(): void

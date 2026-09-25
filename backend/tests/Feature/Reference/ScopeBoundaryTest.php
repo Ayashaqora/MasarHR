@@ -5,16 +5,18 @@ namespace Tests\Feature\Reference;
 use Illuminate\Support\Facades\DB;
 
 /**
- * S05 scope audit (docs/reference-data-foundation-specification.md §26): the ref schema contains
- * exactly the 16 originally authorized reference tables, plus the CORRECTIVE-01
- * marital_status_aliases lookup table (§22a) — 17 total — and nothing else; no
- * Person/Employee/Employment/Organization/transaction table leaked in via S05; hr/org/reporting
+ * S05/S06 scope audit (docs/reference-data-foundation-specification.md §26,
+ * docs/versioned-behavior-reporting-references-specification.md §12/§34): the ref schema contains
+ * exactly the 16 originally S05-authorized reference tables, plus the CORRECTIVE-01
+ * marital_status_aliases lookup table (§22a), plus the 5 S06 tables (2 rich catalogs + 3 temporal
+ * mappings, spec §12) — 22 total — and nothing else; no
+ * Person/Employee/Employment/Organization/transaction table leaked in via S05 or S06; hr/org/reporting
  * stay empty; no generic Command-Bus/CRUD-service/repository/Unit-of-Work infrastructure was
  * introduced.
  */
 class ScopeBoundaryTest extends ReferenceTestCase
 {
-    public function test_ref_schema_contains_exactly_the_seventeen_authorized_tables(): void
+    public function test_ref_schema_contains_exactly_the_twenty_two_authorized_tables(): void
     {
         $expected = [
             'genders', 'marital_statuses', 'marital_status_aliases', 'decision_types', 'employment_status_categories',
@@ -22,6 +24,10 @@ class ScopeBoundaryTest extends ReferenceTestCase
             'employment_types', 'contract_types', 'employment_categories', 'qualification_types',
             'academic_degrees', 'job_titles', 'specialties', 'supervisory_titles',
             'leave_types', 'leave_statuses',
+            // S06 additions (spec §12):
+            'monthly_cadre_categories', 'contract_based_population_categories',
+            'specialty_cadre_category_mappings', 'job_title_administrator_classifications',
+            'contract_type_population_mappings',
         ];
 
         $tables = DB::table('information_schema.tables')->where('table_schema', 'ref')->pluck('table_name')->all();

@@ -2,12 +2,17 @@
 
 use App\Modules\Platform\Presentation\Http\Controllers\HealthController;
 use App\Modules\Reference\Infrastructure\Authorization\ReferencePermissionCatalog as RefPerm;
+use App\Modules\Reference\Presentation\Http\Controllers\ContractBasedPopulationCategoryController;
+use App\Modules\Reference\Presentation\Http\Controllers\ContractTypePopulationMappingController;
 use App\Modules\Reference\Presentation\Http\Controllers\DecisionTypeController;
 use App\Modules\Reference\Presentation\Http\Controllers\EmploymentStatusCategoryController;
 use App\Modules\Reference\Presentation\Http\Controllers\EmploymentStatusDetailBehaviorController;
 use App\Modules\Reference\Presentation\Http\Controllers\EmploymentStatusDetailController;
 use App\Modules\Reference\Presentation\Http\Controllers\GenderController;
+use App\Modules\Reference\Presentation\Http\Controllers\JobTitleAdministratorClassificationController;
 use App\Modules\Reference\Presentation\Http\Controllers\MaritalStatusController;
+use App\Modules\Reference\Presentation\Http\Controllers\MonthlyCadreCategoryController;
+use App\Modules\Reference\Presentation\Http\Controllers\SpecialtyCadreCategoryMappingController;
 use App\Modules\Security\Infrastructure\Authorization\PermissionCatalog as Perm;
 use App\Modules\Security\Presentation\Http\Controllers\Auth\ChangeOwnPasswordController;
 use App\Modules\Security\Presentation\Http\Controllers\Auth\CsrfCookieController;
@@ -103,6 +108,8 @@ Route::middleware('web')->group(function (): void {
                 'marital-statuses' => [MaritalStatusController::class, 'maritalStatus'],
                 'decision-types' => [DecisionTypeController::class, 'decisionType'],
                 'employment-status-categories' => [EmploymentStatusCategoryController::class, 'employmentStatusCategory'],
+                'monthly-cadre-categories' => [MonthlyCadreCategoryController::class, 'monthlyCadreCategory'],
+                'contract-based-population-categories' => [ContractBasedPopulationCategoryController::class, 'contractBasedPopulationCategory'],
             ];
 
             foreach ($simpleFamilies as $segment => [$controller, $param]) {
@@ -137,5 +144,22 @@ Route::middleware('web')->group(function (): void {
                 ->middleware('permission:'.RefPerm::REFERENCE_VIEW)->name('employment-status-details.behaviors.index');
             Route::post('/employment-status-details/{employmentStatusDetail}/behaviors', [EmploymentStatusDetailBehaviorController::class, 'store'])
                 ->middleware('permission:'.RefPerm::REFERENCE_MANAGE)->name('employment-status-details.behaviors.store');
+
+            // S06 spec §15: three reporting-reference mapping sub-resources, same
+            // index(list)+store(define new period) shape as employment-status-details/.../behaviors.
+            Route::get('/specialties/{specialty}/cadre-category-mappings', [SpecialtyCadreCategoryMappingController::class, 'index'])
+                ->middleware('permission:'.RefPerm::REFERENCE_VIEW)->name('specialties.cadre-category-mappings.index');
+            Route::post('/specialties/{specialty}/cadre-category-mappings', [SpecialtyCadreCategoryMappingController::class, 'store'])
+                ->middleware('permission:'.RefPerm::REFERENCE_MANAGE)->name('specialties.cadre-category-mappings.store');
+
+            Route::get('/job-titles/{jobTitle}/administrator-classifications', [JobTitleAdministratorClassificationController::class, 'index'])
+                ->middleware('permission:'.RefPerm::REFERENCE_VIEW)->name('job-titles.administrator-classifications.index');
+            Route::post('/job-titles/{jobTitle}/administrator-classifications', [JobTitleAdministratorClassificationController::class, 'store'])
+                ->middleware('permission:'.RefPerm::REFERENCE_MANAGE)->name('job-titles.administrator-classifications.store');
+
+            Route::get('/contract-types/{contractType}/population-mappings', [ContractTypePopulationMappingController::class, 'index'])
+                ->middleware('permission:'.RefPerm::REFERENCE_VIEW)->name('contract-types.population-mappings.index');
+            Route::post('/contract-types/{contractType}/population-mappings', [ContractTypePopulationMappingController::class, 'store'])
+                ->middleware('permission:'.RefPerm::REFERENCE_MANAGE)->name('contract-types.population-mappings.store');
         });
 });
