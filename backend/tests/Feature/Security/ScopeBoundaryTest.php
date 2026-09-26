@@ -87,4 +87,45 @@ class ScopeBoundaryTest extends SecurityTestCase
         $s02Migrations = glob(base_path('database/migrations/2026_09_20_*.php'));
         $this->assertCount(2, $s02Migrations, 'S03 must not add to or remove S02\'s migration files');
     }
+
+    public function test_security_schema_contains_exactly_the_seven_authorized_tables(): void
+    {
+        // The original six S03 tables plus S08's organizational_scope_grants
+        // (docs/organizational-access-scope-specification.md §10) — no other table has been added
+        // to this schema by any stage through S08.
+        $tables = DB::table('information_schema.tables')->where('table_schema', 'security')->pluck('table_name')->all();
+        sort($tables);
+
+        $this->assertSame(
+            ['credentials', 'organizational_scope_grants', 'permissions', 'principal_roles', 'principals', 'role_permissions', 'roles'],
+            $tables,
+        );
+    }
+
+    public function test_every_organizational_scope_route_carries_a_permission_middleware(): void
+    {
+        $routes = collect(app('router')->getRoutes())
+            ->filter(fn ($route) => str_contains($route->uri(), 'organizational-scopes'));
+
+        $this->assertGreaterThan(0, $routes->count(), 'fixture assumption: S08 organizational-scope routes are registered');
+
+        foreach ($routes as $route) {
+            $hasPermissionMiddleware = collect($route->gatherMiddleware())
+                ->contains(fn ($middleware) => str_starts_with($middleware, 'permission:'));
+
+            $this->assertTrue($hasPermissionMiddleware, "route {$route->uri()} is missing a permission: middleware entry (spec §21)");
+        }
+    }
+
+    public function test_no_s08_organizational_scope_route_exposes_a_hard_delete_of_a_principal_or_unit(): void
+    {
+        // DELETE exists on this surface (revoking a grant is a real row delete — spec §12), but it
+        // must only ever target a grant row, never a principal or an organizational unit.
+        $routes = collect(app('router')->getRoutes())
+            ->filter(fn ($route) => str_contains($route->uri(), 'organizational-scopes') && in_array('DELETE', $route->methods(), true));
+
+        foreach ($routes as $route) {
+            $this->assertStringContainsString('{organizationalScopeGrant}', $route->uri(), 'a DELETE route on this surface must target a grant, never a principal or unit directly');
+        }
+    }
 }

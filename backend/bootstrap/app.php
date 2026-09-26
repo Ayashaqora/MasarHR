@@ -7,6 +7,7 @@ use App\Modules\Reference\Domain\Exceptions\DuplicateReferenceCodeException;
 use App\Modules\Reference\Domain\Exceptions\OverlappingBehaviorPeriodException;
 use App\Modules\Reference\Domain\Exceptions\StaleVersionException as ReferenceStaleVersionException;
 use App\Modules\Security\Domain\Exceptions\CredentialAlreadyExistsException;
+use App\Modules\Security\Domain\Exceptions\DuplicateOrganizationalScopeGrantException;
 use App\Modules\Security\Domain\Exceptions\DuplicatePermissionGrantException;
 use App\Modules\Security\Domain\Exceptions\DuplicateRoleAssignmentException;
 use App\Modules\Security\Domain\Exceptions\DuplicateRoleCodeException;
@@ -74,6 +75,7 @@ return Application::configure(basePath: dirname(__DIR__))
             OverlappingBehaviorPeriodException::class,
             OrganizationStaleVersionException::class,
             WouldCreateCycleException::class,
+            DuplicateOrganizationalScopeGrantException::class,
         ]);
 
         // §22 of the S03 authorization: preserve stated HTTP semantics for Security domain
@@ -100,6 +102,9 @@ return Application::configure(basePath: dirname(__DIR__))
         // (docs/organization-hierarchy-foundation-specification.md §26).
         $exceptions->render(fn (OrganizationStaleVersionException $e) => response()->json(['message' => $e->getMessage()], 409));
         $exceptions->render(fn (WouldCreateCycleException $e) => response()->json(['message' => $e->getMessage()], 409));
+
+        // S08 Security-module domain failure (docs/organizational-access-scope-specification.md §20).
+        $exceptions->render(fn (DuplicateOrganizationalScopeGrantException $e) => response()->json(['message' => $e->getMessage()], 409));
 
         $exceptions->render(fn (DuplicateUsernameException $e) => response()->json([
             'message' => $e->getMessage(),

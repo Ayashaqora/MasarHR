@@ -122,9 +122,14 @@ class PrincipalTest extends SecurityTestCase
             $this->assertDoesNotMatchRegularExpression('/\$principal->delete\s*\(|Principal::destroy\s*\(/i', $code, "no principal delete/destroy call in $file");
         }
 
-        // No route exposes a DELETE on a principal.
+        // No route exposes a DELETE on a principal. 'roles' and 'organizational-scopes' are both
+        // excluded deliberately: a DELETE there removes a join-table/grant row (a role assignment,
+        // or — S08 — an organizational-scope grant), never the principal itself (spec §12/§20).
         $hasDeleteRoute = collect(Route::getRoutes())
-            ->contains(fn ($route) => str_contains($route->uri(), 'security/principals') && in_array('DELETE', $route->methods(), true) && ! str_contains($route->uri(), 'roles'));
+            ->contains(fn ($route) => str_contains($route->uri(), 'security/principals')
+                && in_array('DELETE', $route->methods(), true)
+                && ! str_contains($route->uri(), 'roles')
+                && ! str_contains($route->uri(), 'organizational-scopes'));
         $this->assertFalse($hasDeleteRoute, 'there must be no DELETE /security/principals/{id} route');
     }
 

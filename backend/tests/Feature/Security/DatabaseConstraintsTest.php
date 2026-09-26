@@ -21,8 +21,10 @@ class DatabaseConstraintsTest extends SecurityTestCase
             ->where('table_schema', 'security')
             ->pluck('table_name')->sort()->values()->all();
 
+        // 'organizational_scope_grants' is S08's own table (spec §10), added on top of the
+        // original six S03 tables.
         $this->assertSame(
-            ['credentials', 'permissions', 'principal_roles', 'principals', 'role_permissions', 'roles'],
+            ['credentials', 'organizational_scope_grants', 'permissions', 'principal_roles', 'principals', 'role_permissions', 'roles'],
             $tables,
         );
     }

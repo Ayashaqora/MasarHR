@@ -21,6 +21,7 @@ use App\Modules\Security\Presentation\Http\Controllers\Auth\CsrfCookieController
 use App\Modules\Security\Presentation\Http\Controllers\Auth\CurrentPrincipalController;
 use App\Modules\Security\Presentation\Http\Controllers\Auth\LoginController;
 use App\Modules\Security\Presentation\Http\Controllers\Auth\LogoutController;
+use App\Modules\Security\Presentation\Http\Controllers\Security\OrganizationalScopeController;
 use App\Modules\Security\Presentation\Http\Controllers\Security\PermissionController;
 use App\Modules\Security\Presentation\Http\Controllers\Security\PrincipalController;
 use App\Modules\Security\Presentation\Http\Controllers\Security\RoleAssignmentController;
@@ -99,6 +100,19 @@ Route::middleware('web')->group(function (): void {
 
             Route::get('/permissions', [PermissionController::class, 'index'])
                 ->middleware('permission:'.Perm::PERMISSIONS_VIEW)->name('permissions.index');
+
+            // S08 (docs/organizational-access-scope-specification.md §18). 'effective' is
+            // registered before the {organizationalScopeGrant} wildcard route, mirroring the exact
+            // ordering discipline S07 already used for /units/roots vs /units/{organizationalUnit},
+            // so it is never captured by route-model binding.
+            Route::get('/principals/{principal}/organizational-scopes/effective', [OrganizationalScopeController::class, 'effective'])
+                ->middleware('permission:'.Perm::ORGANIZATION_SCOPES_MANAGE)->name('principals.organizational-scopes.effective');
+            Route::get('/principals/{principal}/organizational-scopes', [OrganizationalScopeController::class, 'index'])
+                ->middleware('permission:'.Perm::ORGANIZATION_SCOPES_MANAGE)->name('principals.organizational-scopes.index');
+            Route::post('/principals/{principal}/organizational-scopes', [OrganizationalScopeController::class, 'store'])
+                ->middleware('permission:'.Perm::ORGANIZATION_SCOPES_MANAGE)->name('principals.organizational-scopes.store');
+            Route::delete('/principals/{principal}/organizational-scopes/{organizationalScopeGrant}', [OrganizationalScopeController::class, 'destroy'])
+                ->middleware('permission:'.Perm::ORGANIZATION_SCOPES_MANAGE)->name('principals.organizational-scopes.destroy');
         });
 
     Route::prefix('reference')

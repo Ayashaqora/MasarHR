@@ -35,15 +35,23 @@ class ScopeBoundaryTest extends OrganizationTestCase
         );
     }
 
-    public function test_no_organizational_scope_column_exists_anywhere_s08_not_implemented(): void
+    public function test_no_organizational_scope_column_exists_outside_s08s_own_table(): void
     {
-        // S08 ("Organizational Access Scope") is explicitly not this stage's subject matter
-        // (spec §28). No table anywhere may carry a subtree-visibility column yet.
+        // S08 ("Organizational Access Scope") is now implemented, and legitimately owns exactly one
+        // column of this shape: security.organizational_scope_grants.organizational_unit_id (see
+        // docs/organizational-access-scope-specification.md §10). No table anywhere else — and no
+        // column of the other, never-used shapes — may carry a subtree-visibility column. This is
+        // the S07→S08 handoff test itself disclosed as no longer "not implemented" (mirrors the
+        // exact additive-disclosure pattern S06→S07 already used elsewhere in this suite).
         $offendingTables = DB::table('information_schema.columns')
             ->whereIn('column_name', ['organizational_unit_id', 'organization_scope', 'org_unit_id', 'branch_id'])
+            ->where(function ($query): void {
+                $query->where('table_schema', '!=', 'security')
+                    ->orWhere('table_name', '!=', 'organizational_scope_grants');
+            })
             ->pluck('table_name')->all();
 
-        $this->assertSame([], $offendingTables, 'no S08 organizational-scope column may exist yet');
+        $this->assertSame([], $offendingTables, 'no organizational-scope column may exist outside security.organizational_scope_grants');
     }
 
     public function test_no_hr_person_employee_or_transaction_tables_leaked_in_via_s07(): void

@@ -27,6 +27,14 @@ final class PermissionCatalog
 
     public const PERMISSIONS_VIEW = 'security.permissions.view';
 
+    /**
+     * S08 (docs/organizational-access-scope-specification.md §18): gates both administering
+     * (grant/revoke) and reading a principal's organizational scope grants — mirrors the existing
+     * ROLE_ASSIGNMENTS_MANAGE precedent, which alone gates both creating and removing a role
+     * assignment with no separate "view" permission either.
+     */
+    public const ORGANIZATION_SCOPES_MANAGE = 'security.organization_scopes.manage';
+
     public const ALL = [
         self::USERS_VIEW,
         self::USERS_CREATE,
@@ -36,5 +44,6 @@ final class PermissionCatalog
         self::ROLES_MANAGE,
         self::ROLE_ASSIGNMENTS_MANAGE,
         self::PERMISSIONS_VIEW,
+        self::ORGANIZATION_SCOPES_MANAGE,
     ];
 }
