@@ -55,12 +55,14 @@ class ScopeBoundaryTest extends AuditTestCase
         }
     }
 
-    public function test_hr_org_and_reporting_schemas_remain_empty_after_s04(): void
+    public function test_hr_and_reporting_schemas_remain_empty_after_s04(): void
     {
         // 'ref' is deliberately excluded here: S05 is the schema's own authorized owning stage and
         // populates it (see tests/Feature/Reference/ScopeBoundaryTest.php for S05's own boundary
-        // check). hr/org/reporting remain untouched by every stage through S05.
-        foreach (['hr', 'org', 'reporting'] as $schema) {
+        // check). 'org' is likewise excluded: S07 is its own authorized owning stage (see
+        // tests/Feature/Organization/ScopeBoundaryTest.php). hr/reporting remain untouched by
+        // every stage through S07.
+        foreach (['hr', 'reporting'] as $schema) {
             $count = DB::table('information_schema.tables')->where('table_schema', $schema)->count();
             $this->assertSame(0, $count, "schema {$schema} must stay empty until its owning stage runs");
         }

@@ -26,9 +26,12 @@ class ScopeBoundaryTest extends SecurityTestCase
         }
     }
 
-    public function test_hr_org_and_reporting_schemas_remain_empty(): void
+    public function test_hr_and_reporting_schemas_remain_empty(): void
     {
-        foreach (['hr', 'org', 'reporting'] as $schema) {
+        // 'org' is deliberately excluded here: S07 is that schema's own authorized owning stage
+        // and populates it (see tests/Feature/Organization/ScopeBoundaryTest.php for S07's own
+        // boundary check). hr/reporting remain untouched by every stage through S07.
+        foreach (['hr', 'reporting'] as $schema) {
             $count = DB::table('information_schema.tables')->where('table_schema', $schema)->count();
             $this->assertSame(0, $count, "schema {$schema} must stay empty until its owning stage runs");
         }

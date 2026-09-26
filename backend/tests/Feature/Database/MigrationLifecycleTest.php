@@ -39,6 +39,17 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
         'database/migrations/2026_09_26_000029_seed_ref_contract_based_population_categories.php',
     ];
 
+    /**
+     * S07 migrations, in up() order (down() is applied in reverse — see
+     * test_s07_migrations_roll_back_and_reapply_cleanly()). Dated 2026_09_27 (a day after S05/S06)
+     * deliberately, so this stage's own migrations never collide with dropReferenceSchemaObjects()'s
+     * blanket '2026_09_26%' migrations-table cleanup below.
+     */
+    private const S07_MIGRATIONS = [
+        'database/migrations/2026_09_27_000001_create_org_organizational_units_table.php',
+        'database/migrations/2026_09_27_000002_seed_security_organization_permissions.php',
+    ];
+
     protected function tearDown(): void
     {
         // Whatever a test did, leave the test database fully migrated and free of probe objects.
@@ -109,6 +120,7 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
         $this->dropSecuritySchemaObjects();
         $this->dropAuditSchemaObjects();
         $this->dropReferenceSchemaObjects();
+        $this->dropOrganizationSchemaObjects();
 
         $this->assertSame(8, $this->schemaCount());
         $this->assertTrue($this->extensionInstalled());
@@ -182,6 +194,18 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
             $this->pg()->statement("drop table if exists ref.{$table} cascade");
         }
         DB::table('migrations')->where('migration', 'like', '2026_09_26%')->delete();
+    }
+
+    /**
+     * S07's sole table plus its permission-seed migration (dated 2026_09_27 deliberately — see
+     * S07_MIGRATIONS — so this cleanup never overlaps dropReferenceSchemaObjects()'s '2026_09_26%'
+     * pattern above). security.permissions itself is already dropped wholesale by
+     * dropSecuritySchemaObjects(), so the two organization.* rows it seeds need no separate delete.
+     */
+    private function dropOrganizationSchemaObjects(): void
+    {
+        $this->pg()->statement('drop table if exists org.organizational_units cascade');
+        DB::table('migrations')->where('migration', 'like', '2026_09_27%')->delete();
     }
 
     /**
@@ -260,6 +284,43 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
         $this->assertSame($behaviorsBefore, (int) $this->scalar('select count(*) from ref.employment_status_detail_behaviors'));
         $this->assertSame($cadreCategoriesBefore, (int) $this->scalar('select count(*) from ref.monthly_cadre_categories'));
         $this->assertSame($populationCategoriesBefore, (int) $this->scalar('select count(*) from ref.contract_based_population_categories'));
+    }
+
+    /**
+     * S07 spec §21/§23 ("migration up/down ... rollback atomicity"): round-trips both S07
+     * migrations directly, the same batch-independent way test_s06_migrations_roll_back_and_reapply_
+     * cleanly() exercises S06's — down() in reverse order (the permission seed before the table it
+     * depends on for its FK-free insert), each wrapped in its own DB::transaction(), then
+     * migrateTestDatabase() reapplies everything missing from the `migrations` table in filename
+     * order (the table-creation migration, dated 2026_09_27_000001, sorts before the seed,
+     * 2026_09_27_000002, so the table exists before it is seeded).
+     */
+    public function test_s07_migrations_roll_back_and_reapply_cleanly(): void
+    {
+        $organizationPermissionsBefore = (int) $this->scalar("select count(*) from security.permissions where module = 'organization'");
+        $this->assertSame(2, $organizationPermissionsBefore, 'fixture assumption: the S07 organization permission seed already ran');
+
+        foreach (array_reverse(self::S07_MIGRATIONS) as $path) {
+            DB::transaction(function () use ($path): void {
+                $this->migration($path)->down();
+                $migrationName = pathinfo($path, PATHINFO_FILENAME);
+                DB::table('migrations')->where('migration', $migrationName)->delete();
+            });
+        }
+
+        $this->assertSame(0, (int) $this->scalar(
+            "select count(*) from information_schema.tables where table_schema = 'org' and table_name = 'organizational_units'"
+        ), 'down() must drop the org.organizational_units table itself, not just its rows');
+        $this->assertSame(0, (int) $this->scalar("select count(*) from security.permissions where module = 'organization'"), 'the S07 permission seed rows must be gone');
+
+        // S01–S06 objects the S07 migrations never touched must survive untouched.
+        $this->assertGreaterThan(0, (int) $this->scalar('select count(*) from security.permissions'));
+        $this->assertSame(4, (int) $this->scalar('select count(*) from ref.marital_statuses'));
+
+        $this->migrateTestDatabase();
+
+        $this->assertSame($organizationPermissionsBefore, (int) $this->scalar("select count(*) from security.permissions where module = 'organization'"));
+        $this->assertSame(0, (int) $this->scalar('select count(*) from org.organizational_units'), 'S07 seeds zero organizational_units rows (spec §24)');
     }
 
     public function test_extension_rollback_refuses_while_an_index_depends_on_it(): void

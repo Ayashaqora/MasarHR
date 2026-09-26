@@ -10,9 +10,10 @@ use Illuminate\Support\Facades\DB;
  * exactly the 16 originally S05-authorized reference tables, plus the CORRECTIVE-01
  * marital_status_aliases lookup table (§22a), plus the 5 S06 tables (2 rich catalogs + 3 temporal
  * mappings, spec §12) — 22 total — and nothing else; no
- * Person/Employee/Employment/Organization/transaction table leaked in via S05 or S06; hr/org/reporting
- * stay empty; no generic Command-Bus/CRUD-service/repository/Unit-of-Work infrastructure was
- * introduced.
+ * Person/Employee/Employment/Organization/transaction table leaked in via S05 or S06; hr/reporting
+ * stay empty (org stays empty only through S06 — S07 legitimately populates it, see the note on
+ * test_hr_and_reporting_schemas_remain_empty_after_s05() below); no generic
+ * Command-Bus/CRUD-service/repository/Unit-of-Work infrastructure was introduced.
  */
 class ScopeBoundaryTest extends ReferenceTestCase
 {
@@ -37,9 +38,13 @@ class ScopeBoundaryTest extends ReferenceTestCase
         $this->assertSame($expected, $tables);
     }
 
-    public function test_hr_org_and_reporting_schemas_remain_empty_after_s05(): void
+    public function test_hr_and_reporting_schemas_remain_empty_after_s05(): void
     {
-        foreach (['hr', 'org', 'reporting'] as $schema) {
+        // 'org' was empty through S05/S06 and is deliberately excluded here now that S07
+        // (docs/organization-hierarchy-foundation-specification.md) has populated it with its own
+        // table, org.organizational_units — that stage's own ScopeBoundaryTest
+        // (tests/Feature/Organization/ScopeBoundaryTest.php) asserts its exact, narrow contents.
+        foreach (['hr', 'reporting'] as $schema) {
             $count = DB::table('information_schema.tables')->where('table_schema', $schema)->count();
             $this->assertSame(0, $count, "schema {$schema} must stay empty until its owning stage runs");
         }

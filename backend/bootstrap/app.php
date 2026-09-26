@@ -1,5 +1,7 @@
 <?php
 
+use App\Modules\Organization\Domain\Exceptions\StaleVersionException as OrganizationStaleVersionException;
+use App\Modules\Organization\Domain\Exceptions\WouldCreateCycleException;
 use App\Modules\Platform\Presentation\Http\Middleware\ResolveCommandContext;
 use App\Modules\Reference\Domain\Exceptions\DuplicateReferenceCodeException;
 use App\Modules\Reference\Domain\Exceptions\OverlappingBehaviorPeriodException;
@@ -70,6 +72,8 @@ return Application::configure(basePath: dirname(__DIR__))
             ReferenceStaleVersionException::class,
             DuplicateReferenceCodeException::class,
             OverlappingBehaviorPeriodException::class,
+            OrganizationStaleVersionException::class,
+            WouldCreateCycleException::class,
         ]);
 
         // §22 of the S03 authorization: preserve stated HTTP semantics for Security domain
@@ -91,6 +95,11 @@ return Application::configure(basePath: dirname(__DIR__))
             'message' => $e->getMessage(),
             'errors' => ['code' => [$e->getMessage()]],
         ], 422));
+
+        // S07 Organization-module domain failures
+        // (docs/organization-hierarchy-foundation-specification.md §26).
+        $exceptions->render(fn (OrganizationStaleVersionException $e) => response()->json(['message' => $e->getMessage()], 409));
+        $exceptions->render(fn (WouldCreateCycleException $e) => response()->json(['message' => $e->getMessage()], 409));
 
         $exceptions->render(fn (DuplicateUsernameException $e) => response()->json([
             'message' => $e->getMessage(),

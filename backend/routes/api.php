@@ -1,5 +1,7 @@
 <?php
 
+use App\Modules\Organization\Infrastructure\Authorization\OrganizationPermissionCatalog as OrgPerm;
+use App\Modules\Organization\Presentation\Http\Controllers\OrganizationalUnitController;
 use App\Modules\Platform\Presentation\Http\Controllers\HealthController;
 use App\Modules\Reference\Infrastructure\Authorization\ReferencePermissionCatalog as RefPerm;
 use App\Modules\Reference\Presentation\Http\Controllers\ContractBasedPopulationCategoryController;
@@ -161,5 +163,36 @@ Route::middleware('web')->group(function (): void {
                 ->middleware('permission:'.RefPerm::REFERENCE_VIEW)->name('contract-types.population-mappings.index');
             Route::post('/contract-types/{contractType}/population-mappings', [ContractTypePopulationMappingController::class, 'store'])
                 ->middleware('permission:'.RefPerm::REFERENCE_MANAGE)->name('contract-types.population-mappings.store');
+        });
+
+    // S07 spec §15: /organization/units/roots is registered before the {organizationalUnit}
+    // wildcard so "roots" is never captured as a route-model-bound unit id.
+    Route::prefix('organization')
+        ->name('api.v1.organization.')
+        ->middleware(['auth:web', 'principal.active', 'resolve.context'])
+        ->group(function (): void {
+            Route::get('/units', [OrganizationalUnitController::class, 'index'])
+                ->middleware('permission:'.OrgPerm::ORGANIZATION_VIEW)->name('units.index');
+            Route::get('/units/roots', [OrganizationalUnitController::class, 'roots'])
+                ->middleware('permission:'.OrgPerm::ORGANIZATION_VIEW)->name('units.roots');
+            Route::get('/units/{organizationalUnit}', [OrganizationalUnitController::class, 'show'])
+                ->middleware('permission:'.OrgPerm::ORGANIZATION_VIEW)->name('units.show');
+            Route::get('/units/{organizationalUnit}/children', [OrganizationalUnitController::class, 'children'])
+                ->middleware('permission:'.OrgPerm::ORGANIZATION_VIEW)->name('units.children');
+            Route::get('/units/{organizationalUnit}/ancestors', [OrganizationalUnitController::class, 'ancestors'])
+                ->middleware('permission:'.OrgPerm::ORGANIZATION_VIEW)->name('units.ancestors');
+            Route::get('/units/{organizationalUnit}/descendants', [OrganizationalUnitController::class, 'descendants'])
+                ->middleware('permission:'.OrgPerm::ORGANIZATION_VIEW)->name('units.descendants');
+
+            Route::post('/units', [OrganizationalUnitController::class, 'store'])
+                ->middleware('permission:'.OrgPerm::ORGANIZATION_MANAGE)->name('units.store');
+            Route::patch('/units/{organizationalUnit}', [OrganizationalUnitController::class, 'rename'])
+                ->middleware('permission:'.OrgPerm::ORGANIZATION_MANAGE)->name('units.rename');
+            Route::post('/units/{organizationalUnit}/move', [OrganizationalUnitController::class, 'move'])
+                ->middleware('permission:'.OrgPerm::ORGANIZATION_MANAGE)->name('units.move');
+            Route::post('/units/{organizationalUnit}/activate', [OrganizationalUnitController::class, 'activate'])
+                ->middleware('permission:'.OrgPerm::ORGANIZATION_MANAGE)->name('units.activate');
+            Route::post('/units/{organizationalUnit}/deactivate', [OrganizationalUnitController::class, 'deactivate'])
+                ->middleware('permission:'.OrgPerm::ORGANIZATION_MANAGE)->name('units.deactivate');
         });
 });
