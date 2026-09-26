@@ -44,7 +44,10 @@ class ScopeBoundaryTest extends ReferenceTestCase
         // (docs/organization-hierarchy-foundation-specification.md) has populated it with its own
         // table, org.organizational_units — that stage's own ScopeBoundaryTest
         // (tests/Feature/Organization/ScopeBoundaryTest.php) asserts its exact, narrow contents.
-        foreach (['hr', 'reporting'] as $schema) {
+        // 'hr' is likewise excluded now that S09
+        // (docs/person-employment-foundation-specification.md) has populated it — see
+        // tests/Feature/HumanResources/ScopeBoundaryTest.php.
+        foreach (['reporting'] as $schema) {
             $count = DB::table('information_schema.tables')->where('table_schema', $schema)->count();
             $this->assertSame(0, $count, "schema {$schema} must stay empty until its owning stage runs");
         }
@@ -52,12 +55,17 @@ class ScopeBoundaryTest extends ReferenceTestCase
 
     public function test_no_hr_person_employee_or_organization_tables_leaked_in_via_s05(): void
     {
+        // 'hr' is deliberately excluded here now that S09
+        // (docs/person-employment-foundation-specification.md) is its own authorized owning
+        // stage and legitimately populates it with hr.persons/hr.employment_relationships — both
+        // of which would otherwise trip this exact forbidden-word list. See
+        // tests/Feature/HumanResources/ScopeBoundaryTest.php for S09's own precise boundary check.
         $forbidden = ['employee', 'employees', 'person', 'persons', 'national_id',
             'organization_unit', 'organization_units', 'contract_record', 'leave_request',
             'secondment', 'transfer', 'reappointment', ];
 
         $tables = DB::table('information_schema.tables')
-            ->whereIn('table_schema', ['ref', 'hr', 'org', 'reporting', 'public'])
+            ->whereIn('table_schema', ['ref', 'org', 'reporting', 'public'])
             ->pluck('table_name');
 
         foreach ($tables as $table) {

@@ -1,5 +1,8 @@
 <?php
 
+use App\Modules\HumanResources\Infrastructure\Authorization\HumanResourcesPermissionCatalog as HrPerm;
+use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentRelationshipController;
+use App\Modules\HumanResources\Presentation\Http\Controllers\PersonController;
 use App\Modules\Organization\Infrastructure\Authorization\OrganizationPermissionCatalog as OrgPerm;
 use App\Modules\Organization\Presentation\Http\Controllers\OrganizationalUnitController;
 use App\Modules\Platform\Presentation\Http\Controllers\HealthController;
@@ -208,5 +211,26 @@ Route::middleware('web')->group(function (): void {
                 ->middleware('permission:'.OrgPerm::ORGANIZATION_MANAGE)->name('units.activate');
             Route::post('/units/{organizationalUnit}/deactivate', [OrganizationalUnitController::class, 'deactivate'])
                 ->middleware('permission:'.OrgPerm::ORGANIZATION_MANAGE)->name('units.deactivate');
+        });
+
+    // S09 spec §19: /hr/persons/lookup is registered before the {person} wildcard, mirroring the
+    // exact ordering discipline S07/S08 already use for their own literal-segment routes.
+    Route::prefix('hr')
+        ->name('api.v1.hr.')
+        ->middleware(['auth:web', 'principal.active', 'resolve.context'])
+        ->group(function (): void {
+            Route::get('/persons/lookup', [PersonController::class, 'lookup'])
+                ->middleware('permission:'.HrPerm::PERSONS_VIEW)->name('persons.lookup');
+            Route::get('/persons/{person}', [PersonController::class, 'show'])
+                ->middleware('permission:'.HrPerm::PERSONS_VIEW)->name('persons.show');
+            Route::post('/persons', [PersonController::class, 'store'])
+                ->middleware('permission:'.HrPerm::PERSONS_CREATE)->name('persons.store');
+
+            Route::get('/persons/{person}/employment-relationships', [EmploymentRelationshipController::class, 'index'])
+                ->middleware('permission:'.HrPerm::EMPLOYMENT_RELATIONSHIPS_VIEW)->name('persons.employment-relationships.index');
+            Route::post('/persons/{person}/employment-relationships', [EmploymentRelationshipController::class, 'store'])
+                ->middleware('permission:'.HrPerm::EMPLOYMENT_RELATIONSHIPS_CREATE)->name('persons.employment-relationships.store');
+            Route::post('/persons/{person}/employment-relationships/{employmentRelationship}/end', [EmploymentRelationshipController::class, 'end'])
+                ->middleware('permission:'.HrPerm::EMPLOYMENT_RELATIONSHIPS_END)->name('persons.employment-relationships.end');
         });
 });

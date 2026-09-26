@@ -56,11 +56,16 @@ class ScopeBoundaryTest extends OrganizationTestCase
 
     public function test_no_hr_person_employee_or_transaction_tables_leaked_in_via_s07(): void
     {
+        // 'hr' is deliberately excluded here now that S09
+        // (docs/person-employment-foundation-specification.md) is its own authorized owning
+        // stage and legitimately populates it with hr.persons/hr.employment_relationships — both
+        // of which would otherwise trip this exact forbidden-word list. See
+        // tests/Feature/HumanResources/ScopeBoundaryTest.php for S09's own precise boundary check.
         $forbidden = ['employee', 'employees', 'person', 'persons', 'national_id',
             'contract_record', 'leave_request', 'secondment', 'transfer', 'reappointment', ];
 
         $tables = DB::table('information_schema.tables')
-            ->whereIn('table_schema', ['ref', 'hr', 'org', 'reporting', 'public'])
+            ->whereIn('table_schema', ['ref', 'org', 'reporting', 'public'])
             ->pluck('table_name');
 
         foreach ($tables as $table) {

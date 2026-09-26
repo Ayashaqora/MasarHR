@@ -25,14 +25,20 @@ class ApiEndpointsTest extends SecurityTestCase
         $codes = collect($response->json('data'))->pluck('code')->all();
 
         // security.permissions is a cross-module catalog (S05 §16, extended by S07 §17, extended
-        // again by S08 §18): by S08 it also contains the two Reference-module and two
-        // Organization-module permission codes seeded alongside PermissionCatalog::ALL — which by
-        // S08 already includes ORGANIZATION_SCOPES_MANAGE itself, since that permission is owned by
-        // the Security module, not a separate module catalog. Reference/Organization codes are
-        // still named literally here (not imported from either module) so this Security test does
-        // not depend on another module's own catalog class.
+        // again by S08 §18, extended again by S09 §17): by S09 it also contains the two
+        // Reference-module, two Organization-module, and five HumanResources-module permission
+        // codes seeded alongside PermissionCatalog::ALL — which already includes
+        // ORGANIZATION_SCOPES_MANAGE itself, since that permission is owned by the Security
+        // module, not a separate module catalog. Reference/Organization/HumanResources codes are
+        // still named literally here (not imported from any other module) so this Security test
+        // does not depend on another module's own catalog class.
         $this->assertEqualsCanonicalizing(
-            [...PermissionCatalog::ALL, 'reference.view', 'reference.manage', 'organization.view', 'organization.manage'],
+            [
+                ...PermissionCatalog::ALL,
+                'reference.view', 'reference.manage', 'organization.view', 'organization.manage',
+                'hr.persons.view', 'hr.persons.create', 'hr.employment_relationships.view',
+                'hr.employment_relationships.create', 'hr.employment_relationships.end',
+            ],
             $codes,
         );
     }

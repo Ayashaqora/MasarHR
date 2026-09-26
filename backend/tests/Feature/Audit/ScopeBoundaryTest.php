@@ -41,11 +41,16 @@ class ScopeBoundaryTest extends AuditTestCase
 
     public function test_no_hr_person_employee_employment_or_organization_tables_leaked_in_via_s04(): void
     {
+        // 'hr' is deliberately excluded here now that S09
+        // (docs/person-employment-foundation-specification.md) is its own authorized owning
+        // stage and legitimately populates it with hr.persons/hr.employment_relationships — both
+        // of which would otherwise trip this exact forbidden-word list. See
+        // tests/Feature/HumanResources/ScopeBoundaryTest.php for S09's own precise boundary check.
         $forbidden = ['employee', 'employees', 'person', 'persons', 'national_id', 'organization_unit',
             'organization_units', 'employment', 'contract', 'contracts', ];
 
         $tables = DB::table('information_schema.tables')
-            ->whereIn('table_schema', ['audit', 'hr', 'org', 'reporting', 'public'])
+            ->whereIn('table_schema', ['audit', 'org', 'reporting', 'public'])
             ->pluck('table_name');
 
         foreach ($tables as $table) {
@@ -60,9 +65,10 @@ class ScopeBoundaryTest extends AuditTestCase
         // 'ref' is deliberately excluded here: S05 is the schema's own authorized owning stage and
         // populates it (see tests/Feature/Reference/ScopeBoundaryTest.php for S05's own boundary
         // check). 'org' is likewise excluded: S07 is its own authorized owning stage (see
-        // tests/Feature/Organization/ScopeBoundaryTest.php). hr/reporting remain untouched by
-        // every stage through S07.
-        foreach (['hr', 'reporting'] as $schema) {
+        // tests/Feature/Organization/ScopeBoundaryTest.php). 'hr' is likewise excluded: S09 is its
+        // own authorized owning stage (see tests/Feature/HumanResources/ScopeBoundaryTest.php).
+        // reporting remains untouched by every stage through S09.
+        foreach (['reporting'] as $schema) {
             $count = DB::table('information_schema.tables')->where('table_schema', $schema)->count();
             $this->assertSame(0, $count, "schema {$schema} must stay empty until its owning stage runs");
         }

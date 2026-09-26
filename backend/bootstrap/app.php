@@ -1,5 +1,11 @@
 <?php
 
+use App\Modules\HumanResources\Domain\Exceptions\DuplicateNationalIdException;
+use App\Modules\HumanResources\Domain\Exceptions\DuplicatePermanentEmployeeNumberException;
+use App\Modules\HumanResources\Domain\Exceptions\EmploymentRelationshipAlreadyEndedException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidEndDateException;
+use App\Modules\HumanResources\Domain\Exceptions\OverlappingEmploymentRelationshipException;
+use App\Modules\HumanResources\Domain\Exceptions\PersonIsTerminalException;
 use App\Modules\Organization\Domain\Exceptions\StaleVersionException as OrganizationStaleVersionException;
 use App\Modules\Organization\Domain\Exceptions\WouldCreateCycleException;
 use App\Modules\Platform\Presentation\Http\Middleware\ResolveCommandContext;
@@ -76,6 +82,12 @@ return Application::configure(basePath: dirname(__DIR__))
             OrganizationStaleVersionException::class,
             WouldCreateCycleException::class,
             DuplicateOrganizationalScopeGrantException::class,
+            DuplicateNationalIdException::class,
+            OverlappingEmploymentRelationshipException::class,
+            DuplicatePermanentEmployeeNumberException::class,
+            PersonIsTerminalException::class,
+            EmploymentRelationshipAlreadyEndedException::class,
+            InvalidEndDateException::class,
         ]);
 
         // §22 of the S03 authorization: preserve stated HTTP semantics for Security domain
@@ -105,6 +117,18 @@ return Application::configure(basePath: dirname(__DIR__))
 
         // S08 Security-module domain failure (docs/organizational-access-scope-specification.md §20).
         $exceptions->render(fn (DuplicateOrganizationalScopeGrantException $e) => response()->json(['message' => $e->getMessage()], 409));
+
+        // S09 HumanResources-module domain failures
+        // (docs/person-employment-foundation-specification.md §11).
+        $exceptions->render(fn (DuplicateNationalIdException $e) => response()->json(['message' => $e->getMessage()], 409));
+        $exceptions->render(fn (OverlappingEmploymentRelationshipException $e) => response()->json(['message' => $e->getMessage()], 409));
+        $exceptions->render(fn (DuplicatePermanentEmployeeNumberException $e) => response()->json(['message' => $e->getMessage()], 409));
+        $exceptions->render(fn (PersonIsTerminalException $e) => response()->json(['message' => $e->getMessage()], 409));
+        $exceptions->render(fn (EmploymentRelationshipAlreadyEndedException $e) => response()->json(['message' => $e->getMessage()], 409));
+        $exceptions->render(fn (InvalidEndDateException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['effective_to' => [$e->getMessage()]],
+        ], 422));
 
         $exceptions->render(fn (DuplicateUsernameException $e) => response()->json([
             'message' => $e->getMessage(),

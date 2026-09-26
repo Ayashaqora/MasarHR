@@ -61,14 +61,16 @@ class PostgresFoundationTest extends PostgresIntegrationTestCase
      * tables (16 originally, plus the CORRECTIVE-01 marital_status_aliases lookup table — see
      * §22a); as of S07, `org` is also owned (see
      * docs/organization-hierarchy-foundation-specification.md) and is expected to hold S07's one
-     * table, org.organizational_units; every namespace no authorized stage owns must still be
-     * empty. This is what durably matters here, not "nothing has run yet" — that claim is true
-     * only within S02's own isolated scope and breaks by construction the moment any later,
-     * authorized stage runs its migrations.
+     * table, org.organizational_units; as of S09, `hr` is also owned (see
+     * docs/person-employment-foundation-specification.md) and is expected to hold S09's two
+     * tables, hr.persons and hr.employment_relationships; every namespace no authorized stage
+     * owns must still be empty. This is what durably matters here, not "nothing has run yet" —
+     * that claim is true only within S02's own isolated scope and breaks by construction the
+     * moment any later, authorized stage runs its migrations.
      */
     public function test_namespaces_not_owned_by_a_later_stage_remain_empty(): void
     {
-        $notYetOwned = array_values(array_diff(self::SCHEMAS, ['security', 'audit', 'ref', 'org']));
+        $notYetOwned = array_values(array_diff(self::SCHEMAS, ['security', 'audit', 'ref', 'org', 'hr']));
 
         $objects = $this->pg()->select(
             'select n.nspname, c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace '

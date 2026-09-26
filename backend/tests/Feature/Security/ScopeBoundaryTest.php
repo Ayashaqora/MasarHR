@@ -12,11 +12,16 @@ class ScopeBoundaryTest extends SecurityTestCase
 {
     public function test_no_hr_organization_or_reporting_tables_exist_in_any_schema(): void
     {
+        // 'hr' is deliberately excluded here now that S09
+        // (docs/person-employment-foundation-specification.md) is its own authorized owning
+        // stage and legitimately populates it with hr.persons/hr.employment_relationships — both
+        // of which would otherwise trip this exact forbidden-word list. See
+        // tests/Feature/HumanResources/ScopeBoundaryTest.php for S09's own precise boundary check.
         $forbidden = ['employee', 'employees', 'person', 'persons', 'national_id', 'organization_unit',
             'organization_units', 'contract', 'contracts', 'leave', 'placement', 'secondment', 'transfer', ];
 
         $tables = DB::table('information_schema.tables')
-            ->whereIn('table_schema', ['hr', 'org', 'reporting', 'public'])
+            ->whereIn('table_schema', ['org', 'reporting', 'public'])
             ->pluck('table_name');
 
         foreach ($tables as $table) {
@@ -30,8 +35,10 @@ class ScopeBoundaryTest extends SecurityTestCase
     {
         // 'org' is deliberately excluded here: S07 is that schema's own authorized owning stage
         // and populates it (see tests/Feature/Organization/ScopeBoundaryTest.php for S07's own
-        // boundary check). hr/reporting remain untouched by every stage through S07.
-        foreach (['hr', 'reporting'] as $schema) {
+        // boundary check). 'hr' is likewise excluded: S09 is its own authorized owning stage (see
+        // tests/Feature/HumanResources/ScopeBoundaryTest.php). reporting remains untouched by
+        // every stage through S09.
+        foreach (['reporting'] as $schema) {
             $count = DB::table('information_schema.tables')->where('table_schema', $schema)->count();
             $this->assertSame(0, $count, "schema {$schema} must stay empty until its owning stage runs");
         }
