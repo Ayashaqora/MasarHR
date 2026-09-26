@@ -8,7 +8,10 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
 use PHPUnit\Framework\Attributes\DataProvider;
 
-/** Direct PostgreSQL constraint coverage for hr.persons/hr.employment_relationships (spec §21-§23). */
+/**
+ * Direct PostgreSQL constraint coverage for hr.persons/hr.employment_relationships (S09 spec
+ * §21-§23) and hr.employment_status_periods (S10 spec §8/§20).
+ */
 class DatabaseConstraintsTest extends HumanResourcesTestCase
 {
     public function test_the_active_connection_is_postgresql(): void
@@ -22,7 +25,7 @@ class DatabaseConstraintsTest extends HumanResourcesTestCase
             ->where('table_schema', 'hr')
             ->pluck('table_name')->sort()->values()->all();
 
-        $this->assertSame(['employment_relationships', 'persons'], $tables);
+        $this->assertSame(['employment_relationships', 'employment_status_periods', 'persons'], $tables);
     }
 
     public function test_an_employment_relationship_foreign_key_to_a_nonexistent_person_is_rejected(): void
@@ -189,6 +192,90 @@ class DatabaseConstraintsTest extends HumanResourcesTestCase
         });
 
         $this->assertTrue(Errors::isCheckViolation($error));
+    }
+
+    public function test_a_status_period_foreign_key_to_a_nonexistent_relationship_is_rejected(): void
+    {
+        $statusDetail = $this->statusDetail('on_duty');
+
+        $error = $this->tryAndCatch(function () use ($statusDetail): void {
+            DB::table('hr.employment_status_periods')->insert([
+                'id' => (string) Str::uuid7(),
+                'employment_relationship_id' => (string) Str::uuid7(),
+                'status_detail_id' => $statusDetail->id,
+                'effective_from' => '2026-09-27',
+                'created_at' => now(),
+            ]);
+        });
+
+        $this->assertTrue(Errors::isForeignKeyViolation($error));
+    }
+
+    public function test_a_status_period_foreign_key_to_a_nonexistent_status_detail_is_rejected(): void
+    {
+        $person = $this->createPersonRecord();
+        $relationship = $this->createEmploymentRelationship($person);
+
+        $error = $this->tryAndCatch(function () use ($relationship): void {
+            DB::table('hr.employment_status_periods')->insert([
+                'id' => (string) Str::uuid7(),
+                'employment_relationship_id' => $relationship->id,
+                'status_detail_id' => (string) Str::uuid7(),
+                'effective_from' => '2026-09-27',
+                'created_at' => now(),
+            ]);
+        });
+
+        $this->assertTrue(Errors::isForeignKeyViolation($error));
+    }
+
+    public function test_a_reversed_or_empty_status_period_is_rejected_by_the_check_constraint(): void
+    {
+        $person = $this->createPersonRecord();
+        $relationship = $this->createEmploymentRelationship($person);
+        $statusDetail = $this->statusDetail('on_duty');
+
+        $error = $this->tryAndCatch(function () use ($relationship, $statusDetail): void {
+            DB::table('hr.employment_status_periods')->insert([
+                'id' => (string) Str::uuid7(),
+                'employment_relationship_id' => $relationship->id,
+                'status_detail_id' => $statusDetail->id,
+                'effective_from' => '2026-09-27',
+                'effective_to' => '2026-09-27',
+                'created_at' => now(),
+            ]);
+        });
+
+        $this->assertTrue(Errors::isCheckViolation($error));
+    }
+
+    public function test_two_overlapping_status_periods_for_the_same_relationship_are_rejected_by_the_exclusion_constraint(): void
+    {
+        $person = $this->createPersonRecord();
+        $relationship = $this->createEmploymentRelationship($person);
+        $onDuty = $this->statusDetail('on_duty');
+        $traveling = $this->statusDetail('traveling');
+
+        DB::table('hr.employment_status_periods')->insert([
+            'id' => (string) Str::uuid7(),
+            'employment_relationship_id' => $relationship->id,
+            'status_detail_id' => $onDuty->id,
+            'effective_from' => '2026-09-27',
+            'effective_to' => '2026-11-01',
+            'created_at' => now(),
+        ]);
+
+        $error = $this->tryAndCatch(function () use ($relationship, $traveling): void {
+            DB::table('hr.employment_status_periods')->insert([
+                'id' => (string) Str::uuid7(),
+                'employment_relationship_id' => $relationship->id,
+                'status_detail_id' => $traveling->id,
+                'effective_from' => '2026-10-01',
+                'created_at' => now(),
+            ]);
+        });
+
+        $this->assertTrue(Errors::isExclusionViolation($error));
     }
 
     private function tryAndCatch(callable $work): QueryException

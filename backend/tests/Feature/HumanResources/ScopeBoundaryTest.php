@@ -6,11 +6,12 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 
 /**
- * S09 scope audit (docs/person-employment-foundation-specification.md §2/§17/§21/§24 P24): the
- * hr schema contains exactly the two S09-authorized tables and nothing else; neither table
- * carries an organizational-unit or name/demographic column; no S10+ out-of-scope concept
- * (transfer/secondment/leave/placement/status-history/reporting/…) leaked in via any route or
- * command; no hard delete is exposed; _to_delete/ is untouched. Mirrors
+ * S09/S10 scope audit (docs/person-employment-foundation-specification.md §2/§17/§21/§24 P24 and
+ * docs/employment-status-history-foundation-specification.md §3/§13/§18): the hr schema contains
+ * exactly the three S09/S10-authorized tables and nothing else; no table carries an
+ * organizational-unit or name/demographic column, nor a speculative decision_type column; no S11+
+ * out-of-scope concept (transfer/secondment/leave/placement/professional-history/reporting/…)
+ * leaked in via any route or command; no hard delete is exposed; _to_delete/ is untouched. Mirrors
  * tests/Feature/Organization/ScopeBoundaryTest.php's and
  * tests/Feature/Reference/ScopeBoundaryTest.php's shape exactly.
  */
@@ -18,22 +19,22 @@ class ScopeBoundaryTest extends HumanResourcesTestCase
 {
     private const FORBIDDEN_ROUTE_SEGMENTS = [
         'transfer', 'secondment', 'assignment', 'leave', 'qualification', 'placement',
-        'work-schedule', 'workschedule', 'renewal', 'status-history', 'professional-history',
+        'work-schedule', 'workschedule', 'renewal', 'professional-history',
         'job-history', 'export', 'report',
     ];
 
     private const FORBIDDEN_COMMAND_NAMES = [
         'Transfer', 'Secondment', 'Assignment', 'Leave', 'ContractRenewal',
-        'EmploymentStatusChange', 'ProfessionalHistory', 'JobHistory', 'PlacementHistory',
+        'ProfessionalHistory', 'JobHistory', 'PlacementHistory',
         'WorkSchedule',
     ];
 
-    public function test_hr_schema_contains_exactly_the_two_authorized_tables(): void
+    public function test_hr_schema_contains_exactly_the_three_authorized_tables(): void
     {
         $tables = DB::table('information_schema.tables')->where('table_schema', 'hr')->pluck('table_name')->all();
         sort($tables);
 
-        $this->assertSame(['employment_relationships', 'persons'], $tables);
+        $this->assertSame(['employment_relationships', 'employment_status_periods', 'persons'], $tables);
     }
 
     public function test_employment_relationship_has_no_organizational_unit_column(): void
@@ -43,6 +44,17 @@ class ScopeBoundaryTest extends HumanResourcesTestCase
             ->pluck('column_name')->all();
 
         $this->assertNotContains('organizational_unit_id', $columns, 'spec §17: no speculative organization column in S09');
+    }
+
+    public function test_employment_status_period_has_no_organizational_unit_or_decision_type_column(): void
+    {
+        $columns = DB::table('information_schema.columns')
+            ->where('table_schema', 'hr')->where('table_name', 'employment_status_periods')
+            ->pluck('column_name')->all();
+
+        $this->assertNotContains('organizational_unit_id', $columns, 'S10 spec §13: no organizational-scope target exists for status periods');
+        $this->assertNotContains('decision_type_id', $columns, 'S10 spec §10: no speculative decision_type column against the still-empty ref.decision_types catalog');
+        $this->assertNotContains('version', $columns, 'S10 spec §5: status periods are append-only, no independently client-versioned column');
     }
 
     public function test_person_has_no_name_or_demographic_columns(): void
@@ -120,7 +132,7 @@ class ScopeBoundaryTest extends HumanResourcesTestCase
         }
     }
 
-    public function test_no_reporting_or_frontend_content_was_added_for_s09(): void
+    public function test_no_reporting_or_frontend_content_was_added_for_s09_or_s10(): void
     {
         $reportingTables = DB::table('information_schema.tables')->where('table_schema', 'reporting')->count();
         $this->assertSame(0, $reportingTables);

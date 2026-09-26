@@ -4,8 +4,10 @@ use App\Modules\HumanResources\Domain\Exceptions\DuplicateNationalIdException;
 use App\Modules\HumanResources\Domain\Exceptions\DuplicatePermanentEmployeeNumberException;
 use App\Modules\HumanResources\Domain\Exceptions\EmploymentRelationshipAlreadyEndedException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidEndDateException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidStatusPeriodDateException;
 use App\Modules\HumanResources\Domain\Exceptions\OverlappingEmploymentRelationshipException;
 use App\Modules\HumanResources\Domain\Exceptions\PersonIsTerminalException;
+use App\Modules\HumanResources\Domain\Exceptions\UnresolvedEmploymentStatusBehaviorException;
 use App\Modules\Organization\Domain\Exceptions\StaleVersionException as OrganizationStaleVersionException;
 use App\Modules\Organization\Domain\Exceptions\WouldCreateCycleException;
 use App\Modules\Platform\Presentation\Http\Middleware\ResolveCommandContext;
@@ -88,6 +90,8 @@ return Application::configure(basePath: dirname(__DIR__))
             PersonIsTerminalException::class,
             EmploymentRelationshipAlreadyEndedException::class,
             InvalidEndDateException::class,
+            InvalidStatusPeriodDateException::class,
+            UnresolvedEmploymentStatusBehaviorException::class,
         ]);
 
         // §22 of the S03 authorization: preserve stated HTTP semantics for Security domain
@@ -128,6 +132,17 @@ return Application::configure(basePath: dirname(__DIR__))
         $exceptions->render(fn (InvalidEndDateException $e) => response()->json([
             'message' => $e->getMessage(),
             'errors' => ['effective_to' => [$e->getMessage()]],
+        ], 422));
+
+        // S10 HumanResources-module domain failures
+        // (docs/employment-status-history-foundation-specification.md §9).
+        $exceptions->render(fn (InvalidStatusPeriodDateException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['effective_from' => [$e->getMessage()]],
+        ], 422));
+        $exceptions->render(fn (UnresolvedEmploymentStatusBehaviorException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['effective_from' => [$e->getMessage()]],
         ], 422));
 
         $exceptions->render(fn (DuplicateUsernameException $e) => response()->json([

@@ -7,14 +7,16 @@ use App\Modules\HumanResources\Application\Commands\CreatePerson;
 use App\Modules\HumanResources\Infrastructure\Authorization\HumanResourcesPermissionCatalog;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRelationship;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\Person;
+use App\Modules\Reference\Infrastructure\Persistence\Eloquent\EmploymentStatusDetail;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\EmploymentType;
 use Illuminate\Support\Str;
 use Tests\Feature\Audit\AuditTestCase;
 
 /**
- * Base class for S09 Person & Employment Foundation feature tests. Inherits AuditTestCase's
- * fixture and audit-read helpers (createPrincipal/createRoleWithPermissions/assignRole/
- * latestAuditEntryFor/...), mirroring OrganizationalScopeTestCase's shape exactly (spec §23).
+ * Base class for S09 Person & Employment Foundation and S10 Employment Status History feature
+ * tests. Inherits AuditTestCase's fixture and audit-read helpers
+ * (createPrincipal/createRoleWithPermissions/assignRole/latestAuditEntryFor/...), mirroring
+ * OrganizationalScopeTestCase's shape exactly (S09 spec §23, reused unmodified by S10).
  */
 abstract class HumanResourcesTestCase extends AuditTestCase
 {
@@ -42,6 +44,12 @@ abstract class HumanResourcesTestCase extends AuditTestCase
     protected function employmentType(string $code): EmploymentType
     {
         return EmploymentType::query()->where('code', $code)->firstOrFail();
+    }
+
+    /** One of the 13 S06-seeded employment status details (spec S10 §6), by its code. */
+    protected function statusDetail(string $code): EmploymentStatusDetail
+    {
+        return EmploymentStatusDetail::query()->where('code', $code)->firstOrFail();
     }
 
     protected function createEmploymentRelationship(

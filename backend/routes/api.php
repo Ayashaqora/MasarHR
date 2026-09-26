@@ -2,6 +2,7 @@
 
 use App\Modules\HumanResources\Infrastructure\Authorization\HumanResourcesPermissionCatalog as HrPerm;
 use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentRelationshipController;
+use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentStatusPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\PersonController;
 use App\Modules\Organization\Infrastructure\Authorization\OrganizationPermissionCatalog as OrgPerm;
 use App\Modules\Organization\Presentation\Http\Controllers\OrganizationalUnitController;
@@ -232,5 +233,11 @@ Route::middleware('web')->group(function (): void {
                 ->middleware('permission:'.HrPerm::EMPLOYMENT_RELATIONSHIPS_CREATE)->name('persons.employment-relationships.store');
             Route::post('/persons/{person}/employment-relationships/{employmentRelationship}/end', [EmploymentRelationshipController::class, 'end'])
                 ->middleware('permission:'.HrPerm::EMPLOYMENT_RELATIONSHIPS_END)->name('persons.employment-relationships.end');
+
+            // S10: Employment Status History, nested under the same {person}/{employmentRelationship}.
+            Route::get('/persons/{person}/employment-relationships/{employmentRelationship}/status-periods', [EmploymentStatusPeriodController::class, 'index'])
+                ->middleware('permission:'.HrPerm::EMPLOYMENT_STATUS_PERIODS_VIEW)->name('persons.employment-relationships.status-periods.index');
+            Route::post('/persons/{person}/employment-relationships/{employmentRelationship}/status-periods', [EmploymentStatusPeriodController::class, 'store'])
+                ->middleware('permission:'.HrPerm::EMPLOYMENT_STATUS_PERIODS_RECORD)->name('persons.employment-relationships.status-periods.store');
         });
 });

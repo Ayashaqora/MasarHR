@@ -40,6 +40,9 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
         }
 
         if ($this->personIds !== []) {
+            $relationshipIds = DB::table('hr.employment_relationships')
+                ->whereIn('person_id', $this->personIds)->pluck('id');
+            DB::table('hr.employment_status_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
             DB::table('hr.employment_relationships')->whereIn('person_id', $this->personIds)->delete();
             DB::table('hr.persons')->whereIn('id', $this->personIds)->delete();
         }
@@ -91,6 +94,11 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
     private function permanentEmploymentTypeId(): string
     {
         return (string) DB::table('ref.employment_types')->where('code', 'permanent')->value('id');
+    }
+
+    private function statusDetailId(string $code): string
+    {
+        return (string) DB::table('ref.employment_status_details')->where('code', $code)->value('id');
     }
 
     private function insertSql(): string
@@ -176,5 +184,49 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
         $secondUpdated = $second->update($updateSql, ['2026-06-01', $relationshipId]);
 
         $this->assertSame(1, $firstUpdated + $secondUpdated, 'exactly one of the two scoped updates succeeds against the same starting version');
+    }
+
+    /**
+     * S10 spec §17's final backstop: even independent of RecordEmploymentStatusPeriod's own
+     * lockForUpdate() serialization at the application layer, the EXCLUDE constraint itself makes
+     * a genuine overlap for the same employment_relationship_id impossible — proved here with two
+     * real, independent sessions racing a committed insert, exactly mirroring
+     * test_concurrent_overlapping_relationships_for_the_same_person_are_serialised_by_the_exclusion_constraint.
+     */
+    public function test_concurrent_overlapping_status_periods_for_the_same_relationship_are_serialised_by_the_exclusion_constraint(): void
+    {
+        $personId = $this->person();
+        $employmentTypeId = $this->permanentEmploymentTypeId();
+        $relationshipId = (string) Str::uuid7();
+        $this->pg()->insert($this->insertSql(), [$relationshipId, $personId, $employmentTypeId, 'PN-STATUS-RACE', 'PERMANENT', '2026-01-01']);
+
+        $onDutyId = $this->statusDetailId('on_duty');
+        $travelingId = $this->statusDetailId('traveling');
+        $periodInsertSql = <<<'SQL'
+            insert into hr.employment_status_periods
+                (id, employment_relationship_id, status_detail_id, effective_from, created_at)
+            values (?, ?, ?, ?, now())
+            SQL;
+
+        $first = $this->pg();
+        $second = $this->second();
+
+        $first->beginTransaction();
+        $first->insert($periodInsertSql, [(string) Str::uuid7(), $relationshipId, $onDutyId, '2026-09-27']); // not committed yet
+
+        $second->statement("set lock_timeout = '300ms'");
+        $blocked = $this->databaseError(fn () => $second->transaction(fn () => $second->insert($periodInsertSql, [
+            (string) Str::uuid7(), $relationshipId, $travelingId, '2026-10-01',
+        ])));
+        $this->assertTrue(Errors::isLockNotAvailable($blocked), 'the second session waits on the first (lock_timeout fired)');
+
+        $first->commit();
+
+        $rejected = $this->databaseError(fn () => $second->transaction(fn () => $second->insert($periodInsertSql, [
+            (string) Str::uuid7(), $relationshipId, $travelingId, '2026-10-01',
+        ])));
+        $this->assertTrue(Errors::isExclusionViolation($rejected), 'once committed, the overlap is rejected by PostgreSQL itself, not merely delayed');
+
+        $this->assertSame(1, (int) $this->scalar('select count(*) from hr.employment_status_periods where employment_relationship_id = ?', [$relationshipId]));
     }
 }

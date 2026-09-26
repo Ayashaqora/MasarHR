@@ -72,6 +72,16 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
         'database/migrations/2026_09_29_000004_seed_security_human_resources_permissions.php',
     ];
 
+    /**
+     * S10 migrations, in up() order. Dated 2026_09_30 (a day after S09) deliberately, so this
+     * stage's own migrations never collide with dropHumanResourcesSchemaObjects()'s blanket
+     * '2026_09_29%' migrations-table cleanup, nor with S09's own tables.
+     */
+    private const S10_MIGRATIONS = [
+        'database/migrations/2026_09_30_000001_create_hr_employment_status_periods_table.php',
+        'database/migrations/2026_09_30_000002_seed_security_employment_status_period_permissions.php',
+    ];
+
     protected function tearDown(): void
     {
         // Whatever a test did, leave the test database fully migrated and free of probe objects.
@@ -140,9 +150,11 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
         // and restores them via migrateTestDatabase() in tearDown, the same way it always restores
         // S02's own probe objects.
         // Dropped first: hr.employment_relationships (S09) carries RESTRICT FKs to both
-        // hr.persons and ref.employment_types, so it (and hr.persons) must go before
-        // dropReferenceSchemaObjects() below reaches ref.employment_types — most-dependent-first,
-        // same convention as every other helper call in this method.
+        // hr.persons and ref.employment_types, and hr.employment_status_periods (S10) carries
+        // RESTRICT FKs to both hr.employment_relationships and ref.employment_status_details, so
+        // all three hr tables must go before dropReferenceSchemaObjects() below reaches
+        // ref.employment_types/ref.employment_status_details — most-dependent-first, same
+        // convention as every other helper call in this method.
         $this->dropHumanResourcesSchemaObjects();
         // Dropped before dropSecuritySchemaObjects(): organizational_scope_grants (S08) carries FKs
         // to security.principals, so it must go before the S03 tables it points to, mirroring the
@@ -254,19 +266,27 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
 
     /**
      * S09's two tables plus its permission-seed migration (dated 2026_09_29 deliberately — see
-     * S09_MIGRATIONS — so this cleanup never overlaps any earlier blanket cleanup pattern above).
-     * security.permissions itself is already dropped wholesale by dropSecuritySchemaObjects(), so
-     * the five hr.* permission rows it seeds need no separate delete. The two ref.employment_types
-     * rows it seeds (docs/person-employment-foundation-specification.md §7) are dropped along
-     * with the whole ref.employment_types table by dropReferenceSchemaObjects() below, so they
-     * likewise need no separate delete here — but hr.employment_relationships' RESTRICT FK to
-     * ref.employment_types means this method must run before that one.
+     * S09_MIGRATIONS — so this cleanup never overlaps any earlier blanket cleanup pattern above),
+     * and S10's one table plus its permission-seed migration (dated 2026_09_30 — see
+     * S10_MIGRATIONS). security.permissions itself is already dropped wholesale by
+     * dropSecuritySchemaObjects(), so the five S09 and two S10 hr.* permission rows it seeds need
+     * no separate delete. The two ref.employment_types rows S09 seeds
+     * (docs/person-employment-foundation-specification.md §7) are dropped along with the whole
+     * ref.employment_types table by dropReferenceSchemaObjects() below, so they likewise need no
+     * separate delete here — but hr.employment_relationships' RESTRICT FK to ref.employment_types
+     * (and, transitively, hr.employment_status_periods' RESTRICT FK to
+     * ref.employment_status_details) means this method must run before that one.
+     * hr.employment_status_periods is dropped first: it is the only one of the three with a
+     * RESTRICT FK pointing at another table this method also drops
+     * (hr.employment_relationships).
      */
     private function dropHumanResourcesSchemaObjects(): void
     {
+        $this->pg()->statement('drop table if exists hr.employment_status_periods cascade');
         $this->pg()->statement('drop table if exists hr.employment_relationships cascade');
         $this->pg()->statement('drop table if exists hr.persons cascade');
         DB::table('migrations')->where('migration', 'like', '2026_09_29%')->delete();
+        DB::table('migrations')->where('migration', 'like', '2026_09_30%')->delete();
     }
 
     /**
@@ -446,14 +466,31 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
      * ref.employment_types seed, then employment_relationships, then persons — each a dependency
      * of the one before it), each wrapped in its own DB::transaction(), then migrateTestDatabase()
      * reapplies everything missing from the `migrations` table in filename order.
+     *
+     * S10's hr.employment_status_periods carries a RESTRICT FK to hr.employment_relationships
+     * (S10 spec §8), so — mirroring exactly how test_s07_migrations_roll_back_and_reapply_
+     * cleanly() rolls back S08 before S07 for the identical reason — S10's own migrations are
+     * rolled back first here, via their own down(), before S09's table-creation migration can
+     * drop hr.employment_relationships.
      */
     public function test_s09_migrations_roll_back_and_reapply_cleanly(): void
     {
+        // module = 'human_resources' now covers both S09's five permission rows and S10's two
+        // (S10 spec §13: S10 adds no new module name, since it extends the same HumanResources
+        // module S09 owns), so the fixture assumption below is 7, not 5.
         $hrPermissionsBefore = (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'");
         $employmentTypesBefore = (int) $this->scalar("select count(*) from ref.employment_types where code in ('permanent', 'contract')");
 
-        $this->assertSame(5, $hrPermissionsBefore, 'fixture assumption: the S09 permission seed already ran');
+        $this->assertSame(7, $hrPermissionsBefore, 'fixture assumption: the S09 and S10 permission seeds already ran');
         $this->assertSame(2, $employmentTypesBefore, 'fixture assumption: the S09 employment-type seed already ran');
+
+        foreach (array_reverse(self::S10_MIGRATIONS) as $path) {
+            DB::transaction(function () use ($path): void {
+                $this->migration($path)->down();
+                $migrationName = pathinfo($path, PATHINFO_FILENAME);
+                DB::table('migrations')->where('migration', $migrationName)->delete();
+            });
+        }
 
         foreach (array_reverse(self::S09_MIGRATIONS) as $path) {
             DB::transaction(function () use ($path): void {
@@ -464,16 +501,16 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
         }
 
         $this->assertSame(0, (int) $this->scalar(
-            "select count(*) from information_schema.tables where table_schema = 'hr' and table_name in ('persons', 'employment_relationships')"
-        ), 'down() must drop both S09 tables themselves, not just their rows');
-        $this->assertSame(0, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'"), 'the S09 permission seed rows must be gone');
+            "select count(*) from information_schema.tables where table_schema = 'hr' and table_name in ('persons', 'employment_relationships', 'employment_status_periods')"
+        ), 'down() must drop all three tables themselves (S09\'s two plus S10\'s, rolled back first), not just their rows');
+        $this->assertSame(0, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'"), 'the S09 and S10 permission seed rows must be gone');
         $this->assertSame(0, (int) $this->scalar("select count(*) from ref.employment_types where code in ('permanent', 'contract')"), 'the S09 employment-type seed rows must be gone');
 
-        // S01–S08 objects the S09 migrations never touched must survive untouched.
+        // S01–S08 objects the S09/S10 migrations never touched must survive untouched.
         $this->assertGreaterThan(0, (int) $this->scalar("select count(*) from security.permissions where module = 'organization'"));
         $this->assertSame(1, (int) $this->scalar(
             "select count(*) from information_schema.tables where table_schema = 'security' and table_name = 'organizational_scope_grants'"
-        ), "security.organizational_scope_grants (S08) must still exist, untouched by S09's rollback");
+        ), "security.organizational_scope_grants (S08) must still exist, untouched by S09/S10's rollback");
 
         $this->migrateTestDatabase();
 
@@ -481,6 +518,50 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
         $this->assertSame($employmentTypesBefore, (int) $this->scalar("select count(*) from ref.employment_types where code in ('permanent', 'contract')"));
         $this->assertSame(0, (int) $this->scalar('select count(*) from hr.persons'), 'S09 seeds zero persons rows');
         $this->assertSame(0, (int) $this->scalar('select count(*) from hr.employment_relationships'), 'S09 seeds zero employment_relationships rows');
+        $this->assertSame(0, (int) $this->scalar('select count(*) from hr.employment_status_periods'), 'S10 seeds zero employment_status_periods rows');
+    }
+
+    /**
+     * S10 spec §20 ("migration rollback/reapply"): round-trips both S10 migrations directly, the
+     * same batch-independent way test_s09_migrations_roll_back_and_reapply_cleanly() exercises
+     * S09's — down() in reverse order (permission seed, then the table itself), each wrapped in
+     * its own DB::transaction(), then migrateTestDatabase() reapplies everything missing from the
+     * `migrations` table in filename order.
+     */
+    public function test_s10_migrations_roll_back_and_reapply_cleanly(): void
+    {
+        $statusPeriodPermissionsBefore = (int) $this->scalar(
+            "select count(*) from security.permissions where code in ('hr.employment_status_periods.view', 'hr.employment_status_periods.record')"
+        );
+        $this->assertSame(2, $statusPeriodPermissionsBefore, 'fixture assumption: the S10 permission seed already ran');
+
+        foreach (array_reverse(self::S10_MIGRATIONS) as $path) {
+            DB::transaction(function () use ($path): void {
+                $this->migration($path)->down();
+                $migrationName = pathinfo($path, PATHINFO_FILENAME);
+                DB::table('migrations')->where('migration', $migrationName)->delete();
+            });
+        }
+
+        $this->assertSame(0, (int) $this->scalar(
+            "select count(*) from information_schema.tables where table_schema = 'hr' and table_name = 'employment_status_periods'"
+        ), 'down() must drop the S10 table itself, not just its rows');
+        $this->assertSame(0, (int) $this->scalar(
+            "select count(*) from security.permissions where code in ('hr.employment_status_periods.view', 'hr.employment_status_periods.record')"
+        ), 'the S10 permission seed rows must be gone');
+
+        // S01–S09 objects the S10 migrations never touched must survive untouched.
+        $this->assertSame(1, (int) $this->scalar(
+            "select count(*) from information_schema.tables where table_schema = 'hr' and table_name = 'employment_relationships'"
+        ), "hr.employment_relationships (S09) must still exist, untouched by S10's rollback");
+        $this->assertSame(5, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources' and code not like '%status_periods%'"));
+
+        $this->migrateTestDatabase();
+
+        $this->assertSame($statusPeriodPermissionsBefore, (int) $this->scalar(
+            "select count(*) from security.permissions where code in ('hr.employment_status_periods.view', 'hr.employment_status_periods.record')"
+        ));
+        $this->assertSame(0, (int) $this->scalar('select count(*) from hr.employment_status_periods'), 'S10 seeds zero employment_status_periods rows');
     }
 
     public function test_extension_rollback_refuses_while_an_index_depends_on_it(): void

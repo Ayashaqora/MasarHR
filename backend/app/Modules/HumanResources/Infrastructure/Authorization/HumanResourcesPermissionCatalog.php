@@ -3,15 +3,16 @@
 namespace App\Modules\HumanResources\Infrastructure\Authorization;
 
 /**
- * Application-facing constants for the S09 HumanResources-module permission codes. Mirrors, by
- * convention, the five rows seeded by migration
- * 2026_09_29_000004_seed_security_human_resources_permissions — kept in sync by the developer
- * adding a new permission, not by shared code (same convention as PermissionCatalog/
+ * Application-facing constants for the HumanResources-module permission codes. The first five
+ * are S09's (mirrored, by convention, from migration
+ * 2026_09_29_000004_seed_security_human_resources_permissions); the last two are S10's (from
+ * 2026_09_30_000002_seed_security_employment_status_period_permissions) — kept in sync by the
+ * developer adding a new permission, not by shared code (same convention as PermissionCatalog/
  * OrganizationPermissionCatalog/ReferencePermissionCatalog).
  *
- * Plain RBAC only — no organizational-scope integration (spec §16): neither Person nor Employment
- * Relationship carries an organizational-unit column in S09, so there is no target for
- * ScopedAuthorizationChecker to scope against yet.
+ * Plain RBAC only — no organizational-scope integration (S09 spec §16, S10 spec §13): neither
+ * Person, Employment Relationship, nor Employment Status Period carries an organizational-unit
+ * column, so there is no target for ScopedAuthorizationChecker to scope against yet.
  */
 final class HumanResourcesPermissionCatalog
 {
@@ -25,11 +26,17 @@ final class HumanResourcesPermissionCatalog
 
     public const EMPLOYMENT_RELATIONSHIPS_END = 'hr.employment_relationships.end';
 
+    public const EMPLOYMENT_STATUS_PERIODS_VIEW = 'hr.employment_status_periods.view';
+
+    public const EMPLOYMENT_STATUS_PERIODS_RECORD = 'hr.employment_status_periods.record';
+
     public const ALL = [
         self::PERSONS_VIEW,
         self::PERSONS_CREATE,
         self::EMPLOYMENT_RELATIONSHIPS_VIEW,
         self::EMPLOYMENT_RELATIONSHIPS_CREATE,
         self::EMPLOYMENT_RELATIONSHIPS_END,
+        self::EMPLOYMENT_STATUS_PERIODS_VIEW,
+        self::EMPLOYMENT_STATUS_PERIODS_RECORD,
     ];
 }
