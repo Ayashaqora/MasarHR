@@ -6,41 +6,44 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 
 /**
- * S09/S10/S11 scope audit (docs/person-employment-foundation-specification.md §2/§17/§21/§24 P24,
- * docs/employment-status-history-foundation-specification.md §3/§13/§18, and
- * docs/organizational-placement-foundation-specification.md §6.1/§20/§25 P22): the hr schema
- * contains exactly the four S09/S10/S11-authorized tables and nothing else; no table carries a
- * speculative column (organizational-unit on the S09/S10 tables, name/demographic on persons, a
- * client-versioned or mutable-current-workplace column on placement periods); no S12+ out-of-scope
- * concept (transfer/secondment/leave/qualification/professional-history/reporting/…) leaked in via
- * any route or command; no hard delete is exposed; _to_delete/ is untouched. 'placement' and
- * 'PlacementHistory' were removed from the forbidden lists below in S11: Organizational Placement
- * is now the authorized S11 domain itself (its own route legitimately contains
- * 'placement-periods'), not an out-of-scope concept to guard against. Mirrors
- * tests/Feature/Organization/ScopeBoundaryTest.php's and
+ * S09/S10/S11/S12 scope audit (docs/person-employment-foundation-specification.md §2/§17/§21/§24
+ * P24, docs/employment-status-history-foundation-specification.md §3/§13/§18,
+ * docs/organizational-placement-foundation-specification.md §6.1/§20/§25 P22, and
+ * docs/full-secondment-foundation-specification.md §18/§26): the hr schema contains exactly the
+ * five S09/S10/S11/S12-authorized tables and nothing else; no table carries a speculative column
+ * (organizational-unit on the S09/S10 tables, name/demographic on persons, a client-versioned or
+ * mutable-current-workplace column on placement periods, a decision-type or destination-scheme
+ * column on secondment periods); no S13+ out-of-scope concept
+ * (transfer/assignment/leave/qualification/professional-history/reporting/…) leaked in via any
+ * route or command; no hard delete is exposed; _to_delete/ is untouched. 'placement' and
+ * 'PlacementHistory' were removed from the forbidden lists in S11 (Organizational Placement became
+ * the authorized S11 domain itself); 'secondment'/'Secondment' are removed here in S12 for the
+ * identical reason — Full Secondment is now the authorized S12 domain itself (its own routes
+ * legitimately contain 'full-secondment-periods'), not an out-of-scope concept to guard against.
+ * Mirrors tests/Feature/Organization/ScopeBoundaryTest.php's and
  * tests/Feature/Reference/ScopeBoundaryTest.php's shape exactly.
  */
 class ScopeBoundaryTest extends HumanResourcesTestCase
 {
     private const FORBIDDEN_ROUTE_SEGMENTS = [
-        'transfer', 'secondment', 'assignment', 'leave', 'qualification',
+        'transfer', 'assignment', 'leave', 'qualification',
         'work-schedule', 'workschedule', 'renewal', 'professional-history',
         'job-history', 'export', 'report',
     ];
 
     private const FORBIDDEN_COMMAND_NAMES = [
-        'Transfer', 'Secondment', 'Assignment', 'Leave', 'ContractRenewal',
+        'Transfer', 'Assignment', 'Leave', 'ContractRenewal',
         'ProfessionalHistory', 'JobHistory',
         'WorkSchedule',
     ];
 
-    public function test_hr_schema_contains_exactly_the_four_authorized_tables(): void
+    public function test_hr_schema_contains_exactly_the_five_authorized_tables(): void
     {
         $tables = DB::table('information_schema.tables')->where('table_schema', 'hr')->pluck('table_name')->all();
         sort($tables);
 
         $this->assertSame(
-            ['employment_relationships', 'employment_status_periods', 'organizational_placement_periods', 'persons'],
+            ['employment_relationships', 'employment_status_periods', 'full_secondment_periods', 'organizational_placement_periods', 'persons'],
             $tables,
         );
     }
@@ -56,6 +59,21 @@ class ScopeBoundaryTest extends HumanResourcesTestCase
                 $forbidden,
                 $columns,
                 "S11 spec §5.1/§14: no speculative {$forbidden} column — placement periods are append-only history, not a mutable current-workplace field",
+            );
+        }
+    }
+
+    public function test_full_secondment_period_has_no_speculative_columns(): void
+    {
+        $columns = DB::table('information_schema.columns')
+            ->where('table_schema', 'hr')->where('table_name', 'full_secondment_periods')
+            ->pluck('column_name')->all();
+
+        foreach (['version', 'decision_type_id', 'code', 'type', 'is_partial', 'allocation_percentage'] as $forbidden) {
+            $this->assertNotContains(
+                $forbidden,
+                $columns,
+                "S12 spec §7.1/§19: no speculative {$forbidden} column — full secondment periods carry no decision-type reference (against the still-empty ref.decision_types catalog) and no Partial-Secondment discriminator",
             );
         }
     }
@@ -155,7 +173,7 @@ class ScopeBoundaryTest extends HumanResourcesTestCase
         }
     }
 
-    public function test_no_reporting_or_frontend_content_was_added_for_s09_s10_or_s11(): void
+    public function test_no_reporting_or_frontend_content_was_added_for_s09_s10_s11_or_s12(): void
     {
         $reportingTables = DB::table('information_schema.tables')->where('table_schema', 'reporting')->count();
         $this->assertSame(0, $reportingTables);

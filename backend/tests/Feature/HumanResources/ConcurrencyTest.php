@@ -45,9 +45,10 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
         if ($this->personIds !== []) {
             $relationshipIds = DB::table('hr.employment_relationships')
                 ->whereIn('person_id', $this->personIds)->pluck('id');
-            // organizational_placement_periods first: it carries a RESTRICT FK to
-            // employment_relationships, same most-dependent-first ordering as
+            // full_secondment_periods and organizational_placement_periods first: both carry a
+            // RESTRICT FK to employment_relationships, same most-dependent-first ordering as
             // employment_status_periods below.
+            DB::table('hr.full_secondment_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
             DB::table('hr.organizational_placement_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
             DB::table('hr.employment_status_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
             DB::table('hr.employment_relationships')->whereIn('person_id', $this->personIds)->delete();
@@ -302,5 +303,109 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
         $this->assertTrue(Errors::isExclusionViolation($rejected), 'once committed, the overlap is rejected by PostgreSQL itself, not merely delayed');
 
         $this->assertSame(1, (int) $this->scalar('select count(*) from hr.organizational_placement_periods where employment_relationship_id = ?', [$relationshipId]));
+    }
+
+    /**
+     * S12 spec §19's final backstop, mirroring
+     * test_concurrent_overlapping_placement_periods_for_the_same_relationship_are_serialised_by_the_exclusion_constraint
+     * exactly: even independent of StartFullSecondment's own lockForUpdate() serialization at the
+     * application layer, the EXCLUDE constraint itself makes a genuine overlap for the same
+     * employment_relationship_id impossible, proved with two real, independent sessions racing a
+     * committed insert.
+     */
+    public function test_concurrent_overlapping_full_secondment_periods_for_the_same_relationship_are_serialised_by_the_exclusion_constraint(): void
+    {
+        $personId = $this->person();
+        $employmentTypeId = $this->permanentEmploymentTypeId();
+        $relationshipId = (string) Str::uuid7();
+        $this->pg()->insert($this->insertSql(), [$relationshipId, $personId, $employmentTypeId, 'PN-SECONDMENT-RACE', 'PERMANENT', '2026-01-01']);
+
+        $unitAId = $this->organizationalUnitId();
+        $unitBId = $this->organizationalUnitId();
+        $periodInsertSql = <<<'SQL'
+            insert into hr.full_secondment_periods
+                (id, employment_relationship_id, organizational_unit_id, effective_from, created_at)
+            values (?, ?, ?, ?, now())
+            SQL;
+
+        $first = $this->pg();
+        $second = $this->second();
+
+        $first->beginTransaction();
+        $first->insert($periodInsertSql, [(string) Str::uuid7(), $relationshipId, $unitAId, '2026-09-27']); // not committed yet
+
+        $second->statement("set lock_timeout = '300ms'");
+        $blocked = $this->databaseError(fn () => $second->transaction(fn () => $second->insert($periodInsertSql, [
+            (string) Str::uuid7(), $relationshipId, $unitBId, '2026-10-01',
+        ])));
+        $this->assertTrue(Errors::isLockNotAvailable($blocked), 'the second session waits on the first (lock_timeout fired)');
+
+        $first->commit();
+
+        $rejected = $this->databaseError(fn () => $second->transaction(fn () => $second->insert($periodInsertSql, [
+            (string) Str::uuid7(), $relationshipId, $unitBId, '2026-10-01',
+        ])));
+        $this->assertTrue(Errors::isExclusionViolation($rejected), 'once committed, the overlap is rejected by PostgreSQL itself, not merely delayed');
+
+        $this->assertSame(1, (int) $this->scalar('select count(*) from hr.full_secondment_periods where employment_relationship_id = ?', [$relationshipId]));
+    }
+
+    /**
+     * S12 spec §17 ("A StartFullSecondment call racing a concurrent EndFullSecondment call on the
+     * same relationship: both acquire the same row lock, so they serialize") and spec §24's
+     * explicit "concurrent start/start and start/end races (real two-connection races)"
+     * requirement: proves, with two real independent sessions, that StartFullSecondment's and
+     * EndFullSecondment's shared first step — `SELECT ... FOR UPDATE` on
+     * hr.employment_relationships — genuinely serializes the two commands against each other, not
+     * merely that each is individually safe in isolation. Simulates each command's own lock
+     * acquisition directly (mirroring how the other tests in this file simulate
+     * RecordOrganizationalPlacementPeriod's/StartFullSecondment's lock step via raw SQL against
+     * two connections, rather than invoking the PHP command class itself, which runs on a single
+     * connection and cannot represent two independent sessions).
+     */
+    public function test_concurrent_full_secondment_start_and_end_calls_for_the_same_relationship_are_serialised_by_the_relationship_row_lock(): void
+    {
+        $personId = $this->person();
+        $employmentTypeId = $this->permanentEmploymentTypeId();
+        $relationshipId = (string) Str::uuid7();
+        $this->pg()->insert($this->insertSql(), [$relationshipId, $personId, $employmentTypeId, 'PN-SECONDMENT-START-END-RACE', 'PERMANENT', '2026-01-01']);
+
+        $unitId = $this->organizationalUnitId();
+        $openPeriodId = (string) Str::uuid7();
+
+        // An already-open secondment for the "EndFullSecondment" session to close.
+        $this->pg()->insert(<<<'SQL'
+            insert into hr.full_secondment_periods
+                (id, employment_relationship_id, organizational_unit_id, effective_from, created_at)
+            values (?, ?, ?, ?, now())
+            SQL, [$openPeriodId, $relationshipId, $unitId, '2026-09-27']);
+
+        $lockSql = 'select id from hr.employment_relationships where id = ? for update';
+
+        $first = $this->pg();
+        $second = $this->second();
+
+        // Simulates StartFullSecondment's own first statement: lock the relationship row.
+        $first->beginTransaction();
+        $first->select($lockSql, [$relationshipId]); // not committed yet
+
+        $second->statement("set lock_timeout = '300ms'");
+        // Simulates EndFullSecondment's own first statement, on an independent session: it must
+        // wait behind the first session's lock, not merely behind a lock on the (different)
+        // period row it will eventually update.
+        $blocked = $this->databaseError(fn () => $second->transaction(fn () => $second->select($lockSql, [$relationshipId])));
+        $this->assertTrue(Errors::isLockNotAvailable($blocked), "EndFullSecondment's relationship-row lock attempt waits on StartFullSecondment's (lock_timeout fired)");
+
+        $first->commit();
+
+        // Now unblocked: the second session performs EndFullSecondment's actual close, proving
+        // the wait was genuine serialization, not a permanent deadlock or a false block on an
+        // unrelated row.
+        $second->transaction(function () use ($second, $lockSql, $relationshipId, $openPeriodId): void {
+            $second->select($lockSql, [$relationshipId]);
+            $second->update('update hr.full_secondment_periods set effective_to = ? where id = ?', ['2026-10-01', $openPeriodId]);
+        });
+
+        $this->assertSame('2026-10-01', (string) $this->scalar('select effective_to from hr.full_secondment_periods where id = ?', [$openPeriodId]));
     }
 }

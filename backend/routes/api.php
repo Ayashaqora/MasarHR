@@ -3,6 +3,7 @@
 use App\Modules\HumanResources\Infrastructure\Authorization\HumanResourcesPermissionCatalog as HrPerm;
 use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentRelationshipController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentStatusPeriodController;
+use App\Modules\HumanResources\Presentation\Http\Controllers\FullSecondmentPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\OrganizationalPlacementPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\PersonController;
 use App\Modules\Organization\Infrastructure\Authorization\OrganizationPermissionCatalog as OrgPerm;
@@ -249,5 +250,19 @@ Route::middleware('web')->group(function (): void {
                 ->middleware('permission:'.HrPerm::ORGANIZATIONAL_PLACEMENT_PERIODS_VIEW)->name('persons.employment-relationships.placement-periods.index');
             Route::post('/persons/{person}/employment-relationships/{employmentRelationship}/placement-periods', [OrganizationalPlacementPeriodController::class, 'store'])
                 ->middleware('permission:'.HrPerm::ORGANIZATIONAL_PLACEMENT_PERIODS_RECORD)->name('persons.employment-relationships.placement-periods.store');
+
+            // S12: Full Secondment, nested under the same {person}/{employmentRelationship}. The
+            // permission: middleware is the coarse RBAC (WHAT) gate only — the controller
+            // additionally composes S08 organizational scope (WHERE) against up to two target
+            // units per operation via ScopedAuthorizationChecker
+            // (docs/full-secondment-foundation-specification.md §12.1).
+            Route::get('/persons/{person}/employment-relationships/{employmentRelationship}/full-secondment-periods', [FullSecondmentPeriodController::class, 'index'])
+                ->middleware('permission:'.HrPerm::FULL_SECONDMENT_PERIODS_VIEW)->name('persons.employment-relationships.full-secondment-periods.index');
+            Route::post('/persons/{person}/employment-relationships/{employmentRelationship}/full-secondment-periods', [FullSecondmentPeriodController::class, 'store'])
+                ->middleware('permission:'.HrPerm::FULL_SECONDMENT_PERIODS_START)->name('persons.employment-relationships.full-secondment-periods.store');
+            Route::post('/persons/{person}/employment-relationships/{employmentRelationship}/full-secondment-periods/end', [FullSecondmentPeriodController::class, 'end'])
+                ->middleware('permission:'.HrPerm::FULL_SECONDMENT_PERIODS_END)->name('persons.employment-relationships.full-secondment-periods.end');
+            Route::get('/persons/{person}/employment-relationships/{employmentRelationship}/actual-workplace', [FullSecondmentPeriodController::class, 'actualWorkplace'])
+                ->middleware('permission:'.HrPerm::FULL_SECONDMENT_PERIODS_VIEW)->name('persons.employment-relationships.actual-workplace.show');
         });
 });

@@ -1,11 +1,15 @@
 <?php
 
+use App\Modules\HumanResources\Domain\Exceptions\ActiveFullSecondmentAlreadyExistsException;
 use App\Modules\HumanResources\Domain\Exceptions\DuplicateNationalIdException;
 use App\Modules\HumanResources\Domain\Exceptions\DuplicatePermanentEmployeeNumberException;
 use App\Modules\HumanResources\Domain\Exceptions\EmploymentRelationshipAlreadyEndedException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidEndDateException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidFullSecondmentEndDateException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidFullSecondmentStartDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidPlacementPeriodDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidStatusPeriodDateException;
+use App\Modules\HumanResources\Domain\Exceptions\NoActiveFullSecondmentException;
 use App\Modules\HumanResources\Domain\Exceptions\OverlappingEmploymentRelationshipException;
 use App\Modules\HumanResources\Domain\Exceptions\PersonIsTerminalException;
 use App\Modules\HumanResources\Domain\Exceptions\UnresolvedEmploymentStatusBehaviorException;
@@ -94,6 +98,10 @@ return Application::configure(basePath: dirname(__DIR__))
             InvalidStatusPeriodDateException::class,
             UnresolvedEmploymentStatusBehaviorException::class,
             InvalidPlacementPeriodDateException::class,
+            ActiveFullSecondmentAlreadyExistsException::class,
+            NoActiveFullSecondmentException::class,
+            InvalidFullSecondmentStartDateException::class,
+            InvalidFullSecondmentEndDateException::class,
         ]);
 
         // §22 of the S03 authorization: preserve stated HTTP semantics for Security domain
@@ -154,6 +162,21 @@ return Application::configure(basePath: dirname(__DIR__))
         $exceptions->render(fn (InvalidPlacementPeriodDateException $e) => response()->json([
             'message' => $e->getMessage(),
             'errors' => ['effective_from' => [$e->getMessage()]],
+        ], 422));
+
+        // S12 HumanResources-module domain failures
+        // (docs/full-secondment-foundation-specification.md §11). Starting against an
+        // already-ended relationship reuses EmploymentRelationshipAlreadyEndedException (S09),
+        // already mapped above — no new mapping needed for it.
+        $exceptions->render(fn (ActiveFullSecondmentAlreadyExistsException $e) => response()->json(['message' => $e->getMessage()], 409));
+        $exceptions->render(fn (NoActiveFullSecondmentException $e) => response()->json(['message' => $e->getMessage()], 409));
+        $exceptions->render(fn (InvalidFullSecondmentStartDateException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['effective_from' => [$e->getMessage()]],
+        ], 422));
+        $exceptions->render(fn (InvalidFullSecondmentEndDateException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['effective_to' => [$e->getMessage()]],
         ], 422));
 
         $exceptions->render(fn (DuplicateUsernameException $e) => response()->json([

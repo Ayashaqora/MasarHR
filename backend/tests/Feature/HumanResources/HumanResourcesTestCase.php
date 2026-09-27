@@ -4,8 +4,10 @@ namespace Tests\Feature\HumanResources;
 
 use App\Modules\HumanResources\Application\Commands\CreateEmploymentRelationship;
 use App\Modules\HumanResources\Application\Commands\CreatePerson;
+use App\Modules\HumanResources\Application\Commands\RecordOrganizationalPlacementPeriod;
 use App\Modules\HumanResources\Infrastructure\Authorization\HumanResourcesPermissionCatalog;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRelationship;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\OrganizationalPlacementPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\Person;
 use App\Modules\Organization\Infrastructure\Persistence\Eloquent\OrganizationalUnit;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\EmploymentStatusDetail;
@@ -16,17 +18,18 @@ use Illuminate\Support\Str;
 use Tests\Feature\Audit\AuditTestCase;
 
 /**
- * Base class for S09 Person & Employment Foundation, S10 Employment Status History, and S11
- * Organizational Placement feature tests. Inherits AuditTestCase's fixture and audit-read helpers
- * (createPrincipal/createRoleWithPermissions/assignRole/latestAuditEntryFor/...), mirroring
- * OrganizationalScopeTestCase's shape exactly (S09 spec §23, reused unmodified by S10/S11).
+ * Base class for S09 Person & Employment Foundation, S10 Employment Status History, S11
+ * Organizational Placement, and S12 Full Secondment feature tests. Inherits AuditTestCase's
+ * fixture and audit-read helpers (createPrincipal/createRoleWithPermissions/assignRole/
+ * latestAuditEntryFor/...), mirroring OrganizationalScopeTestCase's shape exactly (S09 spec §23,
+ * reused unmodified by S10/S11/S12).
  */
 abstract class HumanResourcesTestCase extends AuditTestCase
 {
     /**
-     * A principal with every HR permission (S09–S11) via a fresh active role, plus GLOBAL S08
+     * A principal with every HR permission (S09–S12) via a fresh active role, plus GLOBAL S08
      * scope — a full HR administrator, authorized everywhere for every HR permission including
-     * S11's scope-gated ones (docs/organizational-placement-foundation-specification.md §10).
+     * S11's/S12's scope-gated ones (docs/full-secondment-foundation-specification.md §12).
      */
     protected function actingAsHrAdministrator()
     {
@@ -100,5 +103,14 @@ abstract class HumanResourcesTestCase extends AuditTestCase
             $effectiveFrom ?? '2026-01-01',
             $employeeNumber,
         );
+    }
+
+    /** Records an S11 placement period directly — the "source" unit S12's dual-scope rule checks against. */
+    protected function recordPlacement(
+        EmploymentRelationship $relationship,
+        OrganizationalUnit $unit,
+        string $effectiveFrom,
+    ): OrganizationalPlacementPeriod {
+        return app(RecordOrganizationalPlacementPeriod::class)->handle($relationship, $unit, $effectiveFrom);
     }
 }

@@ -26,13 +26,14 @@ class ApiEndpointsTest extends SecurityTestCase
 
         // security.permissions is a cross-module catalog (S05 §16, extended by S07 §17, extended
         // again by S08 §18, extended again by S09 §17, extended again by S10 §13, extended again by
-        // S11 §16): by S11 it also contains the two Reference-module, two Organization-module, five
-        // S09 HumanResources-module, two S10 HumanResources-module, and two S11 HumanResources-
-        // module permission codes seeded alongside PermissionCatalog::ALL — which already includes
-        // ORGANIZATION_SCOPES_MANAGE itself, since that permission is owned by the Security module,
-        // not a separate module catalog. Reference/Organization/HumanResources codes are still named
-        // literally here (not imported from any other module) so this Security test does not depend
-        // on another module's own catalog class.
+        // S11 §16, extended again by S12 §17): by S12 it also contains the two Reference-module, two
+        // Organization-module, five S09 HumanResources-module, two S10 HumanResources-module, two
+        // S11 HumanResources-module, and three S12 HumanResources-module permission codes seeded
+        // alongside PermissionCatalog::ALL — which already includes ORGANIZATION_SCOPES_MANAGE
+        // itself, since that permission is owned by the Security module, not a separate module
+        // catalog. Reference/Organization/HumanResources codes are still named literally here (not
+        // imported from any other module) so this Security test does not depend on another module's
+        // own catalog class.
         $this->assertEqualsCanonicalizing(
             [
                 ...PermissionCatalog::ALL,
@@ -41,6 +42,7 @@ class ApiEndpointsTest extends SecurityTestCase
                 'hr.employment_relationships.create', 'hr.employment_relationships.end',
                 'hr.employment_status_periods.view', 'hr.employment_status_periods.record',
                 'hr.organizational_placement_periods.view', 'hr.organizational_placement_periods.record',
+                'hr.full_secondment_periods.view', 'hr.full_secondment_periods.start', 'hr.full_secondment_periods.end',
             ],
             $codes,
         );
