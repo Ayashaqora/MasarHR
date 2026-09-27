@@ -14,6 +14,12 @@ use Illuminate\Support\Facades\DB;
  * stay empty (org stays empty only through S06 — S07 legitimately populates it, see the note on
  * test_hr_and_reporting_schemas_remain_empty_after_s05() below); no generic
  * Command-Bus/CRUD-service/repository/Unit-of-Work infrastructure was introduced.
+ *
+ * S13 (docs/reference-catalog-administration-foundation-specification.md) adds no new ref.* table
+ * — it only adds administration (command/controller/route) for eight of S05's ten
+ * structure-only families, plus one seed migration into an already-existing table — so the
+ * twenty-two-table count below is unchanged. The command/controller boundary the last two tests in
+ * this file assert has moved accordingly: see their docblocks.
  */
 class ScopeBoundaryTest extends ReferenceTestCase
 {
@@ -102,19 +108,51 @@ class ScopeBoundaryTest extends ReferenceTestCase
         );
     }
 
-    public function test_the_ten_structure_only_families_expose_no_command_or_route(): void
+    /**
+     * Of S05 §5.3's original ten "structure-only, values deferred" families, S13
+     * (docs/reference-catalog-administration-foundation-specification.md §6/§7) deliberately built
+     * full administration (command + controller) for eight of them — every one the S13 authorization
+     * named as a target catalog — and left exactly two untouched: EmploymentType and Specialty are
+     * not named by the S13 authorization (spec §7) and must remain exactly as S05 left them. This
+     * updates the pre-S13 assertion (which required all ten to have neither) rather than deleting
+     * it, so the boundary this test protects — "no catalog gets administration Architecture
+     * Authority never authorized" — still holds, now drawn in the place S13 actually put it.
+     */
+    public function test_only_the_two_out_of_scope_structure_only_families_still_expose_no_command_or_route(): void
     {
-        $structureOnly = ['EmploymentType', 'ContractType', 'EmploymentCategory', 'QualificationType',
-            'AcademicDegree', 'JobTitle', 'Specialty', 'SupervisoryTitle', 'LeaveType', 'LeaveStatus', ];
+        $stillStructureOnly = ['EmploymentType', 'Specialty'];
 
-        foreach ($structureOnly as $family) {
+        foreach ($stillStructureOnly as $family) {
             $this->assertFileDoesNotExist(
                 base_path("app/Modules/Reference/Application/Commands/Create{$family}.php"),
-                "{$family} is DEFINED STRUCTURE / VALUES DEFERRED (§5.3) — it must expose no command",
+                "{$family} is out of S13 scope (spec §7) — it must still expose no command",
             );
             $this->assertFileDoesNotExist(
                 base_path("app/Modules/Reference/Presentation/Http/Controllers/{$family}Controller.php"),
-                "{$family} is DEFINED STRUCTURE / VALUES DEFERRED (§5.3) — it must expose no controller",
+                "{$family} is out of S13 scope (spec §7) — it must still expose no controller",
+            );
+        }
+    }
+
+    public function test_the_eight_s13_in_scope_families_now_expose_full_administration(): void
+    {
+        $s13Administered = ['ContractType', 'EmploymentCategory', 'QualificationType',
+            'AcademicDegree', 'JobTitle', 'SupervisoryTitle', 'LeaveType', 'LeaveStatus', ];
+
+        foreach ($s13Administered as $family) {
+            foreach (['Create', 'Activate', 'Deactivate'] as $verb) {
+                $this->assertFileExists(
+                    base_path("app/Modules/Reference/Application/Commands/{$verb}{$family}.php"),
+                    "{$family} is an S13 in-scope catalog (spec §6) — it must expose {$verb}{$family}",
+                );
+            }
+            $this->assertFileExists(
+                base_path("app/Modules/Reference/Application/Commands/Update{$family}Metadata.php"),
+                "{$family} is an S13 in-scope catalog (spec §6) — it must expose Update{$family}Metadata",
+            );
+            $this->assertFileExists(
+                base_path("app/Modules/Reference/Presentation/Http/Controllers/{$family}Controller.php"),
+                "{$family} is an S13 in-scope catalog (spec §6) — it must expose a controller",
             );
         }
     }

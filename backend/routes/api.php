@@ -10,17 +10,25 @@ use App\Modules\Organization\Infrastructure\Authorization\OrganizationPermission
 use App\Modules\Organization\Presentation\Http\Controllers\OrganizationalUnitController;
 use App\Modules\Platform\Presentation\Http\Controllers\HealthController;
 use App\Modules\Reference\Infrastructure\Authorization\ReferencePermissionCatalog as RefPerm;
+use App\Modules\Reference\Presentation\Http\Controllers\AcademicDegreeController;
 use App\Modules\Reference\Presentation\Http\Controllers\ContractBasedPopulationCategoryController;
+use App\Modules\Reference\Presentation\Http\Controllers\ContractTypeController;
 use App\Modules\Reference\Presentation\Http\Controllers\ContractTypePopulationMappingController;
 use App\Modules\Reference\Presentation\Http\Controllers\DecisionTypeController;
+use App\Modules\Reference\Presentation\Http\Controllers\EmploymentCategoryController;
 use App\Modules\Reference\Presentation\Http\Controllers\EmploymentStatusCategoryController;
 use App\Modules\Reference\Presentation\Http\Controllers\EmploymentStatusDetailBehaviorController;
 use App\Modules\Reference\Presentation\Http\Controllers\EmploymentStatusDetailController;
 use App\Modules\Reference\Presentation\Http\Controllers\GenderController;
 use App\Modules\Reference\Presentation\Http\Controllers\JobTitleAdministratorClassificationController;
+use App\Modules\Reference\Presentation\Http\Controllers\JobTitleController;
+use App\Modules\Reference\Presentation\Http\Controllers\LeaveStatusController;
+use App\Modules\Reference\Presentation\Http\Controllers\LeaveTypeController;
 use App\Modules\Reference\Presentation\Http\Controllers\MaritalStatusController;
 use App\Modules\Reference\Presentation\Http\Controllers\MonthlyCadreCategoryController;
+use App\Modules\Reference\Presentation\Http\Controllers\QualificationTypeController;
 use App\Modules\Reference\Presentation\Http\Controllers\SpecialtyCadreCategoryMappingController;
+use App\Modules\Reference\Presentation\Http\Controllers\SupervisoryTitleController;
 use App\Modules\Security\Infrastructure\Authorization\PermissionCatalog as Perm;
 use App\Modules\Security\Presentation\Http\Controllers\Auth\ChangeOwnPasswordController;
 use App\Modules\Security\Presentation\Http\Controllers\Auth\CsrfCookieController;
@@ -132,6 +140,18 @@ Route::middleware('web')->group(function (): void {
                 'employment-status-categories' => [EmploymentStatusCategoryController::class, 'employmentStatusCategory'],
                 'monthly-cadre-categories' => [MonthlyCadreCategoryController::class, 'monthlyCadreCategory'],
                 'contract-based-population-categories' => [ContractBasedPopulationCategoryController::class, 'contractBasedPopulationCategory'],
+                // S13 Reference Catalog Administration Foundation (docs/reference-catalog-administration-foundation-specification.md
+                // §6): eight already-modeled-but-unadministered catalogs, added to this same explicit,
+                // compile-time, allowlisted registry — never a client-selected table. ref.decision_types
+                // already has full administration since S05 and needs no new entry here (spec §4.2/§7).
+                'job-titles' => [JobTitleController::class, 'jobTitle'],
+                'employment-categories' => [EmploymentCategoryController::class, 'employmentCategory'],
+                'contract-types' => [ContractTypeController::class, 'contractType'],
+                'qualification-types' => [QualificationTypeController::class, 'qualificationType'],
+                'academic-degrees' => [AcademicDegreeController::class, 'academicDegree'],
+                'supervisory-titles' => [SupervisoryTitleController::class, 'supervisoryTitle'],
+                'leave-types' => [LeaveTypeController::class, 'leaveType'],
+                'leave-statuses' => [LeaveStatusController::class, 'leaveStatus'],
             ];
 
             foreach ($simpleFamilies as $segment => [$controller, $param]) {

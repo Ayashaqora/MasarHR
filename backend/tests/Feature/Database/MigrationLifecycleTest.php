@@ -268,6 +268,15 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
             $this->pg()->statement("drop table if exists ref.{$table} cascade");
         }
         DB::table('migrations')->where('migration', 'like', '2026_09_26%')->delete();
+
+        // S13's seven-row ref.employment_categories seed
+        // (docs/reference-catalog-administration-foundation-specification.md §8.1/§23) is dated
+        // 2026_10_03, so the '2026_09_26%' pattern above does not reach its migration record —
+        // exactly the same reason dropHumanResourcesSchemaObjects() below must separately delete
+        // the 2026_09_29% employment_types seed's record. Without this, migrateTestDatabase()'s
+        // plain `migrate --force` would find the seed migration still marked as run and skip it,
+        // recreating an empty ref.employment_categories table instead of restoring its seven rows.
+        DB::table('migrations')->where('migration', '2026_10_03_000001_seed_ref_employment_categories_grades')->delete();
     }
 
     /**
