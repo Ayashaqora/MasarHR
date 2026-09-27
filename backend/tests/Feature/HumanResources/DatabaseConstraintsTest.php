@@ -11,8 +11,8 @@ use PHPUnit\Framework\Attributes\DataProvider;
 /**
  * Direct PostgreSQL constraint coverage for hr.persons/hr.employment_relationships (S09 spec
  * §21-§23), hr.employment_status_periods (S10 spec §8/§20),
- * hr.organizational_placement_periods (S11 spec §14), and hr.full_secondment_periods (S12 spec
- * §19).
+ * hr.organizational_placement_periods (S11 spec §14), hr.full_secondment_periods (S12 spec
+ * §19), and hr.workplace_assignment_periods (S16 spec §S16.5).
  */
 class DatabaseConstraintsTest extends HumanResourcesTestCase
 {
@@ -28,7 +28,7 @@ class DatabaseConstraintsTest extends HumanResourcesTestCase
             ->pluck('table_name')->sort()->values()->all();
 
         $this->assertSame(
-            ['employment_relationships', 'employment_status_periods', 'full_secondment_periods', 'organizational_placement_periods', 'persons'],
+            ['employment_relationships', 'employment_status_periods', 'full_secondment_periods', 'organizational_placement_periods', 'persons', 'workplace_assignment_periods'],
             $tables,
         );
     }

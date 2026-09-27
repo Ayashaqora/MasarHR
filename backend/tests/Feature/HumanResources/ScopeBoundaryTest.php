@@ -6,48 +6,52 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 
 /**
- * S09/S10/S11/S12/S14 scope audit (docs/person-employment-foundation-specification.md §2/§17/§21/§24
- * P24, docs/employment-status-history-foundation-specification.md §3/§13/§18,
+ * S09/S10/S11/S12/S14/S16 scope audit (docs/person-employment-foundation-specification.md
+ * §2/§17/§21/§24 P24, docs/employment-status-history-foundation-specification.md §3/§13/§18,
  * docs/organizational-placement-foundation-specification.md §6.1/§20/§25 P22,
- * docs/full-secondment-foundation-specification.md §18/§26, and
- * docs/transfer-foundation-specification.md §7/§26): the hr schema contains exactly the five
- * S09/S10/S11/S12-authorized tables and nothing else — S14 adds none (persistence-design Option B,
- * ADR-S14-001 §16); no table carries a speculative column (organizational-unit on the S09/S10
- * tables, name/demographic on persons, a client-versioned or mutable-current-workplace column on
- * placement periods, a decision-type or destination-scheme column on secondment periods — S14's
- * own decision_type_id is a transient command input and an audit field only, never a schema
- * column, confirmed below); no S15+ out-of-scope concept
- * (assignment/leave/qualification/professional-history/reporting/…) leaked in via any route or
+ * docs/full-secondment-foundation-specification.md §18/§26,
+ * docs/transfer-foundation-specification.md §7/§26, and
+ * docs/workplace-assignment-foundation-specification.md §S16.5/§S16.21): the hr schema contains
+ * exactly the six S09/S10/S11/S12/S16-authorized tables and nothing else — S14 adds none
+ * (persistence-design Option B, ADR-S14-001 §16); no table carries a speculative column
+ * (organizational-unit on the S09/S10 tables, name/demographic on persons, a client-versioned or
+ * mutable-current-workplace column on placement periods, a decision-type or destination-scheme
+ * column on secondment periods — S14's own decision_type_id is a transient command input and an
+ * audit field only, never a schema column, confirmed below); no S17+ out-of-scope concept
+ * (supervisory/leave/qualification/professional-history/reporting/…) leaked in via any route or
  * command; no hard delete is exposed; _to_delete/ is untouched. 'placement' and
  * 'PlacementHistory' were removed from the forbidden lists in S11 (Organizational Placement became
  * the authorized S11 domain itself); 'secondment'/'Secondment' were removed in S12 for the
- * identical reason; 'transfer'/'Transfer' are removed here in S14 — Transfer Foundation is now the
- * authorized S14 domain itself (its own route/command legitimately contain 'transfer'/'Transfer'),
- * not an out-of-scope concept to guard against. Mirrors
+ * identical reason; 'transfer'/'Transfer' were removed in S14; 'assignment'/'Assignment' are
+ * removed here in S16 — Workplace Assignment Foundation is now the authorized S16 domain itself
+ * (its own route/command legitimately contain 'assignment'/'Assignment'; supervisory assignment
+ * remains strictly out of scope per ADR-S16-001 §17, but that concept is never named
+ * 'assignment' anywhere in this codebase — it is named 'supervisory', which stays forbidden
+ * below), not an out-of-scope concept to guard against. Mirrors
  * tests/Feature/Organization/ScopeBoundaryTest.php's and
  * tests/Feature/Reference/ScopeBoundaryTest.php's shape exactly.
  */
 class ScopeBoundaryTest extends HumanResourcesTestCase
 {
     private const FORBIDDEN_ROUTE_SEGMENTS = [
-        'assignment', 'leave', 'qualification',
+        'supervisory', 'leave', 'qualification',
         'work-schedule', 'workschedule', 'renewal', 'professional-history',
         'job-history', 'export', 'report',
     ];
 
     private const FORBIDDEN_COMMAND_NAMES = [
-        'Assignment', 'Leave', 'ContractRenewal',
+        'Supervisory', 'Leave', 'ContractRenewal',
         'ProfessionalHistory', 'JobHistory',
         'WorkSchedule',
     ];
 
-    public function test_hr_schema_contains_exactly_the_five_authorized_tables(): void
+    public function test_hr_schema_contains_exactly_the_six_authorized_tables(): void
     {
         $tables = DB::table('information_schema.tables')->where('table_schema', 'hr')->pluck('table_name')->all();
         sort($tables);
 
         $this->assertSame(
-            ['employment_relationships', 'employment_status_periods', 'full_secondment_periods', 'organizational_placement_periods', 'persons'],
+            ['employment_relationships', 'employment_status_periods', 'full_secondment_periods', 'organizational_placement_periods', 'persons', 'workplace_assignment_periods'],
             $tables,
         );
     }
@@ -111,6 +115,22 @@ class ScopeBoundaryTest extends HumanResourcesTestCase
                 $forbidden,
                 $columns,
                 "S12 spec §7.1/§19: no speculative {$forbidden} column — full secondment periods carry no decision-type reference and no Partial-Secondment discriminator. Still holds after S14: even though ref.decision_types now has one authoritative row (TRANSFER, ADR-S14-002), TransferEmployee closes this table's rows entirely through S12's own EndFullSecondment, adding no column (docs/transfer-foundation-specification.md §16/§7.1).",
+            );
+        }
+    }
+
+    /** S16 spec §S16.5: mirrors test_full_secondment_period_has_no_speculative_columns exactly. */
+    public function test_workplace_assignment_period_has_no_speculative_columns(): void
+    {
+        $columns = DB::table('information_schema.columns')
+            ->where('table_schema', 'hr')->where('table_name', 'workplace_assignment_periods')
+            ->pluck('column_name')->all();
+
+        foreach (['version', 'decision_type_id', 'code', 'type', 'is_partial', 'allocation_percentage', 'supervisory_title_id', 'is_supervisory'] as $forbidden) {
+            $this->assertNotContains(
+                $forbidden,
+                $columns,
+                "S16 spec §S16.5: no speculative {$forbidden} column — workplace assignment periods carry no decision-type reference of their own (validated at command time, recorded only in the audit entry, mirroring Transfer's own precedent), no Partial-Secondment-style discriminator, and no supervisory-domain reference (ADR-S16-001 §17 keeps supervisory assignment strictly separate).",
             );
         }
     }

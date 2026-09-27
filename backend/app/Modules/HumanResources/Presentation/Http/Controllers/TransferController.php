@@ -11,6 +11,7 @@ use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRel
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\FullSecondmentPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\OrganizationalPlacementPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\Person;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\WorkplaceAssignmentPeriod;
 use App\Modules\HumanResources\Presentation\Http\Resources\TransferResource;
 use App\Modules\Organization\Infrastructure\Persistence\Eloquent\OrganizationalUnit;
 use App\Modules\Platform\Presentation\Http\Middleware\ResolveCommandContext;
@@ -28,12 +29,17 @@ use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
  * nested under an existing {person}/{employmentRelationship} — mirrors
  * OrganizationalPlacementPeriodController's (S11) and FullSecondmentPeriodController's (S12) own
  * nested shape. Composes S08's existing, unmodified ScopedAuthorizationChecker against up to
- * THREE targets (spec §12.1, extending the S12 specification's own §12.1 "critical adversarial
- * point" resolution one target further): the destination unit (always), the current placement's "source" unit (if one is
- * recorded), and an active full secondment's unit (if one will be closed as this transfer's
- * consequence) — every roster this action visibly changes is checked, not only the two S12 already
- * checks for its own narrower operation. The checker itself is never modified — it is called up to
- * three times with three different targets, exactly as it was designed to be called.
+ * FOUR targets (spec §12.1, extending the S12 specification's own §12.1 "critical adversarial
+ * point" resolution further, and extended again by S16 —
+ * docs/workplace-assignment-foundation-specification.md §S16.14): the destination unit (always),
+ * the current placement's "source" unit (if one is recorded), an active full secondment's unit
+ * (if one will be closed as this transfer's consequence), and an active workplace assignment's
+ * unit (if one will be closed as this transfer's consequence, S16) — every roster this action
+ * visibly changes is checked, not only the narrower set each prior stage's own operation touched.
+ * The checker itself is never modified — it is called up to four times with four different
+ * targets, exactly as it was designed to be called. A relationship can never have both an active
+ * secondment and an active assignment at once (S16 §S16.8 mutual exclusion), so at most one of
+ * the last two checks is ever actually reached.
  */
 class TransferController
 {
@@ -100,6 +106,12 @@ class TransferController
                 return $this->forbidden();
             }
 
+            $assignmentUnit = $this->activeAssignmentUnit($employmentRelationship);
+
+            if ($assignmentUnit !== null && ! $scopeChecker->authorize($principal, Perm::EMPLOYMENT_RELATIONSHIPS_TRANSFER, $assignmentUnit)) {
+                return $this->forbidden();
+            }
+
             $context = ResolveCommandContext::from($request);
 
             $spec = new AuditSpec(
@@ -115,6 +127,9 @@ class TransferController
                     // null when no full secondment was active — the audit entry still discloses
                     // that this consequence was considered, not merely omitted (spec §19).
                     'closed_full_secondment_period_id' => $result->closedSecondment()?->getKey(),
+                    // S16: same discipline for the workplace-assignment consequence — null when
+                    // no assignment was active, never simply omitted.
+                    'closed_workplace_assignment_period_id' => $result->closedAssignment()?->getKey(),
                 ],
                 metadata: fn () => [],
             );
@@ -159,6 +174,16 @@ class TransferController
             ->first();
 
         return $secondment?->organizationalUnit;
+    }
+
+    private function activeAssignmentUnit(EmploymentRelationship $relationship): ?OrganizationalUnit
+    {
+        $assignment = WorkplaceAssignmentPeriod::query()
+            ->where('employment_relationship_id', $relationship->getKey())
+            ->whereNull('effective_to')
+            ->first();
+
+        return $assignment?->organizationalUnit;
     }
 
     private function forbidden(): JsonResponse

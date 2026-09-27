@@ -74,12 +74,16 @@ class CatalogAdministrationFoundationTest extends ReferenceTestCase
         $this->assertSame(0, LeaveStatus::query()->count());
         // ref.decision_types: already existed from S05 with zero rows; S13 supplied no approved
         // Arabic value for it either, so it stayed empty as of S13 (spec §4.2, §7, §8). This
-        // assertion is scoped to "no S13 content" specifically (excluding the code S14 later
+        // assertion is scoped to "no S13 content" specifically (excluding the codes S14/S16 later
         // seeded) rather than to a total count, because S14's own
         // 2026_10_04_000001_seed_ref_decision_types_transfer migration (ADR-S14-002) legitimately
-        // adds exactly one row — TRANSFER/نقل — afterward; that addition is S14's, not S13's, and
-        // is covered by its own tests (tests/Feature/HumanResources/TransferFoundationTest.php).
-        $this->assertSame(0, DecisionType::query()->where('code', '!=', 'TRANSFER')->count());
+        // adds exactly one row — TRANSFER/نقل — and S16's own
+        // 2026_10_05_000002_seed_ref_decision_types_assignment migration (ADR-S16-001 §14)
+        // legitimately adds exactly one more — ASSIGNMENT/تكليف — afterward; neither addition is
+        // S13's, and each is covered by its own tests
+        // (tests/Feature/HumanResources/TransferFoundationTest.php,
+        // tests/Feature/HumanResources/WorkplaceAssignmentFoundationTest.php).
+        $this->assertSame(0, DecisionType::query()->whereNotIn('code', ['TRANSFER', 'ASSIGNMENT'])->count());
     }
 
     public function test_decision_type_administration_already_worked_before_s13_and_is_unaffected_by_it(): void

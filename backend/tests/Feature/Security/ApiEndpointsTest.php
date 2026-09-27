@@ -26,10 +26,11 @@ class ApiEndpointsTest extends SecurityTestCase
 
         // security.permissions is a cross-module catalog (S05 §16, extended by S07 §17, extended
         // again by S08 §18, extended again by S09 §17, extended again by S10 §13, extended again by
-        // S11 §16, extended again by S12 §17, extended again by S14 §19 per ADR-S14-002): by S14 it
-        // also contains the two Reference-module, two Organization-module, five S09
-        // HumanResources-module, two S10 HumanResources-module, two S11 HumanResources-module, three
-        // S12 HumanResources-module, and one S14 HumanResources-module permission codes seeded
+        // S11 §16, extended again by S12 §17, extended again by S14 §19 per ADR-S14-002, extended
+        // again by S16 §S16.14 per ADR-S16-001): by S16 it also contains the two Reference-module,
+        // two Organization-module, five S09 HumanResources-module, two S10 HumanResources-module,
+        // two S11 HumanResources-module, three S12 HumanResources-module, one S14
+        // HumanResources-module, and three S16 HumanResources-module permission codes seeded
         // alongside PermissionCatalog::ALL — which already includes ORGANIZATION_SCOPES_MANAGE
         // itself, since that permission is owned by the Security module, not a separate module
         // catalog. Reference/Organization/HumanResources codes are still named literally here (not
@@ -45,6 +46,7 @@ class ApiEndpointsTest extends SecurityTestCase
                 'hr.employment_status_periods.view', 'hr.employment_status_periods.record',
                 'hr.organizational_placement_periods.view', 'hr.organizational_placement_periods.record',
                 'hr.full_secondment_periods.view', 'hr.full_secondment_periods.start', 'hr.full_secondment_periods.end',
+                'hr.workplace_assignment_periods.view', 'hr.workplace_assignment_periods.start', 'hr.workplace_assignment_periods.end',
             ],
             $codes,
         );

@@ -11,6 +11,7 @@ use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRel
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentStatusPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\FullSecondmentPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\Person;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\WorkplaceAssignmentPeriod;
 use App\Modules\HumanResources\Presentation\Http\Resources\EmploymentRelationshipResource;
 use App\Modules\Platform\Presentation\Http\Middleware\ResolveCommandContext;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\EmploymentType;
@@ -130,6 +131,16 @@ class EmploymentRelationshipController
                 ->whereNull('effective_to')
                 ->exists();
 
+            // S16 (docs/workplace-assignment-foundation-specification.md §S16.10): mirrors
+            // $hadOpenSecondment/$stillOpenSecondment exactly, closing the same audit-completeness
+            // gap for the newer consequence — caught here proactively (same class of gap the
+            // TransferResource fix caught for S16's Transfer-side consequence) rather than left
+            // silently unreported.
+            $hadOpenAssignment = WorkplaceAssignmentPeriod::query()
+                ->where('employment_relationship_id', $employmentRelationship->getKey())
+                ->whereNull('effective_to')
+                ->exists();
+
             $spec = new AuditSpec(
                 action: 'hr.employment_relationship.end',
                 targetType: 'hr_employment_relationship',
@@ -138,7 +149,9 @@ class EmploymentRelationshipController
                     'effective_to' => $ended->effective_to?->toDateString(),
                     'ended_terminally' => $ended->ended_terminally,
                 ],
-                metadata: function () use ($employmentRelationship, $hadOpenSecondment, $hadOpenStatusPeriod) {
+                metadata: function () use (
+                    $employmentRelationship, $hadOpenSecondment, $hadOpenStatusPeriod, $hadOpenAssignment,
+                ) {
                     $metadata = [];
 
                     $stillOpenSecondment = FullSecondmentPeriod::query()
@@ -157,6 +170,15 @@ class EmploymentRelationshipController
 
                     if ($hadOpenStatusPeriod && ! $stillOpenStatusPeriod) {
                         $metadata['status_period_closed_as_consequence'] = true;
+                    }
+
+                    $stillOpenAssignment = WorkplaceAssignmentPeriod::query()
+                        ->where('employment_relationship_id', $employmentRelationship->getKey())
+                        ->whereNull('effective_to')
+                        ->exists();
+
+                    if ($hadOpenAssignment && ! $stillOpenAssignment) {
+                        $metadata['workplace_assignment_closed_as_consequence'] = true;
                     }
 
                     return $metadata;

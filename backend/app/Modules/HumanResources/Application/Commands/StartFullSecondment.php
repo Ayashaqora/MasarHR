@@ -3,10 +3,12 @@
 namespace App\Modules\HumanResources\Application\Commands;
 
 use App\Modules\HumanResources\Domain\Exceptions\ActiveFullSecondmentAlreadyExistsException;
+use App\Modules\HumanResources\Domain\Exceptions\ActiveWorkplaceAssignmentAlreadyExistsException;
 use App\Modules\HumanResources\Domain\Exceptions\EmploymentRelationshipAlreadyEndedException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidFullSecondmentStartDateException;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRelationship;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\FullSecondmentPeriod;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\WorkplaceAssignmentPeriod;
 use App\Modules\Organization\Infrastructure\Persistence\Eloquent\OrganizationalUnit;
 use App\Modules\Platform\Infrastructure\Persistence\Postgres\PostgresErrorClassifier as Errors;
 use Illuminate\Database\QueryException;
@@ -29,11 +31,17 @@ use Illuminate\Support\Carbon;
  * No `is_active` gate is applied to the destination OrganizationalUnit here — mirrors the
  * explicit S10/S11 precedent of leaving inactive-target exclusion to the authorization layer
  * rather than inventing a second, domain-level active check (spec §8.2).
+ *
+ * S16 (docs/workplace-assignment-foundation-specification.md §S16.8, movement interaction matrix
+ * pair "Assignment → Full Secondment": REJECT): also rejects when an active Workplace Assignment
+ * period exists — a conservative mutual exclusion between the two movement mechanisms, chosen
+ * specifically to avoid inventing a cross-domain precedence rule ADR-S16-001 §4 does not supply.
  */
 final class StartFullSecondment
 {
     /**
      * @throws EmploymentRelationshipAlreadyEndedException|ActiveFullSecondmentAlreadyExistsException|InvalidFullSecondmentStartDateException
+     * @throws ActiveWorkplaceAssignmentAlreadyExistsException
      */
     public function handle(
         EmploymentRelationship $relationship,
@@ -60,6 +68,17 @@ final class StartFullSecondment
 
         if ($alreadyActive) {
             throw new ActiveFullSecondmentAlreadyExistsException;
+        }
+
+        // S16 spec §S16.8, pair "Assignment → Full Secondment": mutual exclusion, no invented
+        // precedence between the two domains.
+        $activeAssignment = WorkplaceAssignmentPeriod::query()
+            ->where('employment_relationship_id', $freshRelationship->getKey())
+            ->whereNull('effective_to')
+            ->exists();
+
+        if ($activeAssignment) {
+            throw new ActiveWorkplaceAssignmentAlreadyExistsException;
         }
 
         $newFrom = Carbon::parse($effectiveFrom);

@@ -7,6 +7,7 @@ use App\Modules\HumanResources\Presentation\Http\Controllers\FullSecondmentPerio
 use App\Modules\HumanResources\Presentation\Http\Controllers\OrganizationalPlacementPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\PersonController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\TransferController;
+use App\Modules\HumanResources\Presentation\Http\Controllers\WorkplaceAssignmentPeriodController;
 use App\Modules\Organization\Infrastructure\Authorization\OrganizationPermissionCatalog as OrgPerm;
 use App\Modules\Organization\Presentation\Http\Controllers\OrganizationalUnitController;
 use App\Modules\Platform\Presentation\Http\Controllers\HealthController;
@@ -296,5 +297,20 @@ Route::middleware('web')->group(function (): void {
             // target units (docs/transfer-foundation-specification.md §12.1).
             Route::post('/persons/{person}/employment-relationships/{employmentRelationship}/transfer', [TransferController::class, 'store'])
                 ->middleware('permission:'.HrPerm::EMPLOYMENT_RELATIONSHIPS_TRANSFER)->name('persons.employment-relationships.transfer.store');
+
+            // S16: Workplace Assignment, nested under the same {person}/{employmentRelationship}.
+            // The permission: middleware is the coarse RBAC (WHAT) gate only — the controller
+            // additionally composes S08 organizational scope (WHERE) against up to two target
+            // units per operation via ScopedAuthorizationChecker
+            // (docs/workplace-assignment-foundation-specification.md §S16.14/§S16.16). No new
+            // "resolve actual workplace" route is added — the existing actual-workplace route
+            // above already covers an active assignment, since ResolveActualWorkplaceForRelationship
+            // was extended in place (spec §S16.8).
+            Route::get('/persons/{person}/employment-relationships/{employmentRelationship}/workplace-assignment-periods', [WorkplaceAssignmentPeriodController::class, 'index'])
+                ->middleware('permission:'.HrPerm::WORKPLACE_ASSIGNMENT_PERIODS_VIEW)->name('persons.employment-relationships.workplace-assignment-periods.index');
+            Route::post('/persons/{person}/employment-relationships/{employmentRelationship}/workplace-assignment-periods', [WorkplaceAssignmentPeriodController::class, 'store'])
+                ->middleware('permission:'.HrPerm::WORKPLACE_ASSIGNMENT_PERIODS_START)->name('persons.employment-relationships.workplace-assignment-periods.store');
+            Route::post('/persons/{person}/employment-relationships/{employmentRelationship}/workplace-assignment-periods/end', [WorkplaceAssignmentPeriodController::class, 'end'])
+                ->middleware('permission:'.HrPerm::WORKPLACE_ASSIGNMENT_PERIODS_END)->name('persons.employment-relationships.workplace-assignment-periods.end');
         });
 });

@@ -19,11 +19,17 @@ namespace App\Modules\HumanResources\Infrastructure\Authorization;
  * unit; S12's three permissions require it against up to TWO target units per operation
  * (docs/full-secondment-foundation-specification.md §12.1) — that composition happens in
  * FullSecondmentPeriodController via ScopedAuthorizationChecker, not here; this class still only
- * lists the RBAC permission codes themselves. The final permission is S14's (from
+ * lists the RBAC permission codes themselves. The next permission is S14's (from
  * 2026_10_04_000002_seed_security_transfer_permission) — it requires S08 scope against up to
- * THREE target units (destination, source placement, source secondment if closed;
- * docs/transfer-foundation-specification.md §12.1), the same "call the checker more than once,
- * never modify it" composition TransferController itself performs.
+ * FOUR target units as of S16 (destination, source placement, source secondment if closed,
+ * source assignment if closed; docs/transfer-foundation-specification.md §12.1,
+ * docs/workplace-assignment-foundation-specification.md §S16.14), the same "call the checker more
+ * than once, never modify it" composition TransferController itself performs. The final three
+ * permissions are S16's (from
+ * 2026_10_05_000003_seed_security_workplace_assignment_period_permissions) — they require S08
+ * scope against up to TWO target units per operation
+ * (docs/workplace-assignment-foundation-specification.md §S16.14), the identical composition
+ * shape S12's own three permissions already established.
  */
 final class HumanResourcesPermissionCatalog
 {
@@ -60,6 +66,13 @@ final class HumanResourcesPermissionCatalog
      */
     public const EMPLOYMENT_RELATIONSHIPS_TRANSFER = 'hr.employment_relationships.transfer';
 
+    /** S16 (docs/workplace-assignment-foundation-specification.md §S16.14). */
+    public const WORKPLACE_ASSIGNMENT_PERIODS_VIEW = 'hr.workplace_assignment_periods.view';
+
+    public const WORKPLACE_ASSIGNMENT_PERIODS_START = 'hr.workplace_assignment_periods.start';
+
+    public const WORKPLACE_ASSIGNMENT_PERIODS_END = 'hr.workplace_assignment_periods.end';
+
     public const ALL = [
         self::PERSONS_VIEW,
         self::PERSONS_CREATE,
@@ -74,5 +87,8 @@ final class HumanResourcesPermissionCatalog
         self::FULL_SECONDMENT_PERIODS_START,
         self::FULL_SECONDMENT_PERIODS_END,
         self::EMPLOYMENT_RELATIONSHIPS_TRANSFER,
+        self::WORKPLACE_ASSIGNMENT_PERIODS_VIEW,
+        self::WORKPLACE_ASSIGNMENT_PERIODS_START,
+        self::WORKPLACE_ASSIGNMENT_PERIODS_END,
     ];
 }

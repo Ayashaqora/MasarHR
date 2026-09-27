@@ -45,10 +45,12 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
         if ($this->personIds !== []) {
             $relationshipIds = DB::table('hr.employment_relationships')
                 ->whereIn('person_id', $this->personIds)->pluck('id');
-            // full_secondment_periods and organizational_placement_periods first: both carry a
-            // RESTRICT FK to employment_relationships, same most-dependent-first ordering as
+            // full_secondment_periods, workplace_assignment_periods, and
+            // organizational_placement_periods first: all three carry a RESTRICT FK to
+            // employment_relationships, same most-dependent-first ordering as
             // employment_status_periods below.
             DB::table('hr.full_secondment_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
+            DB::table('hr.workplace_assignment_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
             DB::table('hr.organizational_placement_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
             DB::table('hr.employment_status_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
             DB::table('hr.employment_relationships')->whereIn('person_id', $this->personIds)->delete();
@@ -731,5 +733,402 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
         });
 
         $this->assertSame(1, (int) $this->scalar('select count(*) from hr.full_secondment_periods where employment_relationship_id = ?', [$relationshipId]));
+    }
+
+    // ---------------------------------------------------------------------
+    // S16 — Workplace Assignment Foundation (spec §S16.18/§S16.23, ADR-S16-001 §19/§24's six
+    // named real two-connection races)
+    // ---------------------------------------------------------------------
+
+    /**
+     * "Assignment -> Assignment" (spec §S16.8: ALLOW, CLOSE-PREVIOUS-THEN-START-NEW), mirroring
+     * test_concurrent_transfer_calls_for_the_same_relationship_are_serialised_by_the_relationship_row_lock
+     * exactly: StartWorkplaceAssignment's own first statement is the identical
+     * `SELECT ... FOR UPDATE` lock on hr.employment_relationships every other S09-S16 command
+     * shares, so two independent, genuinely concurrent StartWorkplaceAssignment calls against the
+     * SAME relationship must be serialised by it — and the second (later-committed) call's own
+     * replace step must observe the first call's own newly-opened period as "the" open period to
+     * close, not a stale pre-race snapshot.
+     */
+    public function test_concurrent_workplace_assignment_start_calls_for_the_same_relationship_are_serialised_by_the_relationship_row_lock(): void
+    {
+        $personId = $this->person();
+        $employmentTypeId = $this->permanentEmploymentTypeId();
+        $relationshipId = (string) Str::uuid7();
+        $this->pg()->insert($this->insertSql(), [$relationshipId, $personId, $employmentTypeId, 'PN-ASSIGNMENT-START-START-RACE', 'PERMANENT', '2026-01-01']);
+
+        $unitAId = $this->organizationalUnitId();
+        $unitBId = $this->organizationalUnitId();
+
+        $lockSql = 'select id from hr.employment_relationships where id = ? for update';
+        $openPeriodSql = 'select id, organizational_unit_id from hr.workplace_assignment_periods where employment_relationship_id = ? and effective_to is null';
+        $closePeriodSql = 'update hr.workplace_assignment_periods set effective_to = ? where id = ?';
+        $openNewPeriodSql = <<<'SQL'
+            insert into hr.workplace_assignment_periods
+                (id, employment_relationship_id, organizational_unit_id, effective_from, created_at)
+            values (?, ?, ?, ?, now())
+            SQL;
+
+        $first = $this->pg();
+        $second = $this->second();
+
+        // Simulates the first StartWorkplaceAssignment call's own lock step (session 1, assigning
+        // to A — nothing open yet, so it simply inserts).
+        $first->beginTransaction();
+        $first->select($lockSql, [$relationshipId]); // not committed yet
+
+        $second->statement("set lock_timeout = '300ms'");
+        // Simulates a second, independent StartWorkplaceAssignment call (assigning the same
+        // relationship to B) racing the first: it must wait behind the first session's lock.
+        $blocked = $this->databaseError(fn () => $second->transaction(fn () => $second->select($lockSql, [$relationshipId])));
+        $this->assertTrue(Errors::isLockNotAvailable($blocked), "the second concurrent StartWorkplaceAssignment call's relationship-row lock attempt waits on the first's (lock_timeout fired)");
+
+        // First session completes its own start (nothing open -> plain insert of A) and commits.
+        $first->insert($openNewPeriodSql, [(string) Str::uuid7(), $relationshipId, $unitAId, '2026-02-01']);
+        $first->commit();
+
+        // Now unblocked: the second session performs its own real start (replacing A with B),
+        // proving the wait was genuine serialization and that it correctly observes the FIRST
+        // call's own newly-committed A period as "the" open period to close, not a stale
+        // pre-race snapshot showing nothing open.
+        $second->transaction(function () use ($second, $lockSql, $relationshipId, $unitBId, $openPeriodSql, $closePeriodSql, $openNewPeriodSql, $unitAId): void {
+            $second->select($lockSql, [$relationshipId]);
+            $openForSecond = $second->selectOne($openPeriodSql, [$relationshipId]);
+            $this->assertSame($unitAId, (string) $openForSecond->organizational_unit_id, 'the second, now-unblocked start must see the first call\'s own committed A period as open, not a stale pre-race snapshot');
+            $second->update($closePeriodSql, ['2026-03-01', $openForSecond->id]);
+            $second->insert($openNewPeriodSql, [(string) Str::uuid7(), $relationshipId, $unitBId, '2026-03-01']);
+        });
+
+        $openPeriods = DB::table('hr.workplace_assignment_periods')
+            ->where('employment_relationship_id', $relationshipId)->whereNull('effective_to')->get();
+        $this->assertCount(1, $openPeriods, 'exactly one open workplace assignment period survives two serialised, racing starts');
+        $this->assertSame($unitBId, (string) $openPeriods->first()->organizational_unit_id);
+
+        $this->assertSame(2, (int) $this->scalar('select count(*) from hr.workplace_assignment_periods where employment_relationship_id = ?', [$relationshipId]));
+    }
+
+    /**
+     * "Assignment start/end race", mirroring
+     * test_concurrent_full_secondment_start_and_end_calls_for_the_same_relationship_are_serialised_by_the_relationship_row_lock
+     * exactly (StartWorkplaceAssignment's and EndWorkplaceAssignment's shared first step is the
+     * identical relationship row lock).
+     */
+    public function test_concurrent_workplace_assignment_start_and_end_calls_for_the_same_relationship_are_serialised_by_the_relationship_row_lock(): void
+    {
+        $personId = $this->person();
+        $employmentTypeId = $this->permanentEmploymentTypeId();
+        $relationshipId = (string) Str::uuid7();
+        $this->pg()->insert($this->insertSql(), [$relationshipId, $personId, $employmentTypeId, 'PN-ASSIGNMENT-START-END-RACE', 'PERMANENT', '2026-01-01']);
+
+        $unitId = $this->organizationalUnitId();
+        $openPeriodId = (string) Str::uuid7();
+
+        // An already-open assignment for the "EndWorkplaceAssignment" session to close.
+        $this->pg()->insert(<<<'SQL'
+            insert into hr.workplace_assignment_periods
+                (id, employment_relationship_id, organizational_unit_id, effective_from, created_at)
+            values (?, ?, ?, ?, now())
+            SQL, [$openPeriodId, $relationshipId, $unitId, '2026-02-01']);
+
+        $lockSql = 'select id from hr.employment_relationships where id = ? for update';
+
+        $first = $this->pg();
+        $second = $this->second();
+
+        // Simulates a concurrent StartWorkplaceAssignment's own first statement: lock the
+        // relationship row.
+        $first->beginTransaction();
+        $first->select($lockSql, [$relationshipId]); // not committed yet
+
+        $second->statement("set lock_timeout = '300ms'");
+        // Simulates EndWorkplaceAssignment's own first statement, on an independent session: it
+        // must wait behind the first session's lock, not merely behind a lock on the (different)
+        // period row it will eventually update.
+        $blocked = $this->databaseError(fn () => $second->transaction(fn () => $second->select($lockSql, [$relationshipId])));
+        $this->assertTrue(Errors::isLockNotAvailable($blocked), "EndWorkplaceAssignment's relationship-row lock attempt waits on StartWorkplaceAssignment's (lock_timeout fired)");
+
+        $first->commit();
+
+        // Now unblocked: the second session performs EndWorkplaceAssignment's actual close,
+        // proving the wait was genuine serialization, not a permanent deadlock or a false block on
+        // an unrelated row.
+        $second->transaction(function () use ($second, $lockSql, $relationshipId, $openPeriodId): void {
+            $second->select($lockSql, [$relationshipId]);
+            $second->update('update hr.workplace_assignment_periods set effective_to = ? where id = ?', ['2026-05-01', $openPeriodId]);
+        });
+
+        $this->assertSame('2026-05-01', (string) $this->scalar('select effective_to from hr.workplace_assignment_periods where id = ?', [$openPeriodId]));
+    }
+
+    /**
+     * "Assignment -> Transfer" (spec §S16.8: ALLOW, CLOSE-PREVIOUS-AS-CONSEQUENCE), mirroring
+     * test_concurrent_employment_end_and_full_secondment_end_for_the_same_relationship_are_serialised_by_the_relationship_row_lock's
+     * shape: TransferEmployee's own consequence (closing an open assignment, spec §S16.8) racing a
+     * concurrent, independent StartWorkplaceAssignment call. Proves the relationship row lock
+     * genuinely serialises them, so the later-committing StartWorkplaceAssignment observes the
+     * transfer's already-committed close (no open assignment left) rather than a stale pre-race
+     * snapshot that would have let it try to replace an assignment the transfer already closed.
+     */
+    public function test_concurrent_transfer_and_workplace_assignment_start_for_the_same_relationship_are_serialised_by_the_relationship_row_lock(): void
+    {
+        $personId = $this->person();
+        $employmentTypeId = $this->permanentEmploymentTypeId();
+        $relationshipId = (string) Str::uuid7();
+        $this->pg()->insert($this->insertSql(), [$relationshipId, $personId, $employmentTypeId, 'PN-ASSIGNMENT-TRANSFER-START-RACE', 'PERMANENT', '2026-01-01']);
+
+        $sourceUnitId = $this->organizationalUnitId();
+        $destinationUnitId = $this->organizationalUnitId();
+        $assignmentUnitId = $this->organizationalUnitId();
+        $newAssignmentUnitId = $this->organizationalUnitId();
+
+        // The relationship's original placement (S11) — TransferEmployee's own source.
+        $this->pg()->insert(<<<'SQL'
+            insert into hr.organizational_placement_periods
+                (id, employment_relationship_id, organizational_unit_id, effective_from, created_at)
+            values (?, ?, ?, ?, now())
+            SQL, [(string) Str::uuid7(), $relationshipId, $sourceUnitId, '2026-01-01']);
+
+        // An already-open assignment for TransferEmployee's own consequence to close.
+        $openAssignmentId = (string) Str::uuid7();
+        $this->pg()->insert(<<<'SQL'
+            insert into hr.workplace_assignment_periods
+                (id, employment_relationship_id, organizational_unit_id, effective_from, created_at)
+            values (?, ?, ?, ?, now())
+            SQL, [$openAssignmentId, $relationshipId, $assignmentUnitId, '2026-02-01']);
+
+        $lockSql = 'select id from hr.employment_relationships where id = ? for update';
+        $openPlacementSql = 'select id from hr.organizational_placement_periods where employment_relationship_id = ? and effective_to is null';
+        $openAssignmentSql = 'select id, organizational_unit_id from hr.workplace_assignment_periods where employment_relationship_id = ? and effective_to is null';
+        $closeAssignmentSql = 'update hr.workplace_assignment_periods set effective_to = ? where id = ?';
+        $openNewAssignmentSql = <<<'SQL'
+            insert into hr.workplace_assignment_periods
+                (id, employment_relationship_id, organizational_unit_id, effective_from, created_at)
+            values (?, ?, ?, ?, now())
+            SQL;
+
+        $first = $this->pg();
+        $second = $this->second();
+
+        // Session 1 simulates TransferEmployee's own sequence: lock, close the open placement,
+        // open the new one, and — as its S16 consequence — close the open assignment.
+        $first->beginTransaction();
+        $first->select($lockSql, [$relationshipId]); // not committed yet
+
+        $second->statement("set lock_timeout = '300ms'");
+        // Simulates a concurrent, independent StartWorkplaceAssignment call: its own lock attempt
+        // must wait behind session 1's still-open transaction.
+        $blocked = $this->databaseError(fn () => $second->transaction(fn () => $second->select($lockSql, [$relationshipId])));
+        $this->assertTrue(Errors::isLockNotAvailable($blocked), "the concurrent StartWorkplaceAssignment call's relationship-row lock attempt waits on TransferEmployee's (lock_timeout fired)");
+
+        $openPlacement = $first->selectOne($openPlacementSql, [$relationshipId]);
+        $first->update('update hr.organizational_placement_periods set effective_to = ? where id = ?', ['2026-06-01', $openPlacement->id]);
+        $first->insert(<<<'SQL'
+            insert into hr.organizational_placement_periods
+                (id, employment_relationship_id, organizational_unit_id, effective_from, created_at)
+            values (?, ?, ?, ?, now())
+            SQL, [(string) Str::uuid7(), $relationshipId, $destinationUnitId, '2026-06-01']);
+        $first->update($closeAssignmentSql, ['2026-06-01', $openAssignmentId]);
+        $first->commit();
+
+        // Now unblocked: the second session's StartWorkplaceAssignment must observe the transfer's
+        // already-committed close — no open assignment left to replace — and so performs a plain
+        // insert, proving it did not race a stale pre-commit snapshot that would still show the
+        // old assignment open.
+        $second->transaction(function () use ($second, $lockSql, $relationshipId, $openAssignmentSql, $openNewAssignmentSql, $newAssignmentUnitId): void {
+            $second->select($lockSql, [$relationshipId]);
+            $stillOpen = $second->select($openAssignmentSql, [$relationshipId]);
+            $this->assertCount(0, $stillOpen, 'the now-unblocked StartWorkplaceAssignment call must see no open assignment — the transfer already closed it as its own consequence');
+            $second->insert($openNewAssignmentSql, [(string) Str::uuid7(), $relationshipId, $newAssignmentUnitId, '2026-06-01']);
+        });
+
+        $openAssignments = DB::table('hr.workplace_assignment_periods')
+            ->where('employment_relationship_id', $relationshipId)->whereNull('effective_to')->get();
+        $this->assertCount(1, $openAssignments, 'exactly one open assignment period survives the serialised transfer-then-start race');
+        $this->assertSame($newAssignmentUnitId, (string) $openAssignments->first()->organizational_unit_id);
+    }
+
+    /**
+     * "Assignment -> Transfer" (spec §S16.8: ALLOW, CLOSE-PREVIOUS-AS-CONSEQUENCE), the EndAssignment
+     * variant of the race above: proves a concurrent, independent EndWorkplaceAssignment call —
+     * rather than a StartWorkplaceAssignment — also correctly observes TransferEmployee's own
+     * already-committed consequence-close, finding nothing left open to close itself (no
+     * double-close, no stale pre-race snapshot).
+     */
+    public function test_concurrent_transfer_and_workplace_assignment_end_for_the_same_relationship_are_serialised_by_the_relationship_row_lock(): void
+    {
+        $personId = $this->person();
+        $employmentTypeId = $this->permanentEmploymentTypeId();
+        $relationshipId = (string) Str::uuid7();
+        $this->pg()->insert($this->insertSql(), [$relationshipId, $personId, $employmentTypeId, 'PN-ASSIGNMENT-TRANSFER-END-RACE', 'PERMANENT', '2026-01-01']);
+
+        $sourceUnitId = $this->organizationalUnitId();
+        $destinationUnitId = $this->organizationalUnitId();
+        $assignmentUnitId = $this->organizationalUnitId();
+
+        $this->pg()->insert(<<<'SQL'
+            insert into hr.organizational_placement_periods
+                (id, employment_relationship_id, organizational_unit_id, effective_from, created_at)
+            values (?, ?, ?, ?, now())
+            SQL, [(string) Str::uuid7(), $relationshipId, $sourceUnitId, '2026-01-01']);
+
+        $openAssignmentId = (string) Str::uuid7();
+        $this->pg()->insert(<<<'SQL'
+            insert into hr.workplace_assignment_periods
+                (id, employment_relationship_id, organizational_unit_id, effective_from, created_at)
+            values (?, ?, ?, ?, now())
+            SQL, [$openAssignmentId, $relationshipId, $assignmentUnitId, '2026-02-01']);
+
+        $lockSql = 'select id from hr.employment_relationships where id = ? for update';
+        $openPlacementSql = 'select id from hr.organizational_placement_periods where employment_relationship_id = ? and effective_to is null';
+        $openAssignmentSql = 'select id from hr.workplace_assignment_periods where employment_relationship_id = ? and effective_to is null';
+        $closeAssignmentSql = 'update hr.workplace_assignment_periods set effective_to = ? where id = ?';
+
+        $first = $this->pg();
+        $second = $this->second();
+
+        $first->beginTransaction();
+        $first->select($lockSql, [$relationshipId]); // simulates TransferEmployee's own lock, not committed yet
+
+        $second->statement("set lock_timeout = '300ms'");
+        // Simulates a concurrent, independent EndWorkplaceAssignment call against the very same
+        // open assignment the transfer is about to close.
+        $blocked = $this->databaseError(fn () => $second->transaction(fn () => $second->select($lockSql, [$relationshipId])));
+        $this->assertTrue(Errors::isLockNotAvailable($blocked), "the concurrent EndWorkplaceAssignment call's relationship-row lock attempt waits on TransferEmployee's (lock_timeout fired)");
+
+        $openPlacement = $first->selectOne($openPlacementSql, [$relationshipId]);
+        $first->update('update hr.organizational_placement_periods set effective_to = ? where id = ?', ['2026-06-01', $openPlacement->id]);
+        $first->insert(<<<'SQL'
+            insert into hr.organizational_placement_periods
+                (id, employment_relationship_id, organizational_unit_id, effective_from, created_at)
+            values (?, ?, ?, ?, now())
+            SQL, [(string) Str::uuid7(), $relationshipId, $destinationUnitId, '2026-06-01']);
+        $first->update($closeAssignmentSql, ['2026-06-01', $openAssignmentId]);
+        $first->commit();
+
+        // Now unblocked: the second session's EndWorkplaceAssignment must observe that the
+        // transfer already closed the assignment — nothing left open to act on, proving genuine
+        // serialisation rather than a stale pre-race snapshot that would have let it double-close
+        // the same row.
+        $second->transaction(function () use ($second, $lockSql, $relationshipId, $openAssignmentSql): void {
+            $second->select($lockSql, [$relationshipId]);
+            $stillOpen = $second->select($openAssignmentSql, [$relationshipId]);
+            $this->assertCount(0, $stillOpen, 'the now-unblocked EndWorkplaceAssignment call must see no open assignment — the transfer already closed it as its own consequence');
+        });
+
+        $this->assertSame('2026-06-01', (string) $this->scalar('select effective_to from hr.workplace_assignment_periods where id = ?', [$openAssignmentId]));
+    }
+
+    /**
+     * "Full Secondment -> Assignment" mutual exclusion (spec §S16.8: REJECT — a conservative
+     * mutual exclusion, no invented cross-domain precedence), mirroring
+     * test_concurrent_status_recording_and_full_secondment_start_for_the_same_relationship_are_serialised_by_the_relationship_row_lock's
+     * shape: proves a concurrent, independent StartFullSecondment call — racing a
+     * StartWorkplaceAssignment call that commits first — genuinely observes the just-committed
+     * assignment once unblocked (the row lock closes the race window a mutual-exclusion check like
+     * this depends on), rather than a stale pre-race snapshot that would have let both movement
+     * types coexist.
+     */
+    public function test_concurrent_workplace_assignment_start_and_full_secondment_start_for_the_same_relationship_are_serialised_by_the_relationship_row_lock(): void
+    {
+        $personId = $this->person();
+        $employmentTypeId = $this->permanentEmploymentTypeId();
+        $relationshipId = (string) Str::uuid7();
+        $this->pg()->insert($this->insertSql(), [$relationshipId, $personId, $employmentTypeId, 'PN-ASSIGNMENT-SECONDMENT-START-RACE', 'PERMANENT', '2026-01-01']);
+        $assignmentUnitId = $this->organizationalUnitId();
+
+        $lockSql = 'select id from hr.employment_relationships where id = ? for update';
+        $openAssignmentSql = 'select id from hr.workplace_assignment_periods where employment_relationship_id = ? and effective_to is null';
+        $startAssignmentSql = <<<'SQL'
+            insert into hr.workplace_assignment_periods
+                (id, employment_relationship_id, organizational_unit_id, effective_from, created_at)
+            values (?, ?, ?, ?, now())
+            SQL;
+
+        $first = $this->pg();
+        $second = $this->second();
+
+        // Session 1 simulates StartWorkplaceAssignment's own sequence: lock, then (nothing open,
+        // no active secondment) insert the new open assignment period.
+        $first->beginTransaction();
+        $first->select($lockSql, [$relationshipId]); // not committed yet
+
+        $second->statement("set lock_timeout = '300ms'");
+        // Simulates a concurrent, independent StartFullSecondment call's own lock attempt — it
+        // must wait behind session 1's still-open transaction, not merely behind a lock on the
+        // (different) assignment-period row session 1 is about to insert.
+        $blocked = $this->databaseError(fn () => $second->transaction(fn () => $second->select($lockSql, [$relationshipId])));
+        $this->assertTrue(Errors::isLockNotAvailable($blocked), "StartFullSecondment's own lock attempt waits on StartWorkplaceAssignment's (lock_timeout fired)");
+
+        $first->insert($startAssignmentSql, [(string) Str::uuid7(), $relationshipId, $assignmentUnitId, '2026-02-01']);
+        $first->commit();
+
+        // Now unblocked: StartFullSecondment's own mutual-exclusion check (spec §S16.8) queries
+        // for an active assignment and must genuinely observe the first session's own
+        // now-committed row — proving the shared lock closes the race window this check depends
+        // on, rather than a stale pre-race snapshot that would have let both movement types
+        // coexist.
+        $second->transaction(function () use ($second, $lockSql, $relationshipId, $openAssignmentSql): void {
+            $second->select($lockSql, [$relationshipId]);
+            $activeAssignment = $second->select($openAssignmentSql, [$relationshipId]);
+            $this->assertCount(1, $activeAssignment, "StartFullSecondment's now-unblocked mutual-exclusion check must see the concurrently-committed assignment, proving no race window for the REJECT decision");
+        });
+
+        $this->assertSame(1, (int) $this->scalar('select count(*) from hr.workplace_assignment_periods where employment_relationship_id = ?', [$relationshipId]));
+    }
+
+    /**
+     * The core new S16 race, mirroring
+     * test_concurrent_employment_end_and_full_secondment_end_for_the_same_relationship_are_serialised_by_the_relationship_row_lock
+     * exactly for the new closeOpenWorkplaceAssignmentIfAny() consequence (spec §S16.8/§S16.10):
+     * EndEmploymentRelationship's assignment-closing consequence racing a concurrent, independent
+     * StartWorkplaceAssignment call — a relationship that is already ended must never let a
+     * concurrent start slip in and open a new, orphaned assignment period after the fact. Also
+     * covers the EmploymentRelationshipController::end() audit-metadata snapshot fix (mirroring
+     * test_the_employment_end_audit_snapshots_relationship_row_lock_blocks_a_concurrent_full_secondment_start):
+     * the row lock taken before the hadOpenAssignment "before" snapshot must block a concurrent
+     * StartWorkplaceAssignment for its entire window, not merely by coincidence.
+     */
+    public function test_concurrent_employment_end_and_workplace_assignment_start_for_the_same_relationship_are_serialised_by_the_relationship_row_lock(): void
+    {
+        $personId = $this->person();
+        $employmentTypeId = $this->permanentEmploymentTypeId();
+        $relationshipId = (string) Str::uuid7();
+        $this->pg()->insert($this->insertSql(), [$relationshipId, $personId, $employmentTypeId, 'PN-EMPLOYMENT-END-ASSIGNMENT-START-RACE', 'PERMANENT', '2026-01-01']);
+
+        $lockSql = 'select id from hr.employment_relationships where id = ? for update';
+        $endRelationshipSql = "update hr.employment_relationships set effective_to = ?, end_knowledge_state = 'KNOWN', version = 2 where id = ? and version = 1 and end_knowledge_state != 'KNOWN'";
+
+        $first = $this->pg();
+        $second = $this->second();
+
+        // Session 1 simulates EmploymentRelationshipController::end()'s own outer transaction:
+        // lock the relationship row FIRST (taking its hadOpenAssignment "before" snapshot under
+        // the lock — nothing open yet, correctly), then EndEmploymentRelationship's own scoped
+        // UPDATE.
+        $first->beginTransaction();
+        $first->select($lockSql, [$relationshipId]); // not committed yet
+
+        $second->statement("set lock_timeout = '300ms'");
+        // A concurrent StartWorkplaceAssignment call's own first statement (its own identical
+        // lock) must wait behind session 1's still-open transaction — it cannot sneak a brand-new
+        // open assignment into existence in the gap between the snapshot and the commit.
+        $blocked = $this->databaseError(fn () => $second->transaction(fn () => $second->select($lockSql, [$relationshipId])));
+        $this->assertTrue(Errors::isLockNotAvailable($blocked), "a concurrent StartWorkplaceAssignment's lock attempt waits on the /end route's own snapshot-taking lock (lock_timeout fired)");
+
+        $first->update($endRelationshipSql, ['2026-06-01', $relationshipId]);
+        $first->commit();
+
+        // Only now, after session 1's transaction has fully committed, can the concurrent
+        // StartWorkplaceAssignment proceed. In the real command, its own end_knowledge_state check
+        // (mirroring the fresh-relationship re-fetch every S09-S16 command performs) would reject
+        // this with EmploymentRelationshipAlreadyEndedException — this test proves the lock
+        // genuinely blocked the attempt for the snapshot's entire window rather than merely
+        // delaying it, so that check is never racing a stale pre-end snapshot.
+        $second->transaction(function () use ($second, $relationshipId): void {
+            $endedState = $second->selectOne('select end_knowledge_state from hr.employment_relationships where id = ? for update', [$relationshipId]);
+            $this->assertSame('KNOWN', (string) $endedState->end_knowledge_state, 'the now-unblocked StartWorkplaceAssignment attempt must observe the relationship as already ended, not a stale pre-race snapshot');
+        });
+
+        $this->assertSame(0, (int) $this->scalar('select count(*) from hr.workplace_assignment_periods where employment_relationship_id = ?', [$relationshipId]));
     }
 }

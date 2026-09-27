@@ -3,6 +3,7 @@
 namespace Tests\Feature\HumanResources;
 
 use App\Modules\HumanResources\Application\Commands\StartFullSecondment;
+use App\Modules\HumanResources\Application\Commands\StartWorkplaceAssignment;
 use App\Modules\HumanResources\Application\Commands\TransferEmployee;
 use App\Modules\HumanResources\Application\Queries\ResolveActualWorkplaceForRelationship;
 use App\Modules\HumanResources\Domain\Exceptions\EmploymentRelationshipAlreadyEndedException;
@@ -11,6 +12,7 @@ use App\Modules\HumanResources\Domain\Exceptions\InvalidTransferDecisionTypeExce
 use App\Modules\HumanResources\Infrastructure\Authorization\HumanResourcesPermissionCatalog;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\FullSecondmentPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\OrganizationalPlacementPeriod;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\WorkplaceAssignmentPeriod;
 use App\Modules\Organization\Application\Commands\DeactivateOrganizationalUnit;
 use App\Modules\Reference\Application\Commands\CreateDecisionType;
 use App\Modules\Reference\Application\Commands\DeactivateDecisionType;
@@ -91,6 +93,41 @@ class TransferFoundationTest extends HumanResourcesTestCase
         app(TransferEmployee::class)->handle($relationship, $destination, '2026-03-01', $this->transferDecisionType());
 
         $this->assertSame(0, FullSecondmentPeriod::query()->where('employment_relationship_id', $relationship->id)->count());
+    }
+
+    /**
+     * S16 spec §S16.8 movement interaction matrix, pair "Assignment → Transfer": the consequence —
+     * closes an active workplace assignment at the same effective date, mirroring
+     * test_transfer_closes_an_active_full_secondment_as_a_consequence exactly.
+     */
+    public function test_transfer_closes_an_active_workplace_assignment_as_a_consequence(): void
+    {
+        $person = $this->createPersonRecord();
+        $relationship = $this->createEmploymentRelationship($person);
+        $origin = $this->createUnit();
+        $assignmentUnit = $this->createUnit();
+        $destination = $this->createUnit();
+        $this->recordPlacement($relationship, $origin, '2026-01-15');
+        app(StartWorkplaceAssignment::class)->handle($relationship, $assignmentUnit, '2026-02-01', $this->assignmentDecisionType());
+
+        $result = app(TransferEmployee::class)->handle($relationship, $destination, '2026-03-01', $this->transferDecisionType());
+
+        $this->assertNotNull($result->closedAssignment());
+        $this->assertSame('2026-03-01', $result->closedAssignment()->effective_to->toDateString());
+
+        $assignment = WorkplaceAssignmentPeriod::query()->where('employment_relationship_id', $relationship->id)->firstOrFail();
+        $this->assertSame('2026-03-01', $assignment->effective_to->toDateString());
+    }
+
+    public function test_transfer_with_no_active_assignment_leaves_the_assignment_stream_untouched(): void
+    {
+        $person = $this->createPersonRecord();
+        $relationship = $this->createEmploymentRelationship($person);
+        $destination = $this->createUnit();
+
+        app(TransferEmployee::class)->handle($relationship, $destination, '2026-03-01', $this->transferDecisionType());
+
+        $this->assertSame(0, WorkplaceAssignmentPeriod::query()->where('employment_relationship_id', $relationship->id)->count());
     }
 
     public function test_transfer_after_which_actual_workplace_resolves_to_the_new_destination(): void
@@ -231,7 +268,29 @@ class TransferFoundationTest extends HumanResourcesTestCase
                 'effective_from' => '2026-03-01',
                 'decision_type_id' => $this->transferDecisionType()->id,
             ],
-        )->assertStatus(201)->assertJsonPath('closed_full_secondment_period', null);
+        )->assertStatus(201)->assertJsonPath('closed_full_secondment_period', null)->assertJsonPath('closed_workplace_assignment_period', null);
+    }
+
+    /** S16 spec §S16.8/§S16.16: the API surfaces the new consequence exactly like the secondment one. */
+    public function test_store_returns_the_closed_workplace_assignment_period(): void
+    {
+        $this->actingAsHrAdministrator();
+        $person = $this->createPersonRecord();
+        $relationship = $this->createEmploymentRelationship($person);
+        $assignmentUnit = $this->createUnit();
+        $destination = $this->createUnit();
+        app(StartWorkplaceAssignment::class)->handle($relationship, $assignmentUnit, '2026-02-01', $this->assignmentDecisionType());
+
+        $response = $this->postJson(
+            "/api/v1/hr/persons/{$person->id}/employment-relationships/{$relationship->id}/transfer",
+            [
+                'organizational_unit_id' => $destination->id,
+                'effective_from' => '2026-03-01',
+                'decision_type_id' => $this->transferDecisionType()->id,
+            ],
+        );
+
+        $response->assertStatus(201)->assertJsonPath('closed_workplace_assignment_period.effective_to', '2026-03-01');
     }
 
     public function test_store_with_unknown_organizational_unit_is_404(): void
@@ -432,6 +491,39 @@ class TransferFoundationTest extends HumanResourcesTestCase
 
         $this->assertDatabaseCount('hr.full_secondment_periods', 1);
         $this->assertSame(1, FullSecondmentPeriod::query()->whereNull('effective_to')->count(), 'the secondment must remain open — nothing committed on a forbidden request');
+    }
+
+    /**
+     * S16's own fourth target (spec §S16.14): an active workplace assignment's own unit must also
+     * be in scope when it will be closed as this transfer's consequence — mirrors the secondment
+     * test immediately above exactly. A relationship can never have both an active secondment and
+     * an active assignment (§S16.8 mutual exclusion), so this is exercised with an assignment in
+     * place of a secondment, not alongside one.
+     */
+    public function test_transfer_with_scope_over_destination_and_source_only_is_forbidden_when_the_active_assignment_unit_is_out_of_scope(): void
+    {
+        $principal = $this->principalWithPermissions([HumanResourcesPermissionCatalog::EMPLOYMENT_RELATIONSHIPS_TRANSFER]);
+        $person = $this->createPersonRecord();
+        $relationship = $this->createEmploymentRelationship($person);
+        $source = $this->createUnit();
+        $assignmentUnit = $this->createUnit();
+        $destination = $this->createUnit();
+        $this->recordPlacement($relationship, $source, '2026-01-15');
+        app(StartWorkplaceAssignment::class)->handle($relationship, $assignmentUnit, '2026-02-01', $this->assignmentDecisionType());
+        $this->grantUnitScope($principal, $source);
+        $this->grantUnitScope($principal, $destination);
+
+        $this->postJson(
+            "/api/v1/hr/persons/{$person->id}/employment-relationships/{$relationship->id}/transfer",
+            [
+                'organizational_unit_id' => $destination->id,
+                'effective_from' => '2026-03-01',
+                'decision_type_id' => $this->transferDecisionType()->id,
+            ],
+        )->assertForbidden();
+
+        $this->assertDatabaseCount('hr.workplace_assignment_periods', 1);
+        $this->assertSame(1, WorkplaceAssignmentPeriod::query()->whereNull('effective_to')->count(), 'the assignment must remain open — nothing committed on a forbidden request');
     }
 
     /**

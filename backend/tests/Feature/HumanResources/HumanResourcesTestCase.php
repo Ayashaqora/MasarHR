@@ -123,4 +123,14 @@ abstract class HumanResourcesTestCase extends AuditTestCase
     {
         return DecisionType::query()->where('code', 'TRANSFER')->firstOrFail();
     }
+
+    /**
+     * The single S16 authoritative decision type seeded by ADR-S16-001 §14
+     * (2026_10_05_000002_seed_ref_decision_types_assignment) — code ASSIGNMENT, name_ar تكليف,
+     * active.
+     */
+    protected function assignmentDecisionType(): DecisionType
+    {
+        return DecisionType::query()->where('code', 'ASSIGNMENT')->firstOrFail();
+    }
 }

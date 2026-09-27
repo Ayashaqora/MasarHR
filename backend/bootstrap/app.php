@@ -1,6 +1,7 @@
 <?php
 
 use App\Modules\HumanResources\Domain\Exceptions\ActiveFullSecondmentAlreadyExistsException;
+use App\Modules\HumanResources\Domain\Exceptions\ActiveWorkplaceAssignmentAlreadyExistsException;
 use App\Modules\HumanResources\Domain\Exceptions\DuplicateNationalIdException;
 use App\Modules\HumanResources\Domain\Exceptions\DuplicatePermanentEmployeeNumberException;
 use App\Modules\HumanResources\Domain\Exceptions\EmploymentRelationshipAlreadyEndedException;
@@ -10,7 +11,11 @@ use App\Modules\HumanResources\Domain\Exceptions\InvalidFullSecondmentStartDateE
 use App\Modules\HumanResources\Domain\Exceptions\InvalidPlacementPeriodDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidStatusPeriodDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidTransferDecisionTypeException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidWorkplaceAssignmentDecisionTypeException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidWorkplaceAssignmentEndDateException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidWorkplaceAssignmentStartDateException;
 use App\Modules\HumanResources\Domain\Exceptions\NoActiveFullSecondmentException;
+use App\Modules\HumanResources\Domain\Exceptions\NoActiveWorkplaceAssignmentException;
 use App\Modules\HumanResources\Domain\Exceptions\OverlappingEmploymentRelationshipException;
 use App\Modules\HumanResources\Domain\Exceptions\PersonIsTerminalException;
 use App\Modules\HumanResources\Domain\Exceptions\UnresolvedEmploymentStatusBehaviorException;
@@ -104,6 +109,11 @@ return Application::configure(basePath: dirname(__DIR__))
             InvalidFullSecondmentStartDateException::class,
             InvalidFullSecondmentEndDateException::class,
             InvalidTransferDecisionTypeException::class,
+            ActiveWorkplaceAssignmentAlreadyExistsException::class,
+            NoActiveWorkplaceAssignmentException::class,
+            InvalidWorkplaceAssignmentDecisionTypeException::class,
+            InvalidWorkplaceAssignmentStartDateException::class,
+            InvalidWorkplaceAssignmentEndDateException::class,
         ]);
 
         // §22 of the S03 authorization: preserve stated HTTP semantics for Security domain
@@ -189,6 +199,31 @@ return Application::configure(basePath: dirname(__DIR__))
         $exceptions->render(fn (InvalidTransferDecisionTypeException $e) => response()->json([
             'message' => $e->getMessage(),
             'errors' => ['decision_type_id' => [$e->getMessage()]],
+        ], 422));
+
+        // S16 HumanResources-module domain failures
+        // (docs/workplace-assignment-foundation-specification.md §S16.17). An already-ended
+        // relationship reuses EmploymentRelationshipAlreadyEndedException (S09); the two mutual-
+        // exclusion conflicts reuse ActiveFullSecondmentAlreadyExistsException (S12, raised by
+        // StartWorkplaceAssignment) and the new ActiveWorkplaceAssignmentAlreadyExistsException
+        // (raised by StartFullSecondment) below — both already mapped as 409s.
+        $exceptions->render(fn (ActiveWorkplaceAssignmentAlreadyExistsException $e) => response()->json(['message' => $e->getMessage()], 409));
+        $exceptions->render(fn (NoActiveWorkplaceAssignmentException $e) => response()->json(['message' => $e->getMessage()], 409));
+        $exceptions->render(fn (InvalidWorkplaceAssignmentDecisionTypeException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['decision_type_id' => [$e->getMessage()]],
+        ], 422));
+        $exceptions->render(fn (InvalidWorkplaceAssignmentStartDateException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['effective_from' => [$e->getMessage()]],
+        ], 422));
+        $exceptions->render(fn (InvalidWorkplaceAssignmentEndDateException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['effective_to' => [$e->getMessage()]],
+        ], 422));
+        $exceptions->render(fn (InvalidWorkplaceAssignmentPeriodDateException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['effective_from' => [$e->getMessage()]],
         ], 422));
 
         $exceptions->render(fn (DuplicateUsernameException $e) => response()->json([

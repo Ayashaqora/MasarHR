@@ -7,6 +7,7 @@ use App\Modules\HumanResources\Domain\Exceptions\InvalidTransferDecisionTypeExce
 use App\Modules\HumanResources\Domain\TransferResult;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRelationship;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\FullSecondmentPeriod;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\WorkplaceAssignmentPeriod;
 use App\Modules\Organization\Infrastructure\Persistence\Eloquent\OrganizationalUnit;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\DecisionType;
 
@@ -41,12 +42,20 @@ use App\Modules\Reference\Infrastructure\Persistence\Eloquent\DecisionType;
  * `name_ar`/`name_en` display text (ADR-S14-002 explicit instruction — ref.decision_types has no
  * DB-level CHECK enforcing this, so the application layer is the sole enforcement point, exactly
  * like every other business-rule check already re-validated inside this transaction).
+ *
+ * S16 (docs/workplace-assignment-foundation-specification.md §S16.8, movement interaction matrix
+ * pair "Assignment → Transfer": ALLOW, CLOSE-PREVIOUS-AS-CONSEQUENCE): also closes an active
+ * Workplace Assignment period, if one exists, at the same effective date — exactly mirroring how
+ * this command already closes an active Full Secondment. Once the underlying original placement
+ * itself moves, a temporary destination override of the old placement no longer has coherent
+ * meaning.
  */
 final class TransferEmployee
 {
     public function __construct(
         private readonly RecordOrganizationalPlacementPeriod $recordPlacement,
         private readonly EndFullSecondment $endFullSecondment,
+        private readonly EndWorkplaceAssignment $endWorkplaceAssignment,
     ) {}
 
     /**
@@ -101,6 +110,19 @@ final class TransferEmployee
             ? $this->endFullSecondment->handle($freshRelationship, $effectiveFrom)
             : null;
 
-        return new TransferResult($placement, $closedSecondment);
+        // S16 consequence (spec §S16.8): identical shape to the secondment-closing consequence
+        // above — a full secondment and a workplace assignment can never both be open at once
+        // (§S16.8 mutual exclusion), so at most one of $closedSecondment/$closedAssignment is
+        // ever non-null.
+        $openAssignment = WorkplaceAssignmentPeriod::query()
+            ->where('employment_relationship_id', $freshRelationship->getKey())
+            ->whereNull('effective_to')
+            ->first();
+
+        $closedAssignment = $openAssignment !== null
+            ? $this->endWorkplaceAssignment->handle($freshRelationship, $effectiveFrom)
+            : null;
+
+        return new TransferResult($placement, $closedSecondment, $closedAssignment);
     }
 }

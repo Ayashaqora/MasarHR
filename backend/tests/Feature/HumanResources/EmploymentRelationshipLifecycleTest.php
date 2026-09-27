@@ -6,6 +6,7 @@ use App\Modules\HumanResources\Application\Commands\CreateEmploymentRelationship
 use App\Modules\HumanResources\Application\Commands\EndEmploymentRelationship;
 use App\Modules\HumanResources\Application\Commands\RecordEmploymentStatusPeriod;
 use App\Modules\HumanResources\Application\Commands\StartFullSecondment;
+use App\Modules\HumanResources\Application\Commands\StartWorkplaceAssignment;
 use App\Modules\HumanResources\Domain\Exceptions\DuplicatePermanentEmployeeNumberException;
 use App\Modules\HumanResources\Domain\Exceptions\EmploymentRelationshipAlreadyEndedException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidEndDateException;
@@ -17,6 +18,7 @@ use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentSta
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\FullSecondmentPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\OrganizationalPlacementPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\Person;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\WorkplaceAssignmentPeriod;
 use Illuminate\Support\Facades\Route;
 
 /**
@@ -366,6 +368,24 @@ class EmploymentRelationshipLifecycleTest extends HumanResourcesTestCase
         $this->assertSame('2026-05-01', $secondment->effective_to->toDateString());
     }
 
+    public function test_ending_a_relationship_closes_an_active_workplace_assignment(): void
+    {
+        // S16 (docs/workplace-assignment-foundation-specification.md §S16.8/§S16.10): mirrors
+        // test_ending_a_relationship_closes_an_active_full_secondment() exactly — the two child
+        // streams are mutually exclusive (an active relationship can never have both an open
+        // secondment and an open assignment at once), so this test uses an assignment where the
+        // secondment test above uses a secondment, and is otherwise the same shape.
+        $person = $this->createPersonRecord();
+        $relationship = $this->createEmploymentRelationship($person);
+        $unit = $this->createUnit();
+        app(StartWorkplaceAssignment::class)->handle($relationship, $unit, '2026-02-01', $this->assignmentDecisionType());
+
+        app(EndEmploymentRelationship::class)->handle($person, $relationship, $relationship->version, '2026-05-01', false);
+
+        $assignment = WorkplaceAssignmentPeriod::query()->where('employment_relationship_id', $relationship->getKey())->firstOrFail();
+        $this->assertSame('2026-05-01', $assignment->effective_to->toDateString());
+    }
+
     public function test_ending_a_relationship_closes_an_earlier_open_status_period(): void
     {
         // Status effective_from must be on/after the S06-seeded behavior periods' 2026-09-26
@@ -465,6 +485,7 @@ class EmploymentRelationshipLifecycleTest extends HumanResourcesTestCase
         $this->assertNotNull($entry);
         $this->assertArrayNotHasKey('full_secondment_closed_as_consequence', $entry->metadata);
         $this->assertArrayNotHasKey('status_period_closed_as_consequence', $entry->metadata);
+        $this->assertArrayNotHasKey('workplace_assignment_closed_as_consequence', $entry->metadata);
     }
 
     public function test_ending_via_the_api_with_only_a_secondment_open_carries_only_that_flag(): void
@@ -488,6 +509,7 @@ class EmploymentRelationshipLifecycleTest extends HumanResourcesTestCase
         $this->assertNotNull($entry);
         $this->assertTrue($entry->metadata['full_secondment_closed_as_consequence']);
         $this->assertArrayNotHasKey('status_period_closed_as_consequence', $entry->metadata);
+        $this->assertArrayNotHasKey('workplace_assignment_closed_as_consequence', $entry->metadata);
     }
 
     public function test_ending_via_the_api_with_only_a_status_period_open_carries_only_that_flag(): void
@@ -507,6 +529,33 @@ class EmploymentRelationshipLifecycleTest extends HumanResourcesTestCase
         $this->assertNotNull($entry);
         $this->assertTrue($entry->metadata['status_period_closed_as_consequence']);
         $this->assertArrayNotHasKey('full_secondment_closed_as_consequence', $entry->metadata);
+        $this->assertArrayNotHasKey('workplace_assignment_closed_as_consequence', $entry->metadata);
+    }
+
+    public function test_ending_via_the_api_with_only_an_assignment_open_carries_only_that_flag(): void
+    {
+        // S16 (docs/workplace-assignment-foundation-specification.md §S16.10): the third
+        // independently-computed audit-metadata boolean — mirrors
+        // test_ending_via_the_api_with_only_a_secondment_open_carries_only_that_flag() exactly,
+        // using an assignment in place of a secondment (the two are mutually exclusive, so this is
+        // the only way to exercise this flag alone rather than alongside the secondment flag).
+        $this->actingAsHrAdministrator();
+        $person = $this->createPersonRecord();
+        $relationship = $this->createEmploymentRelationship($person);
+        $unit = $this->createUnit();
+        app(StartWorkplaceAssignment::class)->handle($relationship, $unit, '2026-02-01', $this->assignmentDecisionType());
+
+        $this->postJson(
+            "/api/v1/hr/persons/{$person->id}/employment-relationships/{$relationship->id}/end",
+            ['expected_version' => $relationship->version, 'effective_to' => '2026-05-01', 'is_terminal' => false],
+        )->assertOk();
+
+        $entry = $this->latestAuditEntryFor('hr.employment_relationship.end');
+
+        $this->assertNotNull($entry);
+        $this->assertTrue($entry->metadata['workplace_assignment_closed_as_consequence']);
+        $this->assertArrayNotHasKey('full_secondment_closed_as_consequence', $entry->metadata);
+        $this->assertArrayNotHasKey('status_period_closed_as_consequence', $entry->metadata);
     }
 
     public function test_there_is_no_hard_delete_workflow(): void

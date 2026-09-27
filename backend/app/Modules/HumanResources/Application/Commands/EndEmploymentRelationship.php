@@ -9,6 +9,7 @@ use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRel
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentStatusPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\FullSecondmentPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\Person;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\WorkplaceAssignmentPeriod;
 use App\Modules\Platform\Infrastructure\Persistence\Postgres\PostgresErrorClassifier as Errors;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
@@ -34,21 +35,25 @@ use Illuminate\Support\Carbon;
  * S15 (docs/employment-status-lifecycle-consequences-specification.md §8): this is the single
  * orchestration point for every path that ends a relationship (it is the only command that ever
  * sets end_knowledge_state = KNOWN), so after the scoped UPDATE above succeeds it also closes
- * whichever of the two open child periods the relationship still has — an active S12 Full
- * Secondment (§8.1, reusing EndFullSecondment in-process, never duplicated) and/or the last open
- * S10 Employment Status period (§8.3, inlined — no separate close command exists for it, S10 spec
- * §11) — at the exact same effectiveTo, closing both S12's own disclosed §7.3 gap and S10's own
- * disclosed §18 item 1 gap in one place rather than per caller. Deliberately does NOT touch S11
- * Organizational Placement (spec §8.2, considered and rejected: no disclosed-gap precedent, and
- * ResolveActualWorkplaceForRelationship already neutralises the read-time effect for an ended
- * relationship without rewriting workplace history).
+ * whichever of the open child periods the relationship still has — an active S12 Full
+ * Secondment (§8.1, reusing EndFullSecondment in-process, never duplicated), an active S16
+ * Workplace Assignment (docs/workplace-assignment-foundation-specification.md §S16.8/§S16.10,
+ * reusing EndWorkplaceAssignment in-process, never duplicated — added in the same
+ * single-orchestration-point pattern this class already established), and/or the last open S10
+ * Employment Status period (§8.3, inlined — no separate close command exists for it, S10 spec
+ * §11) — at the exact same effectiveTo, closing S12's own disclosed §7.3 gap, S16's equivalent
+ * gap, and S10's own disclosed §18 item 1 gap in one place rather than per caller. Deliberately
+ * does NOT touch S11 Organizational Placement (spec §8.2, considered and rejected: no
+ * disclosed-gap precedent, and ResolveActualWorkplaceForRelationship already neutralises the
+ * read-time effect for an ended relationship without rewriting workplace history).
  *
- * No explicit lockForUpdate() is added here for the new S15 writes — the existing scoped UPDATE
+ * No explicit lockForUpdate() is added here for the S15/S16 writes — the existing scoped UPDATE
  * above already acquires an implicit row-level lock on this relationship for the rest of the
- * transaction under standard PostgreSQL semantics, and EndFullSecondment's own lockForUpdate()
- * re-acquisition inside closeOpenFullSecondmentIfAny() is reentrant within the same transaction
- * (identical, already-established argument used by TransferController's own reuse of
- * EndFullSecondment).
+ * transaction under standard PostgreSQL semantics, and EndFullSecondment's/
+ * EndWorkplaceAssignment's own lockForUpdate() re-acquisition inside
+ * closeOpenFullSecondmentIfAny()/closeOpenWorkplaceAssignmentIfAny() is reentrant within the same
+ * transaction (identical, already-established argument used by TransferController's own reuse of
+ * EndFullSecondment/EndWorkplaceAssignment).
  */
 final class EndEmploymentRelationship
 {
@@ -101,6 +106,7 @@ final class EndEmploymentRelationship
         }
 
         $this->closeOpenFullSecondmentIfAny($relationship, $effectiveTo);
+        $this->closeOpenWorkplaceAssignmentIfAny($relationship, $effectiveTo);
         $this->closeOpenStatusPeriodIfAny($relationship, $effectiveTo);
 
         return $relationship->refresh();
@@ -116,6 +122,25 @@ final class EndEmploymentRelationship
 
         if ($hasOpenSecondment) {
             app(EndFullSecondment::class)->handle($relationship, $effectiveTo);
+        }
+    }
+
+    /**
+     * S16 spec §S16.8 ("Employment End → Assignment": ALLOW, CLOSE-PREVIOUS-AS-CONSEQUENCE)/
+     * §S16.10. Reuses EndWorkplaceAssignment verbatim, mirroring closeOpenFullSecondmentIfAny()
+     * exactly; never called when nothing is open. A relationship can never have both an open
+     * secondment and an open assignment at once (§S16.8 mutual exclusion), so at most one of
+     * this method and the one above ever actually closes a row for a given call.
+     */
+    private function closeOpenWorkplaceAssignmentIfAny(EmploymentRelationship $relationship, string $effectiveTo): void
+    {
+        $hasOpenAssignment = WorkplaceAssignmentPeriod::query()
+            ->where('employment_relationship_id', $relationship->getKey())
+            ->whereNull('effective_to')
+            ->exists();
+
+        if ($hasOpenAssignment) {
+            app(EndWorkplaceAssignment::class)->handle($relationship, $effectiveTo);
         }
     }
 
