@@ -1,5 +1,6 @@
 import { useState } from 'react'
 import { RouterProvider } from 'react-router'
+import { AuthProvider } from '../features/auth/AuthProvider'
 import { I18nProvider } from '../i18n/I18nProvider'
 import { ErrorBoundary } from './ErrorBoundary'
 import { createAppRouter } from './router'
@@ -10,9 +11,11 @@ export function App() {
 
   return (
     <I18nProvider>
-      <ErrorBoundary>
-        <RouterProvider router={router} />
-      </ErrorBoundary>
+      <AuthProvider>
+        <ErrorBoundary>
+          <RouterProvider router={router} />
+        </ErrorBoundary>
+      </AuthProvider>
     </I18nProvider>
   )
 }
