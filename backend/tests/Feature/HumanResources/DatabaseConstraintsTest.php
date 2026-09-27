@@ -10,7 +10,8 @@ use PHPUnit\Framework\Attributes\DataProvider;
 
 /**
  * Direct PostgreSQL constraint coverage for hr.persons/hr.employment_relationships (S09 spec
- * §21-§23) and hr.employment_status_periods (S10 spec §8/§20).
+ * §21-§23), hr.employment_status_periods (S10 spec §8/§20), and
+ * hr.organizational_placement_periods (S11 spec §14).
  */
 class DatabaseConstraintsTest extends HumanResourcesTestCase
 {
@@ -25,7 +26,10 @@ class DatabaseConstraintsTest extends HumanResourcesTestCase
             ->where('table_schema', 'hr')
             ->pluck('table_name')->sort()->values()->all();
 
-        $this->assertSame(['employment_relationships', 'employment_status_periods', 'persons'], $tables);
+        $this->assertSame(
+            ['employment_relationships', 'employment_status_periods', 'organizational_placement_periods', 'persons'],
+            $tables,
+        );
     }
 
     public function test_an_employment_relationship_foreign_key_to_a_nonexistent_person_is_rejected(): void
@@ -270,6 +274,90 @@ class DatabaseConstraintsTest extends HumanResourcesTestCase
                 'id' => (string) Str::uuid7(),
                 'employment_relationship_id' => $relationship->id,
                 'status_detail_id' => $traveling->id,
+                'effective_from' => '2026-10-01',
+                'created_at' => now(),
+            ]);
+        });
+
+        $this->assertTrue(Errors::isExclusionViolation($error));
+    }
+
+    public function test_a_placement_period_foreign_key_to_a_nonexistent_relationship_is_rejected(): void
+    {
+        $unit = $this->createUnit();
+
+        $error = $this->tryAndCatch(function () use ($unit): void {
+            DB::table('hr.organizational_placement_periods')->insert([
+                'id' => (string) Str::uuid7(),
+                'employment_relationship_id' => (string) Str::uuid7(),
+                'organizational_unit_id' => $unit->id,
+                'effective_from' => '2026-09-27',
+                'created_at' => now(),
+            ]);
+        });
+
+        $this->assertTrue(Errors::isForeignKeyViolation($error));
+    }
+
+    public function test_a_placement_period_foreign_key_to_a_nonexistent_organizational_unit_is_rejected(): void
+    {
+        $person = $this->createPersonRecord();
+        $relationship = $this->createEmploymentRelationship($person);
+
+        $error = $this->tryAndCatch(function () use ($relationship): void {
+            DB::table('hr.organizational_placement_periods')->insert([
+                'id' => (string) Str::uuid7(),
+                'employment_relationship_id' => $relationship->id,
+                'organizational_unit_id' => (string) Str::uuid7(),
+                'effective_from' => '2026-09-27',
+                'created_at' => now(),
+            ]);
+        });
+
+        $this->assertTrue(Errors::isForeignKeyViolation($error));
+    }
+
+    public function test_a_reversed_or_empty_placement_period_is_rejected_by_the_check_constraint(): void
+    {
+        $person = $this->createPersonRecord();
+        $relationship = $this->createEmploymentRelationship($person);
+        $unit = $this->createUnit();
+
+        $error = $this->tryAndCatch(function () use ($relationship, $unit): void {
+            DB::table('hr.organizational_placement_periods')->insert([
+                'id' => (string) Str::uuid7(),
+                'employment_relationship_id' => $relationship->id,
+                'organizational_unit_id' => $unit->id,
+                'effective_from' => '2026-09-27',
+                'effective_to' => '2026-09-27',
+                'created_at' => now(),
+            ]);
+        });
+
+        $this->assertTrue(Errors::isCheckViolation($error));
+    }
+
+    public function test_two_overlapping_placement_periods_for_the_same_relationship_are_rejected_by_the_exclusion_constraint(): void
+    {
+        $person = $this->createPersonRecord();
+        $relationship = $this->createEmploymentRelationship($person);
+        $unitA = $this->createUnit();
+        $unitB = $this->createUnit();
+
+        DB::table('hr.organizational_placement_periods')->insert([
+            'id' => (string) Str::uuid7(),
+            'employment_relationship_id' => $relationship->id,
+            'organizational_unit_id' => $unitA->id,
+            'effective_from' => '2026-09-27',
+            'effective_to' => '2026-11-01',
+            'created_at' => now(),
+        ]);
+
+        $error = $this->tryAndCatch(function () use ($relationship, $unitB): void {
+            DB::table('hr.organizational_placement_periods')->insert([
+                'id' => (string) Str::uuid7(),
+                'employment_relationship_id' => $relationship->id,
+                'organizational_unit_id' => $unitB->id,
                 'effective_from' => '2026-10-01',
                 'created_at' => now(),
             ]);

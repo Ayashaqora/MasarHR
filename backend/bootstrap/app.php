@@ -4,6 +4,7 @@ use App\Modules\HumanResources\Domain\Exceptions\DuplicateNationalIdException;
 use App\Modules\HumanResources\Domain\Exceptions\DuplicatePermanentEmployeeNumberException;
 use App\Modules\HumanResources\Domain\Exceptions\EmploymentRelationshipAlreadyEndedException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidEndDateException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidPlacementPeriodDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidStatusPeriodDateException;
 use App\Modules\HumanResources\Domain\Exceptions\OverlappingEmploymentRelationshipException;
 use App\Modules\HumanResources\Domain\Exceptions\PersonIsTerminalException;
@@ -92,6 +93,7 @@ return Application::configure(basePath: dirname(__DIR__))
             InvalidEndDateException::class,
             InvalidStatusPeriodDateException::class,
             UnresolvedEmploymentStatusBehaviorException::class,
+            InvalidPlacementPeriodDateException::class,
         ]);
 
         // §22 of the S03 authorization: preserve stated HTTP semantics for Security domain
@@ -141,6 +143,15 @@ return Application::configure(basePath: dirname(__DIR__))
             'errors' => ['effective_from' => [$e->getMessage()]],
         ], 422));
         $exceptions->render(fn (UnresolvedEmploymentStatusBehaviorException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['effective_from' => [$e->getMessage()]],
+        ], 422));
+
+        // S11 HumanResources-module domain failure
+        // (docs/organizational-placement-foundation-specification.md §9). Recording against an
+        // already-ended relationship reuses EmploymentRelationshipAlreadyEndedException (S09),
+        // already mapped above — no new mapping needed for it.
+        $exceptions->render(fn (InvalidPlacementPeriodDateException $e) => response()->json([
             'message' => $e->getMessage(),
             'errors' => ['effective_from' => [$e->getMessage()]],
         ], 422));

@@ -31,6 +31,9 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
     /** @var list<string> */
     private array $personIds = [];
 
+    /** @var list<string> */
+    private array $organizationalUnitIds = [];
+
     protected function tearDown(): void
     {
         foreach ([DB::connection(), $this->hasSecond() ? $this->second() : null] as $connection) {
@@ -42,9 +45,17 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
         if ($this->personIds !== []) {
             $relationshipIds = DB::table('hr.employment_relationships')
                 ->whereIn('person_id', $this->personIds)->pluck('id');
+            // organizational_placement_periods first: it carries a RESTRICT FK to
+            // employment_relationships, same most-dependent-first ordering as
+            // employment_status_periods below.
+            DB::table('hr.organizational_placement_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
             DB::table('hr.employment_status_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
             DB::table('hr.employment_relationships')->whereIn('person_id', $this->personIds)->delete();
             DB::table('hr.persons')->whereIn('id', $this->personIds)->delete();
+        }
+
+        if ($this->organizationalUnitIds !== []) {
+            DB::table('org.organizational_units')->whereIn('id', $this->organizationalUnitIds)->delete();
         }
 
         DB::purge(self::SECOND);
@@ -99,6 +110,24 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
     private function statusDetailId(string $code): string
     {
         return (string) DB::table('ref.employment_status_details')->where('code', $code)->value('id');
+    }
+
+    /** Committed directly (not via CreateOrganizationalUnit) so it is visible to a genuinely independent second session. */
+    private function organizationalUnitId(): string
+    {
+        $id = (string) Str::uuid7();
+        DB::table('org.organizational_units')->insert([
+            'id' => $id,
+            'name' => 'Unit '.Str::random(8),
+            'parent_id' => null,
+            'is_active' => true,
+            'version' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $this->organizationalUnitIds[] = $id;
+
+        return $id;
     }
 
     private function insertSql(): string
@@ -228,5 +257,50 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
         $this->assertTrue(Errors::isExclusionViolation($rejected), 'once committed, the overlap is rejected by PostgreSQL itself, not merely delayed');
 
         $this->assertSame(1, (int) $this->scalar('select count(*) from hr.employment_status_periods where employment_relationship_id = ?', [$relationshipId]));
+    }
+
+    /**
+     * S11 spec §15's final backstop, mirroring
+     * test_concurrent_overlapping_status_periods_for_the_same_relationship_are_serialised_by_the_exclusion_constraint
+     * exactly: even independent of RecordOrganizationalPlacementPeriod's own lockForUpdate()
+     * serialization at the application layer, the EXCLUDE constraint itself makes a genuine
+     * overlap for the same employment_relationship_id impossible, proved with two real,
+     * independent sessions racing a committed insert.
+     */
+    public function test_concurrent_overlapping_placement_periods_for_the_same_relationship_are_serialised_by_the_exclusion_constraint(): void
+    {
+        $personId = $this->person();
+        $employmentTypeId = $this->permanentEmploymentTypeId();
+        $relationshipId = (string) Str::uuid7();
+        $this->pg()->insert($this->insertSql(), [$relationshipId, $personId, $employmentTypeId, 'PN-PLACEMENT-RACE', 'PERMANENT', '2026-01-01']);
+
+        $unitAId = $this->organizationalUnitId();
+        $unitBId = $this->organizationalUnitId();
+        $periodInsertSql = <<<'SQL'
+            insert into hr.organizational_placement_periods
+                (id, employment_relationship_id, organizational_unit_id, effective_from, created_at)
+            values (?, ?, ?, ?, now())
+            SQL;
+
+        $first = $this->pg();
+        $second = $this->second();
+
+        $first->beginTransaction();
+        $first->insert($periodInsertSql, [(string) Str::uuid7(), $relationshipId, $unitAId, '2026-09-27']); // not committed yet
+
+        $second->statement("set lock_timeout = '300ms'");
+        $blocked = $this->databaseError(fn () => $second->transaction(fn () => $second->insert($periodInsertSql, [
+            (string) Str::uuid7(), $relationshipId, $unitBId, '2026-10-01',
+        ])));
+        $this->assertTrue(Errors::isLockNotAvailable($blocked), 'the second session waits on the first (lock_timeout fired)');
+
+        $first->commit();
+
+        $rejected = $this->databaseError(fn () => $second->transaction(fn () => $second->insert($periodInsertSql, [
+            (string) Str::uuid7(), $relationshipId, $unitBId, '2026-10-01',
+        ])));
+        $this->assertTrue(Errors::isExclusionViolation($rejected), 'once committed, the overlap is rejected by PostgreSQL itself, not merely delayed');
+
+        $this->assertSame(1, (int) $this->scalar('select count(*) from hr.organizational_placement_periods where employment_relationship_id = ?', [$relationshipId]));
     }
 }

@@ -43,15 +43,34 @@ class ScopeBoundaryTest extends OrganizationTestCase
         // column of the other, never-used shapes — may carry a subtree-visibility column. This is
         // the S07→S08 handoff test itself disclosed as no longer "not implemented" (mirrors the
         // exact additive-disclosure pattern S06→S07 already used elsewhere in this suite).
+        //
+        // S11 ("Organizational Placement Foundation") adds a second, disclosed exception:
+        // hr.organizational_placement_periods.organizational_unit_id
+        // (docs/organizational-placement-foundation-specification.md §6.1). That column is ordinary
+        // domain data — where an employment relationship is located — not an authorization-scope
+        // grant; it is a different concept from S08's "which subtree can this principal see", even
+        // though it shares the same column name and even though S08's ScopedAuthorizationChecker is
+        // used, unmodified, to enforce scope over writes/reads that target it (spec §10). This test's
+        // own concern, per its docblock, is S08's subject matter specifically — so this is routine,
+        // disclosed, additive test evolution, not a frozen-architecture conflict.
         $offendingTables = DB::table('information_schema.columns')
             ->whereIn('column_name', ['organizational_unit_id', 'organization_scope', 'org_unit_id', 'branch_id'])
             ->where(function ($query): void {
-                $query->where('table_schema', '!=', 'security')
-                    ->orWhere('table_name', '!=', 'organizational_scope_grants');
+                $query->where(function ($inner): void {
+                    $inner->where('table_schema', '!=', 'security')
+                        ->orWhere('table_name', '!=', 'organizational_scope_grants');
+                })->where(function ($inner): void {
+                    $inner->where('table_schema', '!=', 'hr')
+                        ->orWhere('table_name', '!=', 'organizational_placement_periods');
+                });
             })
             ->pluck('table_name')->all();
 
-        $this->assertSame([], $offendingTables, 'no organizational-scope column may exist outside security.organizational_scope_grants');
+        $this->assertSame(
+            [],
+            $offendingTables,
+            'no organizational-scope column may exist outside security.organizational_scope_grants and the disclosed S11 hr.organizational_placement_periods exception',
+        );
     }
 
     public function test_no_hr_person_employee_or_transaction_tables_leaked_in_via_s07(): void
