@@ -6,6 +6,7 @@ use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentStatusPer
 use App\Modules\HumanResources\Presentation\Http\Controllers\FullSecondmentPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\OrganizationalPlacementPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\PersonController;
+use App\Modules\HumanResources\Presentation\Http\Controllers\TransferController;
 use App\Modules\Organization\Infrastructure\Authorization\OrganizationPermissionCatalog as OrgPerm;
 use App\Modules\Organization\Presentation\Http\Controllers\OrganizationalUnitController;
 use App\Modules\Platform\Presentation\Http\Controllers\HealthController;
@@ -284,5 +285,16 @@ Route::middleware('web')->group(function (): void {
                 ->middleware('permission:'.HrPerm::FULL_SECONDMENT_PERIODS_END)->name('persons.employment-relationships.full-secondment-periods.end');
             Route::get('/persons/{person}/employment-relationships/{employmentRelationship}/actual-workplace', [FullSecondmentPeriodController::class, 'actualWorkplace'])
                 ->middleware('permission:'.HrPerm::FULL_SECONDMENT_PERIODS_VIEW)->name('persons.employment-relationships.actual-workplace.show');
+
+            // S14: Transfer Foundation, nested under the same {person}/{employmentRelationship}. An
+            // explicit action route (POST .../transfer), not a generic PATCH (spec §20,
+            // mirroring S12's own §21 "no generic PATCH" convention) — no new list/show route exists
+            // because Transfer writes no resource of its own to read back (spec §16); its effects
+            // are read via the existing placement-periods/full-secondment-periods/actual-workplace
+            // routes above. The permission: middleware is the coarse RBAC (WHAT) gate only — the
+            // controller additionally composes S08 organizational scope (WHERE) against up to THREE
+            // target units (docs/transfer-foundation-specification.md §12.1).
+            Route::post('/persons/{person}/employment-relationships/{employmentRelationship}/transfer', [TransferController::class, 'store'])
+                ->middleware('permission:'.HrPerm::EMPLOYMENT_RELATIONSHIPS_TRANSFER)->name('persons.employment-relationships.transfer.store');
         });
 });

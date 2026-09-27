@@ -408,4 +408,90 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
 
         $this->assertSame('2026-10-01', (string) $this->scalar('select effective_to from hr.full_secondment_periods where id = ?', [$openPeriodId]));
     }
+
+    /**
+     * S14 spec §17/§24 ("no new lock ordering is introduced" / "real PostgreSQL concurrency
+     * tests"), mirroring
+     * test_concurrent_full_secondment_start_and_end_calls_for_the_same_relationship_are_serialised_by_the_relationship_row_lock
+     * exactly: TransferEmployee's own first statement (spec §14) is the identical
+     * `SELECT ... FOR UPDATE` lock on hr.employment_relationships that
+     * RecordOrganizationalPlacementPeriod/StartFullSecondment/EndFullSecondment already take — this
+     * proves two independent, genuinely concurrent Transfer attempts against the SAME relationship
+     * are serialised by that shared lock, not merely individually safe in isolation. Simulates each
+     * TransferEmployee call's own lock-then-close-open-period-then-open-new-period sequence
+     * directly via raw SQL against two connections (the PHP command class runs on a single
+     * connection and cannot represent two independent sessions), exactly as the other tests in this
+     * file simulate S11's/S12's own commands. Once genuinely serialised, the second (later-committed)
+     * transfer's close-open-period step must see the first transfer's own newly-opened period as
+     * "the" open period — proving the lock, not merely the EXCLUDE constraint, is what prevents two
+     * simultaneously open placement periods for the same relationship.
+     */
+    public function test_concurrent_transfer_calls_for_the_same_relationship_are_serialised_by_the_relationship_row_lock(): void
+    {
+        $personId = $this->person();
+        $employmentTypeId = $this->permanentEmploymentTypeId();
+        $relationshipId = (string) Str::uuid7();
+        $this->pg()->insert($this->insertSql(), [$relationshipId, $personId, $employmentTypeId, 'PN-TRANSFER-RACE', 'PERMANENT', '2026-01-01']);
+
+        $unitAId = $this->organizationalUnitId();
+        $unitBId = $this->organizationalUnitId();
+        $unitCId = $this->organizationalUnitId();
+
+        // The relationship's original placement (S11) — the "source" unit both racing transfers
+        // start from.
+        $this->pg()->insert(<<<'SQL'
+            insert into hr.organizational_placement_periods
+                (id, employment_relationship_id, organizational_unit_id, effective_from, created_at)
+            values (?, ?, ?, ?, now())
+            SQL, [(string) Str::uuid7(), $relationshipId, $unitAId, '2026-01-01']);
+
+        $lockSql = 'select id from hr.employment_relationships where id = ? for update';
+        $openPeriodSql = 'select id, organizational_unit_id from hr.organizational_placement_periods where employment_relationship_id = ? and effective_to is null';
+        $closePeriodSql = 'update hr.organizational_placement_periods set effective_to = ? where id = ?';
+        $openNewPeriodSql = <<<'SQL'
+            insert into hr.organizational_placement_periods
+                (id, employment_relationship_id, organizational_unit_id, effective_from, created_at)
+            values (?, ?, ?, ?, now())
+            SQL;
+
+        $first = $this->pg();
+        $second = $this->second();
+
+        // Simulates TransferEmployee's own first statement (session 1, transferring A -> B).
+        $first->beginTransaction();
+        $first->select($lockSql, [$relationshipId]); // not committed yet
+
+        $second->statement("set lock_timeout = '300ms'");
+        // Simulates a second, independent TransferEmployee call (transferring the same
+        // relationship to C) racing the first: it must wait behind the first session's lock, not
+        // merely behind a lock on the (different) placement-period row it will eventually update.
+        $blocked = $this->databaseError(fn () => $second->transaction(fn () => $second->select($lockSql, [$relationshipId])));
+        $this->assertTrue(Errors::isLockNotAvailable($blocked), "the second concurrent TransferEmployee call's relationship-row lock attempt waits on the first's (lock_timeout fired)");
+
+        // First session completes its transfer (A -> B) and commits.
+        $openForFirst = $first->selectOne($openPeriodSql, [$relationshipId]);
+        $this->assertSame($unitAId, (string) $openForFirst->organizational_unit_id, 'fixture assumption: A is the open period before either transfer runs');
+        $first->update($closePeriodSql, ['2026-06-01', $openForFirst->id]);
+        $first->insert($openNewPeriodSql, [(string) Str::uuid7(), $relationshipId, $unitBId, '2026-06-01']);
+        $first->commit();
+
+        // Now unblocked: the second session performs its own real transfer (B -> C), proving the
+        // wait was genuine serialization, not a permanent deadlock or a false block on an unrelated
+        // row — and that it correctly observes the FIRST transfer's own newly-opened B period as
+        // "the" open period to close, not a stale pre-race snapshot of A.
+        $second->transaction(function () use ($second, $lockSql, $relationshipId, $unitCId, $openPeriodSql, $closePeriodSql, $openNewPeriodSql, $unitBId): void {
+            $second->select($lockSql, [$relationshipId]);
+            $openForSecond = $second->selectOne($openPeriodSql, [$relationshipId]);
+            $this->assertSame($unitBId, (string) $openForSecond->organizational_unit_id, 'the second, now-unblocked transfer must see the first transfer\'s own committed B period as open, not a stale A snapshot');
+            $second->update($closePeriodSql, ['2026-07-01', $openForSecond->id]);
+            $second->insert($openNewPeriodSql, [(string) Str::uuid7(), $relationshipId, $unitCId, '2026-07-01']);
+        });
+
+        $openPeriods = DB::table('hr.organizational_placement_periods')
+            ->where('employment_relationship_id', $relationshipId)->whereNull('effective_to')->get();
+        $this->assertCount(1, $openPeriods, 'exactly one open placement period survives two serialised, racing transfers');
+        $this->assertSame($unitCId, (string) $openPeriods->first()->organizational_unit_id);
+
+        $this->assertSame(3, (int) $this->scalar('select count(*) from hr.organizational_placement_periods where employment_relationship_id = ?', [$relationshipId]));
+    }
 }

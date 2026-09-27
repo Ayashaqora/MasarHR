@@ -9,6 +9,7 @@ use App\Modules\HumanResources\Domain\Exceptions\InvalidFullSecondmentEndDateExc
 use App\Modules\HumanResources\Domain\Exceptions\InvalidFullSecondmentStartDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidPlacementPeriodDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidStatusPeriodDateException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidTransferDecisionTypeException;
 use App\Modules\HumanResources\Domain\Exceptions\NoActiveFullSecondmentException;
 use App\Modules\HumanResources\Domain\Exceptions\OverlappingEmploymentRelationshipException;
 use App\Modules\HumanResources\Domain\Exceptions\PersonIsTerminalException;
@@ -102,6 +103,7 @@ return Application::configure(basePath: dirname(__DIR__))
             NoActiveFullSecondmentException::class,
             InvalidFullSecondmentStartDateException::class,
             InvalidFullSecondmentEndDateException::class,
+            InvalidTransferDecisionTypeException::class,
         ]);
 
         // §22 of the S03 authorization: preserve stated HTTP semantics for Security domain
@@ -177,6 +179,16 @@ return Application::configure(basePath: dirname(__DIR__))
         $exceptions->render(fn (InvalidFullSecondmentEndDateException $e) => response()->json([
             'message' => $e->getMessage(),
             'errors' => ['effective_to' => [$e->getMessage()]],
+        ], 422));
+
+        // S14 HumanResources-module domain failure (docs/transfer-foundation-specification.md
+        // §11). An already-ended relationship reuses EmploymentRelationshipAlreadyEndedException
+        // (S09); an invalid effective date reuses InvalidPlacementPeriodDateException (S11) or
+        // InvalidFullSecondmentEndDateException (S12) — both already mapped above, no new mapping
+        // needed for either.
+        $exceptions->render(fn (InvalidTransferDecisionTypeException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['decision_type_id' => [$e->getMessage()]],
         ], 422));
 
         $exceptions->render(fn (DuplicateUsernameException $e) => response()->json([

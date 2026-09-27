@@ -10,6 +10,7 @@ use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRel
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\OrganizationalPlacementPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\Person;
 use App\Modules\Organization\Infrastructure\Persistence\Eloquent\OrganizationalUnit;
+use App\Modules\Reference\Infrastructure\Persistence\Eloquent\DecisionType;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\EmploymentStatusDetail;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\EmploymentType;
 use App\Modules\Security\Application\Commands\GrantOrganizationalScope;
@@ -112,5 +113,14 @@ abstract class HumanResourcesTestCase extends AuditTestCase
         string $effectiveFrom,
     ): OrganizationalPlacementPeriod {
         return app(RecordOrganizationalPlacementPeriod::class)->handle($relationship, $unit, $effectiveFrom);
+    }
+
+    /**
+     * The single S14 authoritative decision type seeded by ADR-S14-002
+     * (2026_10_04_000001_seed_ref_decision_types_transfer) — code TRANSFER, name_ar نقل, active.
+     */
+    protected function transferDecisionType(): DecisionType
+    {
+        return DecisionType::query()->where('code', 'TRANSFER')->firstOrFail();
     }
 }

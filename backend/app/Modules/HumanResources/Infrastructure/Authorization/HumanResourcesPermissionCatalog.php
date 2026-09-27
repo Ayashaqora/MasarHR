@@ -19,7 +19,11 @@ namespace App\Modules\HumanResources\Infrastructure\Authorization;
  * unit; S12's three permissions require it against up to TWO target units per operation
  * (docs/full-secondment-foundation-specification.md §12.1) — that composition happens in
  * FullSecondmentPeriodController via ScopedAuthorizationChecker, not here; this class still only
- * lists the RBAC permission codes themselves.
+ * lists the RBAC permission codes themselves. The final permission is S14's (from
+ * 2026_10_04_000002_seed_security_transfer_permission) — it requires S08 scope against up to
+ * THREE target units (destination, source placement, source secondment if closed;
+ * docs/transfer-foundation-specification.md §12.1), the same "call the checker more than once,
+ * never modify it" composition TransferController itself performs.
  */
 final class HumanResourcesPermissionCatalog
 {
@@ -47,6 +51,15 @@ final class HumanResourcesPermissionCatalog
 
     public const FULL_SECONDMENT_PERIODS_END = 'hr.full_secondment_periods.end';
 
+    /**
+     * S14 (docs/transfer-foundation-specification.md §12). Named on the existing
+     * `hr.employment_relationships.*` family — `create`/`end`/`transfer` — rather than a new
+     * `hr.transfers.*` family, because TransferEmployee is a lifecycle action on the Employment
+     * Relationship aggregate itself (it writes no new resource of its own, §16), not the creation
+     * of a distinct "transfer" resource.
+     */
+    public const EMPLOYMENT_RELATIONSHIPS_TRANSFER = 'hr.employment_relationships.transfer';
+
     public const ALL = [
         self::PERSONS_VIEW,
         self::PERSONS_CREATE,
@@ -60,5 +73,6 @@ final class HumanResourcesPermissionCatalog
         self::FULL_SECONDMENT_PERIODS_VIEW,
         self::FULL_SECONDMENT_PERIODS_START,
         self::FULL_SECONDMENT_PERIODS_END,
+        self::EMPLOYMENT_RELATIONSHIPS_TRANSFER,
     ];
 }
