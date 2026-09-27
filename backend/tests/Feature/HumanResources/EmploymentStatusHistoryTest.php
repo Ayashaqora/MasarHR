@@ -4,6 +4,8 @@ namespace Tests\Feature\HumanResources;
 
 use App\Modules\HumanResources\Application\Commands\RecordEmploymentStatusPeriod;
 use App\Modules\HumanResources\Application\Commands\StartFullSecondment;
+use App\Modules\HumanResources\Application\Commands\StartWorkplaceAssignment;
+use App\Modules\HumanResources\Application\Queries\ResolveActualWorkplaceForRelationship;
 use App\Modules\HumanResources\Domain\Exceptions\EmploymentRelationshipAlreadyEndedException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidStatusPeriodDateException;
 use App\Modules\HumanResources\Domain\Exceptions\PersonIsTerminalException;
@@ -11,6 +13,7 @@ use App\Modules\HumanResources\Domain\Exceptions\UnresolvedEmploymentStatusBehav
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentStatusPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\FullSecondmentPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\OrganizationalPlacementPeriod;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\WorkplaceAssignmentPeriod;
 
 /**
  * S10 Employment Status History: transitions, auto-close, relationship-ending/terminal
@@ -462,5 +465,109 @@ class EmploymentStatusHistoryTest extends HumanResourcesTestCase
 
         $this->assertNull($period->refresh()->effective_to);
         $this->assertSame('KNOWN', $relationship->refresh()->end_knowledge_state);
+    }
+
+    // ---------------------------------------------------------------------
+    // S17 — Temporary Employment Status Periods Foundation (NO-OP closure, ADR-S17-002 §4/§5):
+    // zero production code changes. These tests exercise the real, unmodified S10
+    // RecordEmploymentStatusPeriod command and the real, unmodified S16 StartWorkplaceAssignment
+    // command against the already-shipped, already-generic hr.employment_status_periods
+    // mechanism — closing a test-coverage gap, not adding behavior
+    // (docs/temporary-employment-status-periods-foundation-specification.md §S17.4/§S17.16.1).
+    // ---------------------------------------------------------------------
+
+    /**
+     * ADR-S17-002 §4: the three S06-seeded `non_active` details that no prior test had ever
+     * exercised through RecordEmploymentStatusPeriod — أسير (captive), إيقاف عن العمل (suspended),
+     * إجازة خارجية مرضية (external_sick_leave) — each participate correctly in the same generic
+     * temporal stream `traveling`/`unpaid_leave` already prove elsewhere in this file: the period
+     * is recorded, the relationship stays open (every `non_active` behavior row has
+     * `is_relationship_ending = false`), and a subsequent transition (back to `on_duty`) closes it
+     * cleanly, proving each state supports both entering and leaving the stream, not merely being
+     * inserted. Looped rather than duplicated three times (ADR §6: minimal additions preferred),
+     * while still explicitly naming and separately asserting each of the three required codes.
+     */
+    public function test_each_previously_unexercised_non_active_status_participates_correctly_in_the_stream(): void
+    {
+        foreach (['captive', 'suspended', 'external_sick_leave'] as $code) {
+            $person = $this->createPersonRecord();
+            $relationship = $this->createEmploymentRelationship($person);
+
+            $temporaryPeriod = app(RecordEmploymentStatusPeriod::class)->handle(
+                $person, $relationship, $this->statusDetail($code), '2026-09-27',
+            );
+
+            $this->assertSame($this->statusDetail($code)->id, $temporaryPeriod->status_detail_id, "[$code] period records the correct status detail");
+            $this->assertNull($temporaryPeriod->refresh()->effective_to, "[$code] period is left open");
+            $this->assertSame('NOT_APPLICABLE', $relationship->refresh()->end_knowledge_state, "[$code] is non_active and must never end the relationship");
+
+            // Leaving the state: recording the next transition closes it cleanly, exactly like
+            // every other detail in this file.
+            app(RecordEmploymentStatusPeriod::class)->handle($person, $relationship, $this->statusDetail('on_duty'), '2026-10-05');
+
+            $this->assertSame('2026-10-05', $temporaryPeriod->refresh()->effective_to->toDateString(), "[$code] period is closed by the next transition");
+            $this->assertSame(2, EmploymentStatusPeriod::query()->where('employment_relationship_id', $relationship->getKey())->count(), "[$code] history is preserved, not overwritten");
+        }
+    }
+
+    /**
+     * ADR-S17-002 §4: the same three previously-unexercised codes, this time through the real
+     * HTTP surface (`EmploymentStatusPeriodController::store()`), proving the API wiring — not
+     * just the domain command — correctly accepts each one. The existing API-level tests in this
+     * file already prove the route/controller/audit wiring generically (via `on_duty`/`resigned`
+     * elsewhere in this file); this test's own purpose is narrower — proving none of the three
+     * specific codes is rejected by the controller's `EmploymentStatusDetail::where('code', ...)`
+     * lookup or by validation, which a domain-only test cannot show.
+     */
+    public function test_each_previously_unexercised_non_active_status_is_recordable_via_the_api(): void
+    {
+        $this->actingAsHrAdministrator();
+
+        foreach (['captive', 'suspended', 'external_sick_leave'] as $code) {
+            $person = $this->createPersonRecord();
+            $relationship = $this->createEmploymentRelationship($person);
+
+            $this->postJson(
+                "/api/v1/hr/persons/{$person->id}/employment-relationships/{$relationship->id}/status-periods",
+                ['status_detail_code' => $code, 'effective_from' => '2026-09-27'],
+            )->assertStatus(201)->assertJsonPath('status_detail_id', $this->statusDetail($code)->id);
+        }
+    }
+
+    /**
+     * ADR-S17-002 §5: the S16 movement-independence regression. Recording an employment-status
+     * transition while an S16 Workplace Assignment is open must not silently close it, alter its
+     * dates, change its destination, delete it, or fabricate any return-to-original-workplace
+     * movement — and actual-workplace resolution (S16) must remain governed entirely by the
+     * still-open assignment, independent of the S10 status stream. Mirrors
+     * test_a_non_active_status_transition_never_touches_full_secondment_or_placement above
+     * exactly, extended to the S16 movement type that postdated that test.
+     */
+    public function test_a_non_active_status_transition_never_touches_an_open_workplace_assignment(): void
+    {
+        $person = $this->createPersonRecord();
+        $relationship = $this->createEmploymentRelationship($person);
+        $placementUnit = $this->createUnit();
+        $assignmentUnit = $this->createUnit();
+        $this->recordPlacement($relationship, $placementUnit, '2026-01-15');
+        $assignment = app(StartWorkplaceAssignment::class)->handle(
+            $relationship, $assignmentUnit, '2026-02-01', $this->assignmentDecisionType(),
+        );
+
+        app(RecordEmploymentStatusPeriod::class)->handle($person, $relationship, $this->statusDetail('suspended'), '2026-09-27');
+
+        $refreshedAssignment = WorkplaceAssignmentPeriod::query()->where('id', $assignment->getKey())->firstOrFail();
+        $this->assertNull($refreshedAssignment->effective_to, 'the open assignment is not closed');
+        $this->assertSame($assignmentUnit->id, $refreshedAssignment->organizational_unit_id, 'the assignment destination is not altered');
+        $this->assertSame(
+            1,
+            WorkplaceAssignmentPeriod::query()->where('employment_relationship_id', $relationship->getKey())->count(),
+            'no assignment row is deleted or fabricated as a consequence of the status transition',
+        );
+        $this->assertSame('NOT_APPLICABLE', $relationship->refresh()->end_knowledge_state);
+
+        $workplace = app(ResolveActualWorkplaceForRelationship::class)($relationship);
+        $this->assertSame($assignmentUnit->id, $workplace->organizationalUnitId(), 'actual-workplace resolution remains governed by the still-open S16 assignment');
+        $this->assertSame('assignment', $workplace->source());
     }
 }
