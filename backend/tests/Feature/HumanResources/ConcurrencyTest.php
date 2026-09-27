@@ -494,4 +494,242 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
 
         $this->assertSame(3, (int) $this->scalar('select count(*) from hr.organizational_placement_periods where employment_relationship_id = ?', [$relationshipId]));
     }
+
+    // ---------------------------------------------------------------------
+    // S15 — Employment Status Lifecycle Consequences (spec §15/§21)
+    // ---------------------------------------------------------------------
+
+    /**
+     * RecordEmploymentStatusPeriod's own first statement (SELECT ... FOR UPDATE on the
+     * relationship) racing the direct EndEmploymentRelationship route's own first statement (the
+     * scoped UPDATE, which acquires the same row's implicit write lock) — proves the two are
+     * genuinely serialised, not merely individually safe.
+     */
+    public function test_concurrent_status_recording_and_direct_employment_end_for_the_same_relationship_are_serialised_by_the_relationship_row_lock(): void
+    {
+        $personId = $this->person();
+        $employmentTypeId = $this->permanentEmploymentTypeId();
+        $relationshipId = (string) Str::uuid7();
+        $this->pg()->insert($this->insertSql(), [$relationshipId, $personId, $employmentTypeId, 'PN-STATUS-END-RACE', 'PERMANENT', '2026-01-01']);
+
+        $lockSql = 'select id from hr.employment_relationships where id = ? for update';
+        $endSql = "update hr.employment_relationships set effective_to = ?, end_knowledge_state = 'KNOWN', version = 2 where id = ? and version = 1 and end_knowledge_state != 'KNOWN'";
+
+        $first = $this->pg();
+        $second = $this->second();
+
+        // Simulates RecordEmploymentStatusPeriod's own first statement (session 1).
+        $first->beginTransaction();
+        $first->select($lockSql, [$relationshipId]); // not committed yet
+
+        $second->statement("set lock_timeout = '300ms'");
+        // Simulates the direct /end route's EndEmploymentRelationship call (session 2): its scoped
+        // UPDATE must wait behind session 1's lock, not merely behind an unrelated row.
+        $blocked = $this->databaseError(fn () => $second->transaction(fn () => $second->update($endSql, ['2026-06-01', $relationshipId])));
+        $this->assertTrue(Errors::isLockNotAvailable($blocked), "the direct end route's scoped UPDATE waits on RecordEmploymentStatusPeriod's lock (lock_timeout fired)");
+
+        $first->commit();
+
+        $second->transaction(fn () => $second->update($endSql, ['2026-06-01', $relationshipId]));
+
+        $this->assertSame('KNOWN', (string) $this->scalar('select end_knowledge_state from hr.employment_relationships where id = ?', [$relationshipId]));
+    }
+
+    /**
+     * ADR-S15-001 §15's explicit race list includes Status vs StartFullSecondment even though S15
+     * adds no new code on this specific pairing — both already take the identical
+     * SELECT ... FOR UPDATE lock as their own first statement, so this proves that generic
+     * argument holds for this specific pairing too, rather than merely assuming it by analogy.
+     */
+    public function test_concurrent_status_recording_and_full_secondment_start_for_the_same_relationship_are_serialised_by_the_relationship_row_lock(): void
+    {
+        $personId = $this->person();
+        $employmentTypeId = $this->permanentEmploymentTypeId();
+        $relationshipId = (string) Str::uuid7();
+        $this->pg()->insert($this->insertSql(), [$relationshipId, $personId, $employmentTypeId, 'PN-STATUS-START-SECONDMENT-RACE', 'PERMANENT', '2026-01-01']);
+        $unitId = $this->organizationalUnitId();
+
+        $lockSql = 'select id from hr.employment_relationships where id = ? for update';
+        $startSql = <<<'SQL'
+            insert into hr.full_secondment_periods
+                (id, employment_relationship_id, organizational_unit_id, effective_from, created_at)
+            values (?, ?, ?, ?, now())
+            SQL;
+
+        $first = $this->pg();
+        $second = $this->second();
+
+        $first->beginTransaction();
+        $first->select($lockSql, [$relationshipId]); // simulates RecordEmploymentStatusPeriod's lock, not committed yet
+
+        $second->statement("set lock_timeout = '300ms'");
+        $blocked = $this->databaseError(fn () => $second->transaction(fn () => $second->select($lockSql, [$relationshipId])));
+        $this->assertTrue(Errors::isLockNotAvailable($blocked), "StartFullSecondment's own lock attempt waits on RecordEmploymentStatusPeriod's (lock_timeout fired)");
+
+        $first->commit();
+
+        $second->transaction(function () use ($second, $lockSql, $startSql, $relationshipId, $unitId): void {
+            $second->select($lockSql, [$relationshipId]);
+            $second->insert($startSql, [(string) Str::uuid7(), $relationshipId, $unitId, '2026-06-01']);
+        });
+
+        $this->assertSame(1, (int) $this->scalar('select count(*) from hr.full_secondment_periods where employment_relationship_id = ?', [$relationshipId]));
+    }
+
+    /** Same reasoning as the StartFullSecondment pairing above, for EndFullSecondment. */
+    public function test_concurrent_status_recording_and_full_secondment_end_for_the_same_relationship_are_serialised_by_the_relationship_row_lock(): void
+    {
+        $personId = $this->person();
+        $employmentTypeId = $this->permanentEmploymentTypeId();
+        $relationshipId = (string) Str::uuid7();
+        $this->pg()->insert($this->insertSql(), [$relationshipId, $personId, $employmentTypeId, 'PN-STATUS-END-SECONDMENT-RACE', 'PERMANENT', '2026-01-01']);
+        $unitId = $this->organizationalUnitId();
+        $openPeriodId = (string) Str::uuid7();
+        $this->pg()->insert(<<<'SQL'
+            insert into hr.full_secondment_periods
+                (id, employment_relationship_id, organizational_unit_id, effective_from, created_at)
+            values (?, ?, ?, ?, now())
+            SQL, [$openPeriodId, $relationshipId, $unitId, '2026-02-01']);
+
+        $lockSql = 'select id from hr.employment_relationships where id = ? for update';
+
+        $first = $this->pg();
+        $second = $this->second();
+
+        $first->beginTransaction();
+        $first->select($lockSql, [$relationshipId]); // simulates RecordEmploymentStatusPeriod's lock, not committed yet
+
+        $second->statement("set lock_timeout = '300ms'");
+        $blocked = $this->databaseError(fn () => $second->transaction(fn () => $second->select($lockSql, [$relationshipId])));
+        $this->assertTrue(Errors::isLockNotAvailable($blocked), "EndFullSecondment's own lock attempt waits on RecordEmploymentStatusPeriod's (lock_timeout fired)");
+
+        $first->commit();
+
+        $second->transaction(function () use ($second, $lockSql, $relationshipId, $openPeriodId): void {
+            $second->select($lockSql, [$relationshipId]);
+            $second->update('update hr.full_secondment_periods set effective_to = ? where id = ?', ['2026-06-01', $openPeriodId]);
+        });
+
+        $this->assertSame('2026-06-01', (string) $this->scalar('select effective_to from hr.full_secondment_periods where id = ?', [$openPeriodId]));
+    }
+
+    /**
+     * The core new S15 race: EndEmploymentRelationship's new secondment-closing consequence
+     * (spec §8.1) racing a concurrent, independent EndFullSecondment call against the very same
+     * open secondment. Proves the relationship row lock genuinely serialises them, so the
+     * later-committing session observes the first session's already-committed close (no open
+     * secondment left to close) rather than a stale pre-race snapshot — exactly the same proof
+     * shape as the pre-existing full-secondment-start-and-end race test, for the new S15 pairing.
+     */
+    public function test_concurrent_employment_end_and_full_secondment_end_for_the_same_relationship_are_serialised_by_the_relationship_row_lock(): void
+    {
+        $personId = $this->person();
+        $employmentTypeId = $this->permanentEmploymentTypeId();
+        $relationshipId = (string) Str::uuid7();
+        $this->pg()->insert($this->insertSql(), [$relationshipId, $personId, $employmentTypeId, 'PN-EMPLOYMENT-END-SECONDMENT-END-RACE', 'PERMANENT', '2026-01-01']);
+        $unitId = $this->organizationalUnitId();
+        $openPeriodId = (string) Str::uuid7();
+        $this->pg()->insert(<<<'SQL'
+            insert into hr.full_secondment_periods
+                (id, employment_relationship_id, organizational_unit_id, effective_from, created_at)
+            values (?, ?, ?, ?, now())
+            SQL, [$openPeriodId, $relationshipId, $unitId, '2026-02-01']);
+
+        $lockSql = 'select id from hr.employment_relationships where id = ? for update';
+        $endRelationshipSql = "update hr.employment_relationships set effective_to = ?, end_knowledge_state = 'KNOWN', version = 2 where id = ? and version = 1 and end_knowledge_state != 'KNOWN'";
+        $openSecondmentSql = 'select id from hr.full_secondment_periods where employment_relationship_id = ? and effective_to is null';
+        $closeSecondmentSql = 'update hr.full_secondment_periods set effective_to = ? where id = ?';
+
+        $first = $this->pg();
+        $second = $this->second();
+
+        // Session 1 simulates EndEmploymentRelationship's own sequence (spec §8.1): scoped UPDATE
+        // on the relationship, then — still inside the same, uncommitted transaction — closing the
+        // open secondment it finds.
+        $first->beginTransaction();
+        $first->update($endRelationshipSql, ['2026-06-01', $relationshipId]);
+
+        $second->statement("set lock_timeout = '300ms'");
+        // Session 2 simulates an independent, concurrent EndFullSecondment call: its own lock
+        // attempt must wait behind session 1's still-open transaction, not merely behind the
+        // (different) secondment-period row it will eventually try to update.
+        $blocked = $this->databaseError(fn () => $second->transaction(fn () => $second->select($lockSql, [$relationshipId])));
+        $this->assertTrue(Errors::isLockNotAvailable($blocked), "the concurrent EndFullSecondment call's relationship-row lock attempt waits on EndEmploymentRelationship's (lock_timeout fired)");
+
+        // Session 1 completes its own secondment close and commits.
+        $first->update($closeSecondmentSql, ['2026-06-01', $openPeriodId]);
+        $first->commit();
+
+        // Now unblocked: session 2 must observe session 1's committed close — no open secondment
+        // left to act on — proving genuine serialisation, not a stale pre-race snapshot that would
+        // have let it double-close or race the same row.
+        $second->transaction(function () use ($second, $lockSql, $relationshipId, $openSecondmentSql): void {
+            $second->select($lockSql, [$relationshipId]);
+            $stillOpen = $second->select($openSecondmentSql, [$relationshipId]);
+            $this->assertCount(0, $stillOpen, 'the now-unblocked EndFullSecondment call must see no open secondment — the first session already closed it');
+        });
+
+        $this->assertSame('2026-06-01', (string) $this->scalar('select effective_to from hr.full_secondment_periods where id = ?', [$openPeriodId]));
+    }
+
+    /**
+     * Adversarial-review finding on an earlier draft of EmploymentRelationshipController::end():
+     * its audit-metadata "before" snapshot (hadOpenSecondment) was read via a plain, unlocked
+     * SELECT before any transaction opened, so a genuinely concurrent StartFullSecondment could
+     * commit a brand-new open secondment in the gap between that read and EndEmploymentRelationship's
+     * own locked close — producing a false NEGATIVE full_secondment_closed_as_consequence audit
+     * flag (the relationship-end call would genuinely close the newly-raced-in secondment, but the
+     * stale "before" snapshot would never know one existed to close). Fixed by locking the
+     * relationship row FIRST, in an outer transaction, before taking the snapshot (mirroring
+     * TransferController's own established TOCTOU-closing shape) — this test proves that lock
+     * genuinely blocks a concurrent StartFullSecondment's own identical lock attempt, closing the
+     * race window the plain-SELECT draft left open.
+     */
+    public function test_the_employment_end_audit_snapshots_relationship_row_lock_blocks_a_concurrent_full_secondment_start(): void
+    {
+        $personId = $this->person();
+        $employmentTypeId = $this->permanentEmploymentTypeId();
+        $relationshipId = (string) Str::uuid7();
+        $this->pg()->insert($this->insertSql(), [$relationshipId, $personId, $employmentTypeId, 'PN-END-AUDIT-SNAPSHOT-RACE', 'PERMANENT', '2026-01-01']);
+        $unitId = $this->organizationalUnitId();
+
+        $lockSql = 'select id from hr.employment_relationships where id = ? for update';
+        $startSql = <<<'SQL'
+            insert into hr.full_secondment_periods
+                (id, employment_relationship_id, organizational_unit_id, effective_from, created_at)
+            values (?, ?, ?, ?, now())
+            SQL;
+
+        $first = $this->pg();
+        $second = $this->second();
+
+        // Session 1 simulates EmploymentRelationshipController::end()'s own outer transaction:
+        // lock the relationship row FIRST — before taking the hadOpenSecondment "before" snapshot
+        // (a plain SELECT ... exists() here would find none, correctly, since nothing is open yet;
+        // the point under test is that nothing else can change that between here and this
+        // transaction's own commit).
+        $first->beginTransaction();
+        $first->select($lockSql, [$relationshipId]); // not committed yet
+
+        $second->statement("set lock_timeout = '300ms'");
+        // A concurrent StartFullSecondment call's own first statement (its own identical lock)
+        // must wait behind session 1's still-open transaction — it cannot sneak a brand-new open
+        // secondment into existence in the gap the earlier, unlocked draft left open.
+        $blocked = $this->databaseError(fn () => $second->transaction(fn () => $second->select($lockSql, [$relationshipId])));
+        $this->assertTrue(Errors::isLockNotAvailable($blocked), "a concurrent StartFullSecondment's lock attempt waits on the /end route's own snapshot-taking lock (lock_timeout fired)");
+
+        // Session 1 (the /end call) finds nothing open, as its own snapshot correctly observed
+        // under the lock, and commits without closing anything.
+        $first->commit();
+
+        // Only now, after session 1's transaction has fully committed, can the concurrent
+        // StartFullSecondment proceed — proving it was genuinely blocked for the snapshot's entire
+        // window, not merely delayed by coincidence.
+        $second->transaction(function () use ($second, $lockSql, $startSql, $relationshipId, $unitId): void {
+            $second->select($lockSql, [$relationshipId]);
+            $second->insert($startSql, [(string) Str::uuid7(), $relationshipId, $unitId, '2026-06-01']);
+        });
+
+        $this->assertSame(1, (int) $this->scalar('select count(*) from hr.full_secondment_periods where employment_relationship_id = ?', [$relationshipId]));
+    }
 }

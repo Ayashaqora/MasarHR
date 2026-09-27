@@ -230,9 +230,13 @@ class FullSecondmentFoundationTest extends HumanResourcesTestCase
         $secondmentUnit = $this->createUnit();
         app(StartFullSecondment::class)->handle($relationship, $secondmentUnit, '2026-02-01');
 
-        // Spec §7.3: EndEmploymentRelationship (S09, frozen) is never modified by this stage, so
-        // the secondment row is left open here on purpose — this is the exact orphan scenario §7.3
-        // discloses, and this assertion proves it is neutralised at read time.
+        // The relationship row is put directly into an ended state with the secondment still open
+        // (bypassing EndEmploymentRelationship entirely) so this test isolates
+        // ResolveActualWorkplaceForRelationship's own read-time neutralisation from however the row
+        // came to be ended — including a state EndEmploymentRelationship itself can no longer
+        // produce since S15 (docs/employment-status-lifecycle-consequences-specification.md §8.1),
+        // but which could still exist from data ended before S15, or by any other means. The
+        // read-time guard is the second, independent layer of defence; §8.1 is the first.
         $relationship->forceFill(['effective_to' => '2026-03-01', 'end_knowledge_state' => 'KNOWN'])->save();
 
         $workplace = app(ResolveActualWorkplaceForRelationship::class)($relationship);

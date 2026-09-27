@@ -3,15 +3,22 @@
 namespace Tests\Feature\HumanResources;
 
 use App\Modules\HumanResources\Application\Commands\RecordEmploymentStatusPeriod;
+use App\Modules\HumanResources\Application\Commands\StartFullSecondment;
 use App\Modules\HumanResources\Domain\Exceptions\EmploymentRelationshipAlreadyEndedException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidStatusPeriodDateException;
 use App\Modules\HumanResources\Domain\Exceptions\PersonIsTerminalException;
 use App\Modules\HumanResources\Domain\Exceptions\UnresolvedEmploymentStatusBehaviorException;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentStatusPeriod;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\FullSecondmentPeriod;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\OrganizationalPlacementPeriod;
 
 /**
  * S10 Employment Status History: transitions, auto-close, relationship-ending/terminal
  * consequences, temporal integrity, RBAC, audit, error shape (spec §5-§9/§15/§20).
+ *
+ * S15 (docs/employment-status-lifecycle-consequences-specification.md) additions live here too,
+ * not in a separate file: they are new consequences of the same RecordEmploymentStatusPeriod ->
+ * EndEmploymentRelationship in-process trigger this file already covers, not a new domain.
  */
 class EmploymentStatusHistoryTest extends HumanResourcesTestCase
 {
@@ -335,6 +342,64 @@ class EmploymentStatusHistoryTest extends HumanResourcesTestCase
         $this->assertArrayNotHasKey('ended_terminally', $entry->metadata);
     }
 
+    // ---------------------------------------------------------------------
+    // S15 — Employment Status Lifecycle Consequences (spec §8/§17/§21)
+    // ---------------------------------------------------------------------
+
+    public function test_an_ending_status_transition_closes_an_active_full_secondment_as_a_consequence(): void
+    {
+        $person = $this->createPersonRecord();
+        $relationship = $this->createEmploymentRelationship($person);
+        $unit = $this->createUnit();
+        app(StartFullSecondment::class)->handle($relationship, $unit, '2026-02-01');
+
+        app(RecordEmploymentStatusPeriod::class)->handle($person, $relationship, $this->statusDetail('resigned'), '2026-09-27');
+
+        $secondment = FullSecondmentPeriod::query()->where('employment_relationship_id', $relationship->getKey())->firstOrFail();
+        $this->assertSame('2026-09-27', $secondment->effective_to->toDateString());
+    }
+
+    public function test_the_audit_entry_for_a_status_triggered_ending_surfaces_the_secondment_closure(): void
+    {
+        $this->actingAsHrAdministrator();
+        $person = $this->createPersonRecord();
+        $relationship = $this->createEmploymentRelationship($person);
+        $unit = $this->createUnit();
+        app(StartFullSecondment::class)->handle($relationship, $unit, '2026-02-01');
+
+        $this->postJson(
+            "/api/v1/hr/persons/{$person->id}/employment-relationships/{$relationship->id}/status-periods",
+            ['status_detail_code' => 'resigned', 'effective_from' => '2026-09-27'],
+        )->assertStatus(201);
+
+        $entry = $this->latestAuditEntryFor('hr.employment_status_period.record');
+
+        $this->assertNotNull($entry);
+        $this->assertTrue($entry->metadata['relationship_closed_as_consequence']);
+        $this->assertTrue($entry->metadata['full_secondment_closed_as_consequence']);
+    }
+
+    public function test_a_non_active_status_transition_never_touches_full_secondment_or_placement(): void
+    {
+        // §7 movement independence, verified structurally: unpaid_leave (non_active) never carries
+        // is_relationship_ending, so RecordEmploymentStatusPeriod never even calls
+        // EndEmploymentRelationship here — both streams must be byte-for-byte untouched.
+        $person = $this->createPersonRecord();
+        $relationship = $this->createEmploymentRelationship($person);
+        $placementUnit = $this->createUnit();
+        $secondmentUnit = $this->createUnit();
+        $this->recordPlacement($relationship, $placementUnit, '2026-01-15');
+        app(StartFullSecondment::class)->handle($relationship, $secondmentUnit, '2026-02-01');
+
+        app(RecordEmploymentStatusPeriod::class)->handle($person, $relationship, $this->statusDetail('unpaid_leave'), '2026-09-27');
+
+        $secondment = FullSecondmentPeriod::query()->where('employment_relationship_id', $relationship->getKey())->firstOrFail();
+        $placement = OrganizationalPlacementPeriod::query()->where('employment_relationship_id', $relationship->getKey())->firstOrFail();
+        $this->assertNull($secondment->effective_to);
+        $this->assertNull($placement->effective_to);
+        $this->assertSame('NOT_APPLICABLE', $relationship->refresh()->end_knowledge_state);
+    }
+
     public function test_a_principal_with_only_the_record_permission_cannot_list(): void
     {
         // Adversarial-review coverage gap: the existing 403 test above only exercised the .record
@@ -362,12 +427,13 @@ class EmploymentStatusHistoryTest extends HumanResourcesTestCase
         $this->deleteJson($path)->assertStatus(405);
     }
 
-    public function test_ending_the_relationship_directly_leaves_the_open_status_period_unreconciled_by_design(): void
+    public function test_ending_the_relationship_directly_now_closes_the_open_status_period(): void
     {
-        // Disclosed deferred item (spec §18.1): S09's own EndEmploymentRelationship does not close
-        // an open status period. No path in S09/S10 reaches this except a direct S09 `end` call
-        // against a relationship that also has status history — verified here to be a known,
-        // disclosed gap rather than an accidental one.
+        // S15 (docs/employment-status-lifecycle-consequences-specification.md §8.3) closes the gap
+        // S10 itself disclosed and deliberately left open (former spec §18 item 1): ending a
+        // relationship via the direct S09 `end` route, while an earlier status period is still
+        // open, now closes that period at the same effective_to — the sole such reconciliation
+        // point, since EndEmploymentRelationship is the only command that ever ends a relationship.
         $this->actingAsHrAdministrator();
         $person = $this->createPersonRecord();
         $relationship = $this->createEmploymentRelationship($person);
@@ -378,6 +444,23 @@ class EmploymentStatusHistoryTest extends HumanResourcesTestCase
             ['expected_version' => $relationship->version, 'effective_to' => '2026-10-01', 'is_terminal' => false],
         )->assertStatus(200);
 
+        $this->assertSame('2026-10-01', $period->refresh()->effective_to->toDateString());
+    }
+
+    public function test_ending_the_relationship_via_status_transition_leaves_the_new_terminal_period_open(): void
+    {
+        // The status-triggered path (RecordEmploymentStatusPeriod -> EndEmploymentRelationship,
+        // in-process) inserts the ending/terminal status period itself open-ended, with
+        // effective_from equal to the relationship's own new effective_to. S15's §8.3 close is a
+        // no-op here by design (equal dates are never closed — the database's own period-check
+        // constraint forbids a zero-length period regardless of caller) — the final, correct
+        // status is the one left open, not orphaned data.
+        $person = $this->createPersonRecord();
+        $relationship = $this->createEmploymentRelationship($person);
+
+        $period = app(RecordEmploymentStatusPeriod::class)->handle($person, $relationship, $this->statusDetail('resigned'), '2026-09-27');
+
         $this->assertNull($period->refresh()->effective_to);
+        $this->assertSame('KNOWN', $relationship->refresh()->end_knowledge_state);
     }
 }
