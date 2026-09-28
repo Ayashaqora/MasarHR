@@ -6,7 +6,11 @@ use Illuminate\Database\Eloquent\Attributes\Fillable;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Str;
 
-/** Specialty reference values. DEFINED STRUCTURE / VALUES DEFERRED (S05 §5.3). */
+/**
+ * Specialty reference values — the canonical specialty catalog (S05 §5.3 structure; administered
+ * since S25, docs/specialty-catalog-administration-foundation-specification.md). VALUES DEFERRED:
+ * no specialty row is seeded; rows are created by reference administrators.
+ */
 #[Fillable(['code', 'name_ar', 'name_en', 'display_order', 'is_active'])]
 class Specialty extends Model
 {

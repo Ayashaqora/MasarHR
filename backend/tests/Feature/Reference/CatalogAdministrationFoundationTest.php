@@ -127,10 +127,14 @@ class CatalogAdministrationFoundationTest extends ReferenceTestCase
         $this->assertFalse(Schema::hasTable('ref.supervisory_statuses'));
     }
 
-    public function test_employment_types_and_specialties_remain_unadministered_and_out_of_s13_scope(): void
+    public function test_employment_types_remain_unadministered_and_out_of_s13_scope(): void
     {
-        // spec §7: not named by the S13 authorization, deliberately left untouched.
+        // spec §7: not named by the S13 authorization, deliberately left untouched. ref.specialties
+        // was the other S13 exclusion; S25 (docs/specialty-catalog-administration-foundation-
+        // specification.md, ADR-S25-001) later authorized its administration explicitly — see
+        // tests/Feature/Reference/SpecialtyCatalogAdministrationFoundationTest.php.
+        $this->actingAsReferenceManager();
+
         $this->getJson('/api/v1/reference/employment-types')->assertStatus(404);
-        $this->getJson('/api/v1/reference/specialties')->assertStatus(404);
     }
 }

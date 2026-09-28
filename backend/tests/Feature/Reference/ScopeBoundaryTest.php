@@ -20,6 +20,9 @@ use Illuminate\Support\Facades\DB;
  * structure-only families, plus one seed migration into an already-existing table — so the
  * twenty-two-table count below is unchanged. The command/controller boundary the last two tests in
  * this file assert has moved accordingly: see their docblocks.
+ *
+ * S25 (docs/specialty-catalog-administration-foundation-specification.md) likewise adds no ref.*
+ * table and no seed — it only adds administration for the existing ref.specialties catalog.
  */
 class ScopeBoundaryTest extends ReferenceTestCase
 {
@@ -117,10 +120,14 @@ class ScopeBoundaryTest extends ReferenceTestCase
      * updates the pre-S13 assertion (which required all ten to have neither) rather than deleting
      * it, so the boundary this test protects — "no catalog gets administration Architecture
      * Authority never authorized" — still holds, now drawn in the place S13 actually put it.
+     *
+     * S25 (docs/specialty-catalog-administration-foundation-specification.md, ADR-S25-001) then
+     * explicitly authorized Specialty administration, so the boundary moves once more: only
+     * EmploymentType remains structure-only (see the S25 test below).
      */
-    public function test_only_the_two_out_of_scope_structure_only_families_still_expose_no_command_or_route(): void
+    public function test_only_the_remaining_out_of_scope_structure_only_family_still_exposes_no_command_or_route(): void
     {
-        $stillStructureOnly = ['EmploymentType', 'Specialty'];
+        $stillStructureOnly = ['EmploymentType'];
 
         foreach ($stillStructureOnly as $family) {
             $this->assertFileDoesNotExist(
@@ -155,5 +162,15 @@ class ScopeBoundaryTest extends ReferenceTestCase
                 "{$family} is an S13 in-scope catalog (spec §6) — it must expose a controller",
             );
         }
+    }
+
+    /** S25 (ADR-S25-001): Specialty now exposes exactly the S13 administration set, nothing more. */
+    public function test_specialty_exposes_full_administration_since_s25(): void
+    {
+        foreach (['Create', 'Activate', 'Deactivate'] as $verb) {
+            $this->assertFileExists(base_path("app/Modules/Reference/Application/Commands/{$verb}Specialty.php"));
+        }
+        $this->assertFileExists(base_path('app/Modules/Reference/Application/Commands/UpdateSpecialtyMetadata.php'));
+        $this->assertFileExists(base_path('app/Modules/Reference/Presentation/Http/Controllers/SpecialtyController.php'));
     }
 }

@@ -34,6 +34,7 @@ use App\Modules\Reference\Presentation\Http\Controllers\MaritalStatusController;
 use App\Modules\Reference\Presentation\Http\Controllers\MonthlyCadreCategoryController;
 use App\Modules\Reference\Presentation\Http\Controllers\QualificationTypeController;
 use App\Modules\Reference\Presentation\Http\Controllers\SpecialtyCadreCategoryMappingController;
+use App\Modules\Reference\Presentation\Http\Controllers\SpecialtyController;
 use App\Modules\Reference\Presentation\Http\Controllers\SupervisoryTitleController;
 use App\Modules\Security\Infrastructure\Authorization\PermissionCatalog as Perm;
 use App\Modules\Security\Presentation\Http\Controllers\Auth\ChangeOwnPasswordController;
@@ -158,6 +159,11 @@ Route::middleware('web')->group(function (): void {
                 'supervisory-titles' => [SupervisoryTitleController::class, 'supervisoryTitle'],
                 'leave-types' => [LeaveTypeController::class, 'leaveType'],
                 'leave-statuses' => [LeaveStatusController::class, 'leaveStatus'],
+                // S25 Specialty Catalog Administration Foundation
+                // (docs/specialty-catalog-administration-foundation-specification.md, ADR-S25-001): the
+                // existing canonical ref.specialties catalog joins the same registry. Catalog rows only —
+                // the S06 /specialties/{specialty}/cadre-category-mappings sub-resource below is unchanged.
+                'specialties' => [SpecialtyController::class, 'specialty'],
             ];
 
             foreach ($simpleFamilies as $segment => [$controller, $param]) {
