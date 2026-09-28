@@ -9,6 +9,7 @@ use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentStatusPer
 use App\Modules\HumanResources\Presentation\Http\Controllers\FullSecondmentPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\OrganizationalPlacementPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\PersonController;
+use App\Modules\HumanResources\Presentation\Http\Controllers\PersonQualificationController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\TransferController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\WorkplaceAssignmentPeriodController;
 use App\Modules\Organization\Infrastructure\Authorization\OrganizationPermissionCatalog as OrgPerm;
@@ -253,6 +254,15 @@ Route::middleware('web')->group(function (): void {
                 ->middleware('permission:'.HrPerm::PERSONS_VIEW)->name('persons.show');
             Route::post('/persons', [PersonController::class, 'store'])
                 ->middleware('permission:'.HrPerm::PERSONS_CREATE)->name('persons.store');
+
+            // S23: Person Qualifications, nested directly under {person} — a Person fact, never an
+            // Employment Relationship one (docs/person-qualification-foundation-specification.md
+            // §S23.13). Plain Person-level RBAC like S09's hr.persons.* routes (ADR-S23-001 §9).
+            // Explicit record action only — no PATCH, no DELETE, no correction route.
+            Route::get('/persons/{person}/qualifications', [PersonQualificationController::class, 'index'])
+                ->middleware('permission:'.HrPerm::PERSON_QUALIFICATIONS_VIEW)->name('persons.qualifications.index');
+            Route::post('/persons/{person}/qualifications', [PersonQualificationController::class, 'store'])
+                ->middleware('permission:'.HrPerm::PERSON_QUALIFICATIONS_RECORD)->name('persons.qualifications.store');
 
             Route::get('/persons/{person}/employment-relationships', [EmploymentRelationshipController::class, 'index'])
                 ->middleware('permission:'.HrPerm::EMPLOYMENT_RELATIONSHIPS_VIEW)->name('persons.employment-relationships.index');

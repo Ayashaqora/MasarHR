@@ -60,6 +60,8 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
             DB::table('hr.organizational_placement_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
             DB::table('hr.employment_status_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
             DB::table('hr.employment_relationships')->whereIn('person_id', $this->personIds)->delete();
+            // person_qualifications (S23) carries a RESTRICT FK to hr.persons.
+            DB::table('hr.person_qualifications')->whereIn('person_id', $this->personIds)->delete();
             DB::table('hr.persons')->whereIn('id', $this->personIds)->delete();
         }
 
@@ -1438,5 +1440,50 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
         ]);
 
         return $id;
+    }
+
+    /**
+     * S23 (docs/person-qualification-foundation-specification.md §S23.8): two real, independent
+     * sessions recording the exact same qualification identity for the same Person cannot both
+     * commit — person_qualifications_identity_unique (UNIQUE NULLS NOT DISTINCT) makes the second
+     * wait, then reject it, with no application-level pre-check involved. The academic degree is
+     * committed here (the catalog is deliberately empty) and removed in cleanup.
+     */
+    public function test_concurrent_duplicate_person_qualifications_are_serialised_and_rejected_by_the_unique_constraint(): void
+    {
+        $personId = $this->person();
+        $degreeId = (string) Str::uuid7();
+        DB::table('ref.academic_degrees')->insert([
+            'id' => $degreeId, 'code' => 's23_race_'.Str::lower(Str::random(8)), 'name_ar' => 'درجة اختبار', 'name_en' => null,
+            'is_active' => true, 'display_order' => 99, 'version' => 1, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+        $insertSql = 'insert into hr.person_qualifications (id, person_id, academic_degree_id, qualification_type_id, created_at) values (?, ?, ?, null, now())';
+
+        $first = $this->pg();
+        $second = $this->second();
+
+        try {
+            $first->beginTransaction();
+            $first->insert($insertSql, [(string) Str::uuid7(), $personId, $degreeId]); // not committed yet
+
+            $second->statement("set lock_timeout = '300ms'");
+            $blocked = $this->databaseError(fn () => $second->transaction(fn () => $second->insert($insertSql, [(string) Str::uuid7(), $personId, $degreeId])));
+            $this->assertTrue(Errors::isLockNotAvailable($blocked), 'the second session waits on the first (lock_timeout fired)');
+
+            $first->commit();
+
+            $rejected = $this->databaseError(fn () => $second->transaction(fn () => $second->insert($insertSql, [(string) Str::uuid7(), $personId, $degreeId])));
+            $this->assertTrue(Errors::isUniqueViolation($rejected), 'once committed, the duplicate is rejected by PostgreSQL itself');
+
+            $this->assertSame(1, (int) $this->scalar('select count(*) from hr.person_qualifications where person_id = ?', [$personId]));
+        } finally {
+            foreach ([DB::connection(), $this->hasSecond() ? $this->second() : null] as $connection) {
+                while ($connection !== null && $connection->transactionLevel() > 0) {
+                    $connection->rollBack();
+                }
+            }
+            DB::table('hr.person_qualifications')->where('person_id', $personId)->delete();
+            DB::table('ref.academic_degrees')->where('id', $degreeId)->delete();
+        }
     }
 }

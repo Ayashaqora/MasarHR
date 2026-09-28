@@ -6,7 +6,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 
 /**
- * S09/S10/S11/S12/S14/S16/S20/S21/S22 scope audit (docs/person-employment-foundation-specification.md
+ * S09/S10/S11/S12/S14/S16/S20/S21/S22/S23 scope audit (docs/person-employment-foundation-specification.md
  * §2/§17/§21/§24 P24, docs/employment-status-history-foundation-specification.md §3/§13/§18,
  * docs/organizational-placement-foundation-specification.md §6.1/§20/§25 P22,
  * docs/full-secondment-foundation-specification.md §18/§26,
@@ -14,14 +14,15 @@ use Illuminate\Support\Facades\Route;
  * docs/workplace-assignment-foundation-specification.md §S16.5/§S16.21, and
  * docs/employment-category-history-foundation-specification.md §S20.6/§S20.19, and
  * docs/employment-contract-foundation-specification.md §S21.6, and
- * docs/employment-job-title-history-foundation-specification.md §S22.6): the hr schema contains
- * exactly the nine S09/S10/S11/S12/S16/S20/S21/S22-authorized tables and nothing else — S14 adds none
+ * docs/employment-job-title-history-foundation-specification.md §S22.6, and
+ * docs/person-qualification-foundation-specification.md §S23.6): the hr schema contains exactly the
+ * ten S09/S10/S11/S12/S16/S20/S21/S22/S23-authorized tables and nothing else — S14 adds none
  * (persistence-design Option B, ADR-S14-001 §16); no table carries a speculative column
  * (organizational-unit on the S09/S10 tables, name/demographic on persons, a client-versioned or
  * mutable-current-workplace column on placement periods, a decision-type or destination-scheme
  * column on secondment periods — S14's own decision_type_id is a transient command input and an
  * audit field only, never a schema column, confirmed below); no S17+ out-of-scope concept
- * (supervisory/leave/qualification/professional-history/reporting/…) leaked in via any route or
+ * (supervisory/leave/professional-history/reporting/…) leaked in via any route or
  * command; no hard delete is exposed; _to_delete/ is untouched. 'placement' and
  * 'PlacementHistory' were removed from the forbidden lists in S11 (Organizational Placement became
  * the authorized S11 domain itself); 'secondment'/'Secondment' were removed in S12 for the
@@ -37,7 +38,11 @@ use Illuminate\Support\Facades\Route;
 class ScopeBoundaryTest extends HumanResourcesTestCase
 {
     private const FORBIDDEN_ROUTE_SEGMENTS = [
-        'supervisory', 'leave', 'qualification',
+        // 'qualification' was removed in S23 — Person Qualification Foundation is now the
+        // authorized S23 domain itself (docs/person-qualification-foundation-specification.md),
+        // the same precedent as 'placement' (S11), 'secondment' (S12), 'transfer' (S14) and
+        // 'assignment' (S16).
+        'supervisory', 'leave',
         'work-schedule', 'workschedule', 'renewal', 'professional-history',
         'job-history', 'export', 'report',
     ];
@@ -48,13 +53,13 @@ class ScopeBoundaryTest extends HumanResourcesTestCase
         'WorkSchedule',
     ];
 
-    public function test_hr_schema_contains_exactly_the_nine_authorized_tables(): void
+    public function test_hr_schema_contains_exactly_the_ten_authorized_tables(): void
     {
         $tables = DB::table('information_schema.tables')->where('table_schema', 'hr')->pluck('table_name')->all();
         sort($tables);
 
         $this->assertSame(
-            ['employment_category_periods', 'employment_contract_periods', 'employment_job_title_periods', 'employment_relationships', 'employment_status_periods', 'full_secondment_periods', 'organizational_placement_periods', 'persons', 'workplace_assignment_periods'],
+            ['employment_category_periods', 'employment_contract_periods', 'employment_job_title_periods', 'employment_relationships', 'employment_status_periods', 'full_secondment_periods', 'organizational_placement_periods', 'person_qualifications', 'persons', 'workplace_assignment_periods'],
             $tables,
         );
     }

@@ -4,6 +4,7 @@ use App\Modules\HumanResources\Domain\Exceptions\ActiveFullSecondmentAlreadyExis
 use App\Modules\HumanResources\Domain\Exceptions\ActiveWorkplaceAssignmentAlreadyExistsException;
 use App\Modules\HumanResources\Domain\Exceptions\DuplicateNationalIdException;
 use App\Modules\HumanResources\Domain\Exceptions\DuplicatePermanentEmployeeNumberException;
+use App\Modules\HumanResources\Domain\Exceptions\DuplicatePersonQualificationException;
 use App\Modules\HumanResources\Domain\Exceptions\EmploymentRelationshipAlreadyEndedException;
 use App\Modules\HumanResources\Domain\Exceptions\EmploymentRelationshipNotContractSchemeException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidEmploymentCategoryException;
@@ -16,6 +17,8 @@ use App\Modules\HumanResources\Domain\Exceptions\InvalidEmploymentJobTitlePeriod
 use App\Modules\HumanResources\Domain\Exceptions\InvalidEndDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidFullSecondmentEndDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidFullSecondmentStartDateException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidPersonQualificationAcademicDegreeException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidPersonQualificationTypeException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidPlacementPeriodDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidStatusPeriodDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidTransferDecisionTypeException;
@@ -26,6 +29,7 @@ use App\Modules\HumanResources\Domain\Exceptions\NoActiveFullSecondmentException
 use App\Modules\HumanResources\Domain\Exceptions\NoActiveWorkplaceAssignmentException;
 use App\Modules\HumanResources\Domain\Exceptions\OverlappingEmploymentRelationshipException;
 use App\Modules\HumanResources\Domain\Exceptions\PersonIsTerminalException;
+use App\Modules\HumanResources\Domain\Exceptions\PersonQualificationIdentityMissingException;
 use App\Modules\HumanResources\Domain\Exceptions\UnresolvedEmploymentStatusBehaviorException;
 use App\Modules\Organization\Domain\Exceptions\StaleVersionException as OrganizationStaleVersionException;
 use App\Modules\Organization\Domain\Exceptions\WouldCreateCycleException;
@@ -130,6 +134,10 @@ return Application::configure(basePath: dirname(__DIR__))
             InvalidEmploymentContractTermException::class,
             InvalidEmploymentJobTitleException::class,
             InvalidEmploymentJobTitlePeriodDateException::class,
+            DuplicatePersonQualificationException::class,
+            InvalidPersonQualificationAcademicDegreeException::class,
+            InvalidPersonQualificationTypeException::class,
+            PersonQualificationIdentityMissingException::class,
         ]);
 
         // §22 of the S03 authorization: preserve stated HTTP semantics for Security domain
@@ -286,6 +294,22 @@ return Application::configure(basePath: dirname(__DIR__))
         $exceptions->render(fn (InvalidEmploymentJobTitlePeriodDateException $e) => response()->json([
             'message' => $e->getMessage(),
             'errors' => ['effective_from' => [$e->getMessage()]],
+        ], 422));
+
+        // S23 HumanResources-module domain failures
+        // (docs/person-qualification-foundation-specification.md §S23.14).
+        $exceptions->render(fn (DuplicatePersonQualificationException $e) => response()->json(['message' => $e->getMessage()], 409));
+        $exceptions->render(fn (InvalidPersonQualificationAcademicDegreeException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['academic_degree_id' => [$e->getMessage()]],
+        ], 422));
+        $exceptions->render(fn (InvalidPersonQualificationTypeException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['qualification_type_id' => [$e->getMessage()]],
+        ], 422));
+        $exceptions->render(fn (PersonQualificationIdentityMissingException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['academic_degree_id' => [$e->getMessage()], 'qualification_type_id' => [$e->getMessage()]],
         ], 422));
 
         $exceptions->render(fn (DuplicateUsernameException $e) => response()->json([

@@ -10,12 +10,14 @@ use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRel
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\OrganizationalPlacementPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\Person;
 use App\Modules\Organization\Infrastructure\Persistence\Eloquent\OrganizationalUnit;
+use App\Modules\Reference\Infrastructure\Persistence\Eloquent\AcademicDegree;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\ContractType;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\DecisionType;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\EmploymentCategory;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\EmploymentStatusDetail;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\EmploymentType;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\JobTitle;
+use App\Modules\Reference\Infrastructure\Persistence\Eloquent\QualificationType;
 use App\Modules\Security\Application\Commands\GrantOrganizationalScope;
 use App\Modules\Security\Infrastructure\Persistence\Eloquent\Principal;
 use Illuminate\Support\Str;
@@ -188,6 +190,39 @@ abstract class HumanResourcesTestCase extends AuditTestCase
         $title->save();
 
         return $title->refresh();
+    }
+
+    /**
+     * Synthetic, test-only ref.academic_degrees / ref.qualification_types rows (rolled back with the
+     * test's own transaction). Both catalogs are deliberately EMPTY (S13; ADR-S23-DECISIONS §6), so
+     * every S23 test supplies its own values and nothing is seeded.
+     */
+    protected function createSyntheticAcademicDegree(bool $active = true): AcademicDegree
+    {
+        $degree = new AcademicDegree([
+            'code' => 's23_degree_'.Str::lower(Str::random(8)),
+            'name_ar' => 'درجة اختبار',
+            'name_en' => null,
+            'display_order' => 99,
+            'is_active' => $active,
+        ]);
+        $degree->save();
+
+        return $degree->refresh();
+    }
+
+    protected function createSyntheticQualificationType(bool $active = true): QualificationType
+    {
+        $type = new QualificationType([
+            'code' => 's23_type_'.Str::lower(Str::random(8)),
+            'name_ar' => 'نوع مؤهل اختبار',
+            'name_en' => null,
+            'display_order' => 99,
+            'is_active' => $active,
+        ]);
+        $type->save();
+
+        return $type->refresh();
     }
 
     protected function createSyntheticEmploymentCategory(bool $active = true): EmploymentCategory

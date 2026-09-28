@@ -42,7 +42,11 @@ namespace App\Modules\HumanResources\Infrastructure\Authorization;
  * 2026_10_08_000002_seed_security_employment_job_title_period_permissions) follow the same
  * plain-RBAC, hr.*-not-reference.* precedent for the employment job title fact
  * (docs/employment-job-title-history-foundation-specification.md §S22.13, ADR-S22-001 §9);
- * ref.job_titles stays administered solely by reference.*.
+ * ref.job_titles stays administered solely by reference.*. The two S23 permissions (from
+ * 2026_10_09_000002_seed_security_person_qualification_permissions) govern the Person
+ * qualification fact with the same Person-level plain RBAC as S09's hr.persons.* permissions
+ * (docs/person-qualification-foundation-specification.md §S23.12, ADR-S23-001 §9);
+ * ref.academic_degrees / ref.qualification_types stay administered solely by reference.*.
  */
 final class HumanResourcesPermissionCatalog
 {
@@ -101,6 +105,11 @@ final class HumanResourcesPermissionCatalog
 
     public const EMPLOYMENT_JOB_TITLE_PERIODS_RECORD = 'hr.employment_job_title_periods.record';
 
+    /** S23 (docs/person-qualification-foundation-specification.md §S23.12). */
+    public const PERSON_QUALIFICATIONS_VIEW = 'hr.person_qualifications.view';
+
+    public const PERSON_QUALIFICATIONS_RECORD = 'hr.person_qualifications.record';
+
     public const ALL = [
         self::PERSONS_VIEW,
         self::PERSONS_CREATE,
@@ -124,5 +133,7 @@ final class HumanResourcesPermissionCatalog
         self::EMPLOYMENT_CONTRACT_PERIODS_RECORD,
         self::EMPLOYMENT_JOB_TITLE_PERIODS_VIEW,
         self::EMPLOYMENT_JOB_TITLE_PERIODS_RECORD,
+        self::PERSON_QUALIFICATIONS_VIEW,
+        self::PERSON_QUALIFICATIONS_RECORD,
     ];
 }
