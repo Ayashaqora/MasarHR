@@ -223,10 +223,14 @@ class ReportingAsOfFoundationTest extends HumanResourcesTestCase
         [$rel, $home] = $this->placedRelationship();
         $secDest = $this->createUnit();
         $asgDest = $this->createUnit();
-        app(StartFullSecondment::class)->handle($rel, $secDest, '2026-02-01');
-        app(EndFullSecondment::class)->handle($rel->refresh(), '2026-06-01');
-        // Legal under the current S12/S16 write rules (they compare open records only).
-        app(StartWorkplaceAssignment::class)->handle($rel->refresh(), $asgDest, '2026-03-01', $this->assignmentDecisionType());
+        // LEGACY historical overlap, inserted directly: the pre-S28 write rules compared open
+        // records only and accepted exactly this timeline. Since S28 (ADR-S28-001) the commands
+        // truncate instead, so it can no longer be produced through them — but already-stored
+        // history is never repaired, and the S27 reader must keep reporting it as ambiguous.
+        foreach ([['hr.full_secondment_periods', $secDest, '2026-02-01', '2026-06-01'], ['hr.workplace_assignment_periods', $asgDest, '2026-03-01', null]] as [$table, $unit, $from, $to]) {
+            DB::table($table)->insert(['id' => (string) Str::uuid7(), 'employment_relationship_id' => $rel->id, 'organizational_unit_id' => $unit->id,
+                'effective_from' => $from, 'effective_to' => $to, 'created_at' => now()]);
+        }
 
         $this->assertWorkplace($rel, '2026-01-31', ActualWorkplaceAsOf::RESOLVED, $home->id, 'placement');
         $this->assertWorkplace($rel, '2026-02-28', ActualWorkplaceAsOf::RESOLVED, $secDest->id, 'secondment');

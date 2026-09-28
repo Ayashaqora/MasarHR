@@ -6,6 +6,7 @@ use App\Modules\Audit\Application\AuditedCommandExecutor;
 use App\Modules\Audit\Domain\AuditSpec;
 use App\Modules\HumanResources\Application\Commands\EndFullSecondment;
 use App\Modules\HumanResources\Application\Commands\StartFullSecondment;
+use App\Modules\HumanResources\Application\Commands\SupersedeTemporaryWorkplaceMovement;
 use App\Modules\HumanResources\Application\Queries\ListFullSecondmentPeriodsForRelationship;
 use App\Modules\HumanResources\Application\Queries\ResolveActualWorkplaceForRelationship;
 use App\Modules\HumanResources\Domain\ActualWorkplace;
@@ -14,6 +15,7 @@ use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRel
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\FullSecondmentPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\OrganizationalPlacementPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\Person;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\WorkplaceAssignmentPeriod;
 use App\Modules\HumanResources\Presentation\Http\Resources\ActualWorkplaceResource;
 use App\Modules\HumanResources\Presentation\Http\Resources\FullSecondmentPeriodResource;
 use App\Modules\Organization\Infrastructure\Persistence\Eloquent\OrganizationalUnit;
@@ -22,6 +24,7 @@ use App\Modules\Security\Infrastructure\Authorization\ScopedAuthorizationChecker
 use App\Modules\Security\Infrastructure\Persistence\Eloquent\Principal;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
@@ -78,6 +81,7 @@ class FullSecondmentPeriodController
         StartFullSecondment $command,
         AuditedCommandExecutor $executor,
         ScopedAuthorizationChecker $scopeChecker,
+        SupersedeTemporaryWorkplaceMovement $supersession,
     ): JsonResponse {
         $this->guardOwnership($person, $employmentRelationship);
 
@@ -106,7 +110,7 @@ class FullSecondmentPeriodController
         // StartFullSecondment re-acquires the identical row lock inside AuditedCommandExecutor's
         // own (nested/savepoint) transaction below — PostgreSQL row locks are reentrant within
         // the same transaction, so this is not a double-lock hazard.
-        return DB::transaction(function () use ($request, $employmentRelationship, $destination, $principal, $scopeChecker, $data, $command, $executor) {
+        return DB::transaction(function () use ($request, $employmentRelationship, $destination, $principal, $scopeChecker, $data, $command, $executor, $supersession) {
             EmploymentRelationship::query()->where('id', $employmentRelationship->getKey())->lockForUpdate()->firstOrFail();
 
             // Spec §12.1: destination is always checked; the current placement's unit ("source")
@@ -122,6 +126,17 @@ class FullSecondmentPeriodController
                 return $this->forbidden();
             }
 
+            // ADR-S28-001: a workplace assignment effective at the start date is superseded
+            // (truncated). Its unit is scope-checked with the same permission, exactly as S14's
+            // TransferController checks the unit of every movement it closes — superseding never
+            // lets a caller end a movement in a unit outside their scope.
+            $date = Carbon::parse($data['effective_from'])->toDateString();
+            $superseded = $supersession->effectiveAt(WorkplaceAssignmentPeriod::class, $employmentRelationship->getKey(), $date);
+
+            if ($superseded !== null && ! $scopeChecker->authorize($principal, Perm::FULL_SECONDMENT_PERIODS_START, $superseded->organizationalUnit)) {
+                return $this->forbidden();
+            }
+
             $context = ResolveCommandContext::from($request);
 
             $spec = new AuditSpec(
@@ -133,7 +148,7 @@ class FullSecondmentPeriodController
                     'organizational_unit_id' => $period->organizational_unit_id,
                     'effective_from' => $period->effective_from?->toDateString(),
                 ],
-                metadata: fn () => [],
+                metadata: fn () => self::supersessionMetadata([['workplace_assignment', WorkplaceAssignmentPeriod::class, $superseded]], $date),
             );
 
             $period = $executor->run(
@@ -265,5 +280,30 @@ class FullSecondmentPeriodController
     private function forbidden(): JsonResponse
     {
         return response()->json(['message' => 'This action is unauthorized.'], 403);
+    }
+
+    /**
+     * ADR-S28-001 audit consequence: for each candidate period that was effective at the start
+     * date before the command, records it when the command actually truncated it — stable IDs,
+     * stream, previous end and new end only (no PII). Empty when nothing was superseded.
+     *
+     * @param  list<array{0: string, 1: class-string, 2: ?object}>  $candidates
+     * @return array<string, mixed>
+     */
+    public static function supersessionMetadata(array $candidates, string $date): array
+    {
+        $superseded = [];
+        foreach ($candidates as [$stream, $modelClass, $before]) {
+            if ($before === null) {
+                continue;
+            }
+            $previousTo = $before->effective_to?->toDateString();
+            $nowTo = $modelClass::query()->find($before->getKey())?->effective_to?->toDateString();
+            if ($nowTo !== $previousTo) {
+                $superseded[] = ['stream' => $stream, 'period_id' => $before->getKey(), 'previous_effective_to' => $previousTo, 'effective_to' => $nowTo];
+            }
+        }
+
+        return $superseded === [] ? [] : ['superseded_movements' => $superseded, 'superseded_at' => $date];
     }
 }

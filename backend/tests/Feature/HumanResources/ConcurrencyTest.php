@@ -2,7 +2,11 @@
 
 namespace Tests\Feature\HumanResources;
 
+use App\Modules\HumanResources\Application\Commands\StartWorkplaceAssignment;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRelationship;
+use App\Modules\Organization\Infrastructure\Persistence\Eloquent\OrganizationalUnit;
 use App\Modules\Platform\Infrastructure\Persistence\Postgres\PostgresErrorClassifier as Errors;
+use App\Modules\Reference\Infrastructure\Persistence\Eloquent\DecisionType;
 use Illuminate\Database\Connection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -1510,6 +1514,57 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
         });
 
         $this->assertSame(0, (int) $this->scalar('select count(*) from hr.employment_specialty_periods where employment_relationship_id = ?', [$relationshipId]));
+    }
+
+    /**
+     * S28 (docs/movement-temporal-integrity-corrective-specification.md §S28.10, ADR-S28-001):
+     * cross-stream supersession is serialised by the EXISTING EmploymentRelationship row lock —
+     * every writer to either movement stream (Start/End secondment, Start/End assignment,
+     * TransferEmployee, EndEmploymentRelationship) takes it first. A second session holding the
+     * lock with an uncommitted secondment makes StartWorkplaceAssignment wait (lock_timeout
+     * fires); once committed, the assignment sees that secondment and SUPERSEDES it instead of
+     * overlapping it. The two streams live in two tables, so no single EXCLUDE constraint can span
+     * them — the row lock is the (documented) serialisation point.
+     */
+    public function test_concurrent_cross_stream_starts_are_serialised_and_never_overlap(): void
+    {
+        $personId = $this->person();
+        $relationshipId = (string) Str::uuid7();
+        $this->pg()->insert($this->insertSql(), [$relationshipId, $personId, $this->permanentEmploymentTypeId(), 'PN-S28-RACE-'.Str::random(6), 'PERMANENT', '2026-01-01']);
+        $secondmentUnit = $this->organizationalUnitId();
+        $assignmentUnit = $this->organizationalUnitId();
+        $relationship = EmploymentRelationship::query()->findOrFail($relationshipId);
+        $unit = OrganizationalUnit::query()->findOrFail($assignmentUnit);
+        $assignmentType = DecisionType::query()->where('code', 'ASSIGNMENT')->firstOrFail();
+
+        $second = $this->second();
+        $second->beginTransaction();
+        $second->select('select id from hr.employment_relationships where id = ? for update', [$relationshipId]);
+        $second->insert(
+            'insert into hr.full_secondment_periods (id, employment_relationship_id, organizational_unit_id, effective_from, created_at) values (?, ?, ?, ?, now())',
+            [(string) Str::uuid7(), $relationshipId, $secondmentUnit, '2026-02-01'],
+        ); // an in-flight StartFullSecondment, not committed yet
+
+        DB::statement("set lock_timeout = '300ms'");
+        try {
+            $blocked = $this->databaseError(fn () => app(StartWorkplaceAssignment::class)->handle($relationship, $unit, '2026-03-01', $assignmentType));
+            $this->assertTrue(Errors::isLockNotAvailable($blocked), 'the assignment waits on the in-flight secondment (lock_timeout fired)');
+        } finally {
+            DB::statement('set lock_timeout = 0');
+        }
+
+        $second->commit();
+
+        app(StartWorkplaceAssignment::class)->handle($relationship->refresh(), $unit, '2026-03-01', $assignmentType);
+
+        $this->assertSame('2026-03-01', (string) $this->scalar('select effective_to from hr.full_secondment_periods where employment_relationship_id = ?', [$relationshipId]),
+            'the committed secondment is superseded, never overlapped');
+        $this->assertSame(0, (int) $this->scalar(<<<'SQL'
+            select count(*) from hr.full_secondment_periods s
+            join hr.workplace_assignment_periods a on a.employment_relationship_id = s.employment_relationship_id
+            where s.employment_relationship_id = ?
+              and daterange(s.effective_from, s.effective_to, '[)') && daterange(a.effective_from, a.effective_to, '[)')
+            SQL, [$relationshipId]));
     }
 
     /** Committed directly so the independent second session can see it; removed by the caller. */

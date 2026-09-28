@@ -14,6 +14,7 @@ use App\Modules\Platform\Infrastructure\Persistence\Postgres\PostgresErrorClassi
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\DecisionType;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Starts (or replaces) one workplace assignment period for an Employment Relationship
@@ -25,10 +26,15 @@ use Illuminate\Support\Carbon;
  * explicit authorization for this shape. It never writes to hr.organizational_placement_periods
  * (S11) or hr.employment_relationships (S09) — original workplace is untouched (spec §S16.2).
  *
- * Rejects outright — never silently closes it — when an active Full Secondment exists (spec
- * §S16.8, pair "Full Secondment → Assignment": REJECT), a conservative mutual exclusion chosen to
- * avoid inventing a cross-domain precedence rule between two movement mechanisms ADR-S16-001 §4
- * keeps conceptually separate.
+ * S28 (docs/movement-temporal-integrity-corrective-specification.md, ADR-S28-001) supersedes S16's
+ * conservative cross-stream REJECT: a Full Secondment EFFECTIVE at the new effective_from (open,
+ * or closed with a later effective_to) is TRUNCATED at that date and the assignment is created,
+ * atomically. Both the cross-stream and the same-stream "previous assignment" checks are now
+ * interval-aware (effective at the date), never "open row"; a previous assignment recorded with a
+ * future effective_to is truncated exactly like an open one. Later history is never rewritten:
+ * a secondment starting on or after the new date → 409 (ActiveFullSecondmentAlreadyExistsException);
+ * an assignment starting on or after it → 422 (InvalidWorkplaceAssignmentStartDateException, the
+ * unchanged S16 same-stream rejection).
  *
  * The EmploymentRelationship is re-fetched fresh with lockForUpdate() as the first statement here
  * — never trusted from whatever the caller passed in — exactly mirroring
@@ -53,7 +59,18 @@ final class StartWorkplaceAssignment
      * @throws EmploymentRelationshipAlreadyEndedException|InvalidWorkplaceAssignmentDecisionTypeException
      * @throws ActiveFullSecondmentAlreadyExistsException|InvalidWorkplaceAssignmentStartDateException
      */
+    public function __construct(private readonly SupersedeTemporaryWorkplaceMovement $supersession) {}
+
     public function handle(
+        EmploymentRelationship $relationship,
+        OrganizationalUnit $destination,
+        string $effectiveFrom,
+        DecisionType $decisionType,
+    ): WorkplaceAssignmentPeriod {
+        return DB::transaction(fn (): WorkplaceAssignmentPeriod => $this->start($relationship, $destination, $effectiveFrom, $decisionType));
+    }
+
+    private function start(
         EmploymentRelationship $relationship,
         OrganizationalUnit $destination,
         string $effectiveFrom,
@@ -78,17 +95,6 @@ final class StartWorkplaceAssignment
             throw new InvalidWorkplaceAssignmentDecisionTypeException;
         }
 
-        // Spec §S16.8, pair "Full Secondment → Assignment": mutual exclusion, no invented
-        // precedence between the two domains.
-        $activeSecondment = FullSecondmentPeriod::query()
-            ->where('employment_relationship_id', $freshRelationship->getKey())
-            ->whereNull('effective_to')
-            ->exists();
-
-        if ($activeSecondment) {
-            throw new ActiveFullSecondmentAlreadyExistsException;
-        }
-
         $newFrom = Carbon::parse($effectiveFrom);
 
         // effective_from is set exactly once, at CreateEmploymentRelationship, and is never
@@ -99,26 +105,18 @@ final class StartWorkplaceAssignment
             throw new InvalidWorkplaceAssignmentStartDateException;
         }
 
-        $openPeriod = WorkplaceAssignmentPeriod::query()
-            ->where('employment_relationship_id', $freshRelationship->getKey())
-            ->whereNull('effective_to')
-            ->first();
+        $date = $newFrom->toDateString();
+        $relationshipId = $freshRelationship->getKey();
+        $crossStreamConflict = fn () => new ActiveFullSecondmentAlreadyExistsException;
+        $sameStreamConflict = fn () => new InvalidWorkplaceAssignmentStartDateException;
 
-        if ($openPeriod !== null && $newFrom->lte($openPeriod->effective_from)) {
-            throw new InvalidWorkplaceAssignmentStartDateException;
-        }
-
-        if ($openPeriod !== null) {
-            try {
-                $openPeriod->update(['effective_to' => $effectiveFrom]);
-            } catch (QueryException $e) {
-                if (Errors::isCheckViolation($e)) {
-                    throw new InvalidWorkplaceAssignmentStartDateException;
-                }
-
-                throw $e;
-            }
-        }
+        // ADR-S28-001: validate both streams before mutating either, then truncate whatever is
+        // effective at the new date (a secondment — cross-stream; a previous assignment — the
+        // unchanged S16 close-previous rule, now interval-aware).
+        $this->supersession->assertSupersedable(FullSecondmentPeriod::class, $relationshipId, $date, $crossStreamConflict);
+        $this->supersession->assertSupersedable(WorkplaceAssignmentPeriod::class, $relationshipId, $date, $sameStreamConflict);
+        $this->supersession->supersedeAt(FullSecondmentPeriod::class, $relationshipId, $date, $crossStreamConflict);
+        $this->supersession->supersedeAt(WorkplaceAssignmentPeriod::class, $relationshipId, $date, $sameStreamConflict);
 
         $period = new WorkplaceAssignmentPeriod([
             'employment_relationship_id' => $freshRelationship->getKey(),

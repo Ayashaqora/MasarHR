@@ -13,6 +13,7 @@ use App\Modules\Organization\Infrastructure\Persistence\Eloquent\OrganizationalU
 use App\Modules\Platform\Infrastructure\Persistence\Postgres\PostgresErrorClassifier as Errors;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Starts one full secondment period for an Employment Relationship
@@ -32,10 +33,12 @@ use Illuminate\Support\Carbon;
  * explicit S10/S11 precedent of leaving inactive-target exclusion to the authorization layer
  * rather than inventing a second, domain-level active check (spec §8.2).
  *
- * S16 (docs/workplace-assignment-foundation-specification.md §S16.8, movement interaction matrix
- * pair "Assignment → Full Secondment": REJECT): also rejects when an active Workplace Assignment
- * period exists — a conservative mutual exclusion between the two movement mechanisms, chosen
- * specifically to avoid inventing a cross-domain precedence rule ADR-S16-001 §4 does not supply.
+ * S28 (docs/movement-temporal-integrity-corrective-specification.md, ADR-S28-001) supersedes S16's
+ * conservative cross-stream REJECT: a Workplace Assignment EFFECTIVE at the new effective_from
+ * (open, or closed with a later effective_to) is TRUNCATED at that date and the secondment is
+ * created, atomically. The check is interval-aware, never "open row". It still rejects (409,
+ * ActiveWorkplaceAssignmentAlreadyExistsException) rather than rewriting history when an
+ * assignment starts on or after the new date. The same-stream rule is unchanged (S12 §8.1).
  */
 final class StartFullSecondment
 {
@@ -43,7 +46,17 @@ final class StartFullSecondment
      * @throws EmploymentRelationshipAlreadyEndedException|ActiveFullSecondmentAlreadyExistsException|InvalidFullSecondmentStartDateException
      * @throws ActiveWorkplaceAssignmentAlreadyExistsException
      */
+    public function __construct(private readonly SupersedeTemporaryWorkplaceMovement $supersession) {}
+
     public function handle(
+        EmploymentRelationship $relationship,
+        OrganizationalUnit $destination,
+        string $effectiveFrom,
+    ): FullSecondmentPeriod {
+        return DB::transaction(fn (): FullSecondmentPeriod => $this->start($relationship, $destination, $effectiveFrom));
+    }
+
+    private function start(
         EmploymentRelationship $relationship,
         OrganizationalUnit $destination,
         string $effectiveFrom,
@@ -70,17 +83,6 @@ final class StartFullSecondment
             throw new ActiveFullSecondmentAlreadyExistsException;
         }
 
-        // S16 spec §S16.8, pair "Assignment → Full Secondment": mutual exclusion, no invented
-        // precedence between the two domains.
-        $activeAssignment = WorkplaceAssignmentPeriod::query()
-            ->where('employment_relationship_id', $freshRelationship->getKey())
-            ->whereNull('effective_to')
-            ->exists();
-
-        if ($activeAssignment) {
-            throw new ActiveWorkplaceAssignmentAlreadyExistsException;
-        }
-
         $newFrom = Carbon::parse($effectiveFrom);
 
         // effective_from is set exactly once, at CreateEmploymentRelationship, and is never
@@ -90,6 +92,15 @@ final class StartFullSecondment
         if ($newFrom->lte($freshRelationship->effective_from)) {
             throw new InvalidFullSecondmentStartDateException;
         }
+
+        // ADR-S28-001: a Workplace Assignment effective at the new date is superseded (truncated
+        // at it) — validated first, mutated only after, inside this command's transaction.
+        $this->supersession->supersedeAt(
+            WorkplaceAssignmentPeriod::class,
+            $freshRelationship->getKey(),
+            $newFrom->toDateString(),
+            fn () => new ActiveWorkplaceAssignmentAlreadyExistsException,
+        );
 
         $period = new FullSecondmentPeriod([
             'employment_relationship_id' => $freshRelationship->getKey(),

@@ -6,10 +6,12 @@ use App\Modules\Audit\Application\AuditedCommandExecutor;
 use App\Modules\Audit\Domain\AuditSpec;
 use App\Modules\HumanResources\Application\Commands\EndWorkplaceAssignment;
 use App\Modules\HumanResources\Application\Commands\StartWorkplaceAssignment;
+use App\Modules\HumanResources\Application\Commands\SupersedeTemporaryWorkplaceMovement;
 use App\Modules\HumanResources\Application\Queries\ListWorkplaceAssignmentPeriodsForRelationship;
 use App\Modules\HumanResources\Application\Queries\ResolveActualWorkplaceForRelationship;
 use App\Modules\HumanResources\Infrastructure\Authorization\HumanResourcesPermissionCatalog as Perm;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRelationship;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\FullSecondmentPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\OrganizationalPlacementPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\Person;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\WorkplaceAssignmentPeriod;
@@ -21,6 +23,7 @@ use App\Modules\Security\Infrastructure\Authorization\ScopedAuthorizationChecker
 use App\Modules\Security\Infrastructure\Persistence\Eloquent\Principal;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
@@ -61,6 +64,7 @@ class WorkplaceAssignmentPeriodController
         StartWorkplaceAssignment $command,
         AuditedCommandExecutor $executor,
         ScopedAuthorizationChecker $scopeChecker,
+        SupersedeTemporaryWorkplaceMovement $supersession,
     ): JsonResponse {
         $this->guardOwnership($person, $employmentRelationship);
 
@@ -93,7 +97,7 @@ class WorkplaceAssignmentPeriodController
         // AuditedCommandExecutor's own (nested/savepoint) transaction below — PostgreSQL row locks
         // are reentrant within the same transaction, so this is not a double-lock hazard.
         return DB::transaction(function () use (
-            $request, $employmentRelationship, $destination, $decisionType, $principal, $scopeChecker, $data, $command, $executor,
+            $request, $employmentRelationship, $destination, $decisionType, $principal, $scopeChecker, $data, $command, $executor, $supersession,
         ) {
             EmploymentRelationship::query()->where('id', $employmentRelationship->getKey())->lockForUpdate()->firstOrFail();
 
@@ -109,6 +113,18 @@ class WorkplaceAssignmentPeriodController
                 return $this->forbidden();
             }
 
+            // ADR-S28-001: a full secondment effective at the start date is superseded
+            // (truncated); its unit is scope-checked with the same permission (the S14 precedent).
+            // The unchanged S16 same-stream "close previous assignment" consequence keeps its
+            // original authorization shape and is only recorded in the audit metadata.
+            $date = Carbon::parse($data['effective_from'])->toDateString();
+            $supersededSecondment = $supersession->effectiveAt(FullSecondmentPeriod::class, $employmentRelationship->getKey(), $date);
+            $previousAssignment = $supersession->effectiveAt(WorkplaceAssignmentPeriod::class, $employmentRelationship->getKey(), $date);
+
+            if ($supersededSecondment !== null && ! $scopeChecker->authorize($principal, Perm::WORKPLACE_ASSIGNMENT_PERIODS_START, $supersededSecondment->organizationalUnit)) {
+                return $this->forbidden();
+            }
+
             $context = ResolveCommandContext::from($request);
 
             $spec = new AuditSpec(
@@ -121,7 +137,10 @@ class WorkplaceAssignmentPeriodController
                     'effective_from' => $period->effective_from?->toDateString(),
                     'decision_type_id' => $decisionType->getKey(),
                 ],
-                metadata: fn () => [],
+                metadata: fn () => FullSecondmentPeriodController::supersessionMetadata([
+                    ['full_secondment', FullSecondmentPeriod::class, $supersededSecondment],
+                    ['workplace_assignment', WorkplaceAssignmentPeriod::class, $previousAssignment],
+                ], $date),
             );
 
             $period = $executor->run(

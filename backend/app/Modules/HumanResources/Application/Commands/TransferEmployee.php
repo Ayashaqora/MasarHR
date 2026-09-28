@@ -3,13 +3,17 @@
 namespace App\Modules\HumanResources\Application\Commands;
 
 use App\Modules\HumanResources\Domain\Exceptions\EmploymentRelationshipAlreadyEndedException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidFullSecondmentEndDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidTransferDecisionTypeException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidWorkplaceAssignmentEndDateException;
 use App\Modules\HumanResources\Domain\TransferResult;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRelationship;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\FullSecondmentPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\WorkplaceAssignmentPeriod;
 use App\Modules\Organization\Infrastructure\Persistence\Eloquent\OrganizationalUnit;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\DecisionType;
+use Illuminate\Support\Carbon;
+use Illuminate\Support\Facades\DB;
 
 /**
  * Transfer Foundation's single atomic command (docs/transfer-foundation-specification.md §13,
@@ -49,19 +53,36 @@ use App\Modules\Reference\Infrastructure\Persistence\Eloquent\DecisionType;
  * this command already closes an active Full Secondment. Once the underlying original placement
  * itself moves, a temporary destination override of the old placement no longer has coherent
  * meaning.
+ *
+ * S28 (docs/movement-temporal-integrity-corrective-specification.md §S28.8, ADR-S28-001): the
+ * consequence is now INTERVAL-AWARE. A secondment or assignment EFFECTIVE at the transfer date —
+ * open, or closed with a later effective_to — is truncated at that date, so no temporary movement
+ * that began before the transfer continues across it. Periods that ended on or before the date are
+ * never touched. The frozen S14 §20 rejection (422 errors.effective_to, via the S12/S16 end-date
+ * exceptions) generalises from "the open period starts on or after the date" to "any period of
+ * that stream starts on or after the date" — later history is never rewritten. The whole command
+ * runs in one transaction, so a rejected consequence also rolls back the placement write.
  */
 final class TransferEmployee
 {
     public function __construct(
         private readonly RecordOrganizationalPlacementPeriod $recordPlacement,
-        private readonly EndFullSecondment $endFullSecondment,
-        private readonly EndWorkplaceAssignment $endWorkplaceAssignment,
+        private readonly SupersedeTemporaryWorkplaceMovement $supersession,
     ) {}
 
     /**
      * @throws EmploymentRelationshipAlreadyEndedException|InvalidTransferDecisionTypeException
      */
     public function handle(
+        EmploymentRelationship $relationship,
+        OrganizationalUnit $destination,
+        string $effectiveFrom,
+        DecisionType $decisionType,
+    ): TransferResult {
+        return DB::transaction(fn (): TransferResult => $this->transfer($relationship, $destination, $effectiveFrom, $decisionType));
+    }
+
+    private function transfer(
         EmploymentRelationship $relationship,
         OrganizationalUnit $destination,
         string $effectiveFrom,
@@ -94,34 +115,17 @@ final class TransferEmployee
         // §10 step 4).
         $placement = $this->recordPlacement->handle($freshRelationship, $destination, $effectiveFrom);
 
-        // Consequence, not a primary effect (spec §10 step 5): if — and only if — a full
-        // secondment is currently active for this relationship, it is closed at the same effective
-        // date the transfer itself takes effect. EndFullSecondment's own date validation
-        // (InvalidFullSecondmentEndDateException, already mapped to 422 errors.effective_to) is
-        // left to propagate unmodified — mirrors RecordEmploymentStatusPeriod's identical choice of
-        // reusing EndEmploymentRelationship's own effective_from as EndEmploymentRelationship's
-        // effective_to, rather than inventing a second date parameter for the consequence.
-        $openSecondment = FullSecondmentPeriod::query()
-            ->where('employment_relationship_id', $freshRelationship->getKey())
-            ->whereNull('effective_to')
-            ->first();
+        // Consequences (S14 §10 step 5, S16 §S16.8), interval-aware since S28: whatever
+        // secondment / assignment is EFFECTIVE at the transfer date is truncated at it.
+        $date = Carbon::parse($effectiveFrom)->toDateString();
+        $secondmentConflict = fn () => new InvalidFullSecondmentEndDateException;
+        $assignmentConflict = fn () => new InvalidWorkplaceAssignmentEndDateException;
 
-        $closedSecondment = $openSecondment !== null
-            ? $this->endFullSecondment->handle($freshRelationship, $effectiveFrom)
-            : null;
+        $this->supersession->assertSupersedable(FullSecondmentPeriod::class, $freshRelationship->getKey(), $date, $secondmentConflict);
+        $this->supersession->assertSupersedable(WorkplaceAssignmentPeriod::class, $freshRelationship->getKey(), $date, $assignmentConflict);
 
-        // S16 consequence (spec §S16.8): identical shape to the secondment-closing consequence
-        // above — a full secondment and a workplace assignment can never both be open at once
-        // (§S16.8 mutual exclusion), so at most one of $closedSecondment/$closedAssignment is
-        // ever non-null.
-        $openAssignment = WorkplaceAssignmentPeriod::query()
-            ->where('employment_relationship_id', $freshRelationship->getKey())
-            ->whereNull('effective_to')
-            ->first();
-
-        $closedAssignment = $openAssignment !== null
-            ? $this->endWorkplaceAssignment->handle($freshRelationship, $effectiveFrom)
-            : null;
+        $closedSecondment = $this->supersession->supersedeAt(FullSecondmentPeriod::class, $freshRelationship->getKey(), $date, $secondmentConflict);
+        $closedAssignment = $this->supersession->supersedeAt(WorkplaceAssignmentPeriod::class, $freshRelationship->getKey(), $date, $assignmentConflict);
 
         return new TransferResult($placement, $closedSecondment, $closedAssignment);
     }

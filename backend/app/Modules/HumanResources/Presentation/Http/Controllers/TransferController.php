@@ -4,6 +4,7 @@ namespace App\Modules\HumanResources\Presentation\Http\Controllers;
 
 use App\Modules\Audit\Application\AuditedCommandExecutor;
 use App\Modules\Audit\Domain\AuditSpec;
+use App\Modules\HumanResources\Application\Commands\SupersedeTemporaryWorkplaceMovement;
 use App\Modules\HumanResources\Application\Commands\TransferEmployee;
 use App\Modules\HumanResources\Domain\TransferResult;
 use App\Modules\HumanResources\Infrastructure\Authorization\HumanResourcesPermissionCatalog as Perm;
@@ -20,6 +21,7 @@ use App\Modules\Security\Infrastructure\Authorization\ScopedAuthorizationChecker
 use App\Modules\Security\Infrastructure\Persistence\Eloquent\Principal;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
@@ -100,13 +102,13 @@ class TransferController
                 return $this->forbidden();
             }
 
-            $secondmentUnit = $this->activeSecondmentUnit($employmentRelationship);
+            $secondmentUnit = $this->activeSecondmentUnit($employmentRelationship, $data['effective_from']);
 
             if ($secondmentUnit !== null && ! $scopeChecker->authorize($principal, Perm::EMPLOYMENT_RELATIONSHIPS_TRANSFER, $secondmentUnit)) {
                 return $this->forbidden();
             }
 
-            $assignmentUnit = $this->activeAssignmentUnit($employmentRelationship);
+            $assignmentUnit = $this->activeAssignmentUnit($employmentRelationship, $data['effective_from']);
 
             if ($assignmentUnit !== null && ! $scopeChecker->authorize($principal, Perm::EMPLOYMENT_RELATIONSHIPS_TRANSFER, $assignmentUnit)) {
                 return $this->forbidden();
@@ -166,24 +168,23 @@ class TransferController
         return $placement?->organizationalUnit;
     }
 
-    private function activeSecondmentUnit(EmploymentRelationship $relationship): ?OrganizationalUnit
+    /**
+     * S28 (ADR-S28-001 §8): the unit of the full secondment EFFECTIVE at the transfer date — the
+     * one TransferEmployee truncates — open, or closed with a later effective_to. Never "open row".
+     */
+    private function activeSecondmentUnit(EmploymentRelationship $relationship, string $effectiveFrom): ?OrganizationalUnit
     {
-        $secondment = FullSecondmentPeriod::query()
-            ->where('employment_relationship_id', $relationship->getKey())
-            ->whereNull('effective_to')
-            ->first();
-
-        return $secondment?->organizationalUnit;
+        return app(SupersedeTemporaryWorkplaceMovement::class)
+            ->effectiveAt(FullSecondmentPeriod::class, $relationship->getKey(), Carbon::parse($effectiveFrom)->toDateString())
+            ?->organizationalUnit;
     }
 
-    private function activeAssignmentUnit(EmploymentRelationship $relationship): ?OrganizationalUnit
+    /** S28: same interval-aware rule for the workplace assignment effective at the transfer date. */
+    private function activeAssignmentUnit(EmploymentRelationship $relationship, string $effectiveFrom): ?OrganizationalUnit
     {
-        $assignment = WorkplaceAssignmentPeriod::query()
-            ->where('employment_relationship_id', $relationship->getKey())
-            ->whereNull('effective_to')
-            ->first();
-
-        return $assignment?->organizationalUnit;
+        return app(SupersedeTemporaryWorkplaceMovement::class)
+            ->effectiveAt(WorkplaceAssignmentPeriod::class, $relationship->getKey(), Carbon::parse($effectiveFrom)->toDateString())
+            ?->organizationalUnit;
     }
 
     private function forbidden(): JsonResponse

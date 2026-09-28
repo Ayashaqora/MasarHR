@@ -8,7 +8,6 @@ use App\Modules\HumanResources\Application\Commands\StartFullSecondment;
 use App\Modules\HumanResources\Application\Commands\StartWorkplaceAssignment;
 use App\Modules\HumanResources\Application\Queries\ResolveActualWorkplaceForRelationship;
 use App\Modules\HumanResources\Domain\Exceptions\ActiveFullSecondmentAlreadyExistsException;
-use App\Modules\HumanResources\Domain\Exceptions\ActiveWorkplaceAssignmentAlreadyExistsException;
 use App\Modules\HumanResources\Domain\Exceptions\EmploymentRelationshipAlreadyEndedException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidWorkplaceAssignmentDecisionTypeException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidWorkplaceAssignmentEndDateException;
@@ -236,26 +235,46 @@ class WorkplaceAssignmentFoundationTest extends HumanResourcesTestCase
     // Mutual exclusion with Full Secondment (spec §S16.8 interaction matrix)
     // ---------------------------------------------------------------------
 
-    public function test_starting_an_assignment_while_a_full_secondment_is_active_is_rejected(): void
+    /**
+     * S28 (ADR-S28-001) supersedes the S16 §S16.8 cross-stream REJECT: the new assignment ends the
+     * secondment effective at its start date instead of being refused. Full coverage lives in
+     * MovementTemporalIntegrityCorrectiveTest.
+     */
+    public function test_starting_an_assignment_while_a_full_secondment_is_active_supersedes_it(): void
     {
         $person = $this->createPersonRecord();
         $relationship = $this->createEmploymentRelationship($person);
-        app(StartFullSecondment::class)->handle($relationship, $this->createUnit(), '2026-02-01');
+        $secondment = app(StartFullSecondment::class)->handle($relationship, $this->createUnit(), '2026-02-01');
+
+        $assignment = app(StartWorkplaceAssignment::class)->handle($relationship, $this->createUnit(), '2026-03-01', $this->assignmentDecisionType());
+
+        $this->assertSame('2026-03-01', $secondment->refresh()->effective_to->toDateString());
+        $this->assertTrue($assignment->isActive());
+    }
+
+    /** S28 (ADR-S28-001): the reverse direction — the new secondment ends the assignment. */
+    public function test_starting_a_full_secondment_while_an_assignment_is_active_supersedes_it(): void
+    {
+        $person = $this->createPersonRecord();
+        $relationship = $this->createEmploymentRelationship($person);
+        $assignment = app(StartWorkplaceAssignment::class)->handle($relationship, $this->createUnit(), '2026-02-01', $this->assignmentDecisionType());
+
+        $secondment = app(StartFullSecondment::class)->handle($relationship, $this->createUnit(), '2026-03-01');
+
+        $this->assertSame('2026-03-01', $assignment->refresh()->effective_to->toDateString());
+        $this->assertNull($secondment->effective_to);
+    }
+
+    /** S28: later-recorded history is never rewritten — the unchanged 409 contract still applies. */
+    public function test_a_movement_starting_before_a_later_recorded_cross_stream_movement_is_rejected(): void
+    {
+        $person = $this->createPersonRecord();
+        $relationship = $this->createEmploymentRelationship($person);
+        app(StartFullSecondment::class)->handle($relationship, $this->createUnit(), '2026-05-01');
 
         $this->expectException(ActiveFullSecondmentAlreadyExistsException::class);
 
         app(StartWorkplaceAssignment::class)->handle($relationship, $this->createUnit(), '2026-03-01', $this->assignmentDecisionType());
-    }
-
-    public function test_starting_a_full_secondment_while_an_assignment_is_active_is_rejected(): void
-    {
-        $person = $this->createPersonRecord();
-        $relationship = $this->createEmploymentRelationship($person);
-        app(StartWorkplaceAssignment::class)->handle($relationship, $this->createUnit(), '2026-02-01', $this->assignmentDecisionType());
-
-        $this->expectException(ActiveWorkplaceAssignmentAlreadyExistsException::class);
-
-        app(StartFullSecondment::class)->handle($relationship, $this->createUnit(), '2026-03-01');
     }
 
     public function test_starting_an_assignment_after_a_secondment_has_ended_is_allowed(): void
