@@ -20,11 +20,13 @@ describe('Masar application shell', () => {
     expect(screen.getByRole('heading', { level: 1, name: 'الرئيسية' })).toBeInTheDocument()
     expect(screen.getByRole('main')).toBeInTheDocument()
 
+    // Employees and Security both require authentication (S18/S03), so an unauthenticated
+    // visitor sees only the four public nav items.
     const nav = screen.getByRole('navigation', { name: 'التنقل الرئيسي' })
     const labels = within(nav)
       .getAllByRole('link')
       .map((link) => link.textContent)
-    expect(labels).toEqual(['الرئيسية', 'الموظفون', 'الهيكل التنظيمي', 'التقارير', 'الإعدادات'])
+    expect(labels).toEqual(['الرئيسية', 'الهيكل التنظيمي', 'التقارير', 'الإعدادات'])
 
     // The shell must not fabricate records.
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
@@ -56,11 +58,11 @@ describe('Masar application shell', () => {
     const user = userEvent.setup()
     renderApp()
 
-    await user.click(screen.getByRole('link', { name: 'الموظفون' }))
+    await user.click(screen.getByRole('link', { name: 'الهيكل التنظيمي' }))
 
-    expect(screen.getByRole('heading', { level: 1, name: 'الموظفون' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 1, name: 'الهيكل التنظيمي' })).toBeInTheDocument()
     expect(screen.getByText('هذا القسم مخطط له ولم يُنفَّذ بعد.')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'الموظفون' })).toHaveAttribute('aria-current', 'page')
+    expect(screen.getByRole('link', { name: 'الهيكل التنظيمي' })).toHaveAttribute('aria-current', 'page')
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
   })
@@ -78,6 +80,14 @@ describe('Masar application shell', () => {
 
     expect(document.documentElement).toHaveAttribute('dir', 'ltr')
     expect(document.documentElement).toHaveAttribute('lang', 'en')
-    expect(screen.getByRole('link', { name: 'Employees' })).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: 'Organizational structure' })).toBeInTheDocument()
+  })
+
+  it('redirects an unauthenticated visitor from /employees to /login, and reveals the Employees nav item once signed in', async () => {
+    stubAppFetch()
+    renderApp('/employees')
+
+    expect(await screen.findByRole('heading', { level: 1, name: 'تسجيل الدخول' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: 'الموظفون' })).not.toBeInTheDocument()
   })
 })
