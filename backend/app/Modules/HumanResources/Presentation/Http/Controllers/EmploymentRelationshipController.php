@@ -8,12 +8,16 @@ use App\Modules\HumanResources\Application\Commands\CreateEmploymentRelationship
 use App\Modules\HumanResources\Application\Commands\EndEmploymentRelationship;
 use App\Modules\HumanResources\Application\Queries\ListEmploymentRelationshipsForPerson;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRelationship;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentStatusPeriod;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\FullSecondmentPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\Person;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\WorkplaceAssignmentPeriod;
 use App\Modules\HumanResources\Presentation\Http\Resources\EmploymentRelationshipResource;
 use App\Modules\Platform\Presentation\Http\Middleware\ResolveCommandContext;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\EmploymentType;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 /**
@@ -100,29 +104,100 @@ class EmploymentRelationshipController
 
         $context = ResolveCommandContext::from($request);
 
-        $spec = new AuditSpec(
-            action: 'hr.employment_relationship.end',
-            targetType: 'hr_employment_relationship',
-            targetId: fn () => $employmentRelationship->getKey(),
-            changes: fn (EmploymentRelationship $ended) => [
-                'effective_to' => $ended->effective_to?->toDateString(),
-                'ended_terminally' => $ended->ended_terminally,
-            ],
-            metadata: fn () => [],
-        );
+        // S15 (docs/employment-status-lifecycle-consequences-specification.md §17), TOCTOU-closing
+        // shape mirrored exactly from TransferController::store()'s own established pattern: the
+        // relationship row is locked FIRST, in an outer transaction, before the "before" snapshot
+        // below is taken — an unlocked plain SELECT here would let a genuinely concurrent, non-
+        // adversarial request (e.g. StartFullSecondment/EndFullSecondment on the same relationship)
+        // commit in the gap between this read and EndEmploymentRelationship's own locked re-check,
+        // producing a false full_secondment_closed_as_consequence/status_period_closed_as_consequence
+        // claim in the audit log (a false positive or false negative) — an adversarial-review
+        // finding on an earlier draft of this method, fixed here rather than left as a known gap.
+        // $executor->run()'s own DB::transaction() call below becomes a savepoint within this outer
+        // transaction (already-established-safe nesting, same as TransferController's own reuse of
+        // AuditedCommandExecutor inside its own outer lock).
+        return DB::transaction(function () use (
+            $employmentRelationship, $context, $person, $command, $executor, $data,
+        ) {
+            EmploymentRelationship::query()->where('id', $employmentRelationship->getKey())->lockForUpdate()->firstOrFail();
 
-        $ended = $executor->run(
-            $context,
-            $spec,
-            fn (): EmploymentRelationship => $command->handle(
-                $person,
-                $employmentRelationship,
-                (int) $data['expected_version'],
-                $data['effective_to'],
-                (bool) $data['is_terminal'],
-            ),
-        );
+            $hadOpenSecondment = FullSecondmentPeriod::query()
+                ->where('employment_relationship_id', $employmentRelationship->getKey())
+                ->whereNull('effective_to')
+                ->exists();
 
-        return (new EmploymentRelationshipResource($ended))->response();
+            $hadOpenStatusPeriod = EmploymentStatusPeriod::query()
+                ->where('employment_relationship_id', $employmentRelationship->getKey())
+                ->whereNull('effective_to')
+                ->exists();
+
+            // S16 (docs/workplace-assignment-foundation-specification.md §S16.10): mirrors
+            // $hadOpenSecondment/$stillOpenSecondment exactly, closing the same audit-completeness
+            // gap for the newer consequence — caught here proactively (same class of gap the
+            // TransferResource fix caught for S16's Transfer-side consequence) rather than left
+            // silently unreported.
+            $hadOpenAssignment = WorkplaceAssignmentPeriod::query()
+                ->where('employment_relationship_id', $employmentRelationship->getKey())
+                ->whereNull('effective_to')
+                ->exists();
+
+            $spec = new AuditSpec(
+                action: 'hr.employment_relationship.end',
+                targetType: 'hr_employment_relationship',
+                targetId: fn () => $employmentRelationship->getKey(),
+                changes: fn (EmploymentRelationship $ended) => [
+                    'effective_to' => $ended->effective_to?->toDateString(),
+                    'ended_terminally' => $ended->ended_terminally,
+                ],
+                metadata: function () use (
+                    $employmentRelationship, $hadOpenSecondment, $hadOpenStatusPeriod, $hadOpenAssignment,
+                ) {
+                    $metadata = [];
+
+                    $stillOpenSecondment = FullSecondmentPeriod::query()
+                        ->where('employment_relationship_id', $employmentRelationship->getKey())
+                        ->whereNull('effective_to')
+                        ->exists();
+
+                    if ($hadOpenSecondment && ! $stillOpenSecondment) {
+                        $metadata['full_secondment_closed_as_consequence'] = true;
+                    }
+
+                    $stillOpenStatusPeriod = EmploymentStatusPeriod::query()
+                        ->where('employment_relationship_id', $employmentRelationship->getKey())
+                        ->whereNull('effective_to')
+                        ->exists();
+
+                    if ($hadOpenStatusPeriod && ! $stillOpenStatusPeriod) {
+                        $metadata['status_period_closed_as_consequence'] = true;
+                    }
+
+                    $stillOpenAssignment = WorkplaceAssignmentPeriod::query()
+                        ->where('employment_relationship_id', $employmentRelationship->getKey())
+                        ->whereNull('effective_to')
+                        ->exists();
+
+                    if ($hadOpenAssignment && ! $stillOpenAssignment) {
+                        $metadata['workplace_assignment_closed_as_consequence'] = true;
+                    }
+
+                    return $metadata;
+                },
+            );
+
+            $ended = $executor->run(
+                $context,
+                $spec,
+                fn (): EmploymentRelationship => $command->handle(
+                    $person,
+                    $employmentRelationship,
+                    (int) $data['expected_version'],
+                    $data['effective_to'],
+                    (bool) $data['is_terminal'],
+                ),
+            );
+
+            return (new EmploymentRelationshipResource($ended))->response();
+        });
     }
 }

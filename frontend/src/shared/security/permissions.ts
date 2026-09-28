@@ -14,3 +14,28 @@ export const PERMISSIONS = {
   roleAssignmentsManage: 'security.role_assignments.manage',
   permissionsView: 'security.permissions.view',
 } as const
+
+/**
+ * Mirrors App\Modules\HumanResources\Infrastructure\Authorization\HumanResourcesPermissionCatalog
+ * on the backend. S18 (Employee 360) is read-only, so only the *_VIEW codes are used by any S18
+ * component — the write codes are listed for parity with the backend catalog but nothing in S18
+ * checks them (spec §S18 write-action boundary §16/§25).
+ */
+export const HR_PERMISSIONS = {
+  personsView: 'hr.persons.view',
+  personsCreate: 'hr.persons.create',
+  employmentRelationshipsView: 'hr.employment_relationships.view',
+  employmentRelationshipsCreate: 'hr.employment_relationships.create',
+  employmentRelationshipsEnd: 'hr.employment_relationships.end',
+  employmentStatusPeriodsView: 'hr.employment_status_periods.view',
+  employmentStatusPeriodsRecord: 'hr.employment_status_periods.record',
+  organizationalPlacementPeriodsView: 'hr.organizational_placement_periods.view',
+  organizationalPlacementPeriodsRecord: 'hr.organizational_placement_periods.record',
+  fullSecondmentPeriodsView: 'hr.full_secondment_periods.view',
+  fullSecondmentPeriodsStart: 'hr.full_secondment_periods.start',
+  fullSecondmentPeriodsEnd: 'hr.full_secondment_periods.end',
+  employmentRelationshipsTransfer: 'hr.employment_relationships.transfer',
+  workplaceAssignmentPeriodsView: 'hr.workplace_assignment_periods.view',
+  workplaceAssignmentPeriodsStart: 'hr.workplace_assignment_periods.start',
+  workplaceAssignmentPeriodsEnd: 'hr.workplace_assignment_periods.end',
+} as const

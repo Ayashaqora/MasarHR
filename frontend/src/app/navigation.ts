@@ -10,14 +10,15 @@ export interface NavItem {
 }
 
 /**
- * Planned areas. Employees/Organization/Reports/Settings are navigation placeholders only —
- * their functionality belongs to later, separately authorized stages. Security is S03's own area:
- * each of its pages still gates its own content by permission (see PermissionGate), so being
- * authenticated is enough to see the link itself.
+ * Planned areas. Organization/Reports/Settings are navigation placeholders only — their
+ * functionality belongs to later, separately authorized stages. Employees is S18's own real,
+ * authenticated area (Employee 360 Foundation); Security is S03's own area: each of its pages
+ * still gates its own content by permission (see PermissionGate), so being authenticated is
+ * enough to see the link itself.
  */
 export const NAV_ITEMS: readonly NavItem[] = [
   { to: '/', labelKey: 'home', end: true },
-  { to: '/employees', labelKey: 'employees' },
+  { to: '/employees', labelKey: 'employees', requiresAuth: true },
   { to: '/organization', labelKey: 'organization' },
   { to: '/reports', labelKey: 'reports' },
   { to: '/security', labelKey: 'security', requiresAuth: true },

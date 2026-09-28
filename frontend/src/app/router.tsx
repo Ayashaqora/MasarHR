@@ -1,6 +1,8 @@
 import { createBrowserRouter, createMemoryRouter, Navigate, type RouteObject } from 'react-router'
 import { RequireAuth } from '../features/auth/RequireAuth'
 import { AppShell } from '../layouts/AppShell'
+import { Employee360Page } from '../pages/Employee360Page'
+import { EmployeesPage } from '../pages/EmployeesPage'
 import { HomePage } from '../pages/HomePage'
 import { LoginPage } from '../pages/LoginPage'
 import { NotFoundPage } from '../pages/NotFoundPage'
@@ -18,7 +20,17 @@ export const routes: RouteObject[] = [
     children: [
       { index: true, element: <HomePage /> },
       { path: 'login', element: <LoginPage /> },
-      { path: 'employees', element: <PlaceholderPage navKey="employees" /> },
+      // S18: Employees is a real, authenticated read-only area (Employee 360 Foundation) — no
+      // longer a navigation placeholder. Deep-linking to a specific employee/relationship works
+      // (spec §S18 §20): every field the page needs comes from the route params themselves.
+      {
+        path: 'employees',
+        element: <RequireAuth />,
+        children: [
+          { index: true, element: <EmployeesPage /> },
+          { path: ':personId/relationships/:relationshipId', element: <Employee360Page /> },
+        ],
+      },
       { path: 'organization', element: <PlaceholderPage navKey="organization" /> },
       { path: 'reports', element: <PlaceholderPage navKey="reports" /> },
       { path: 'settings', element: <PlaceholderPage navKey="settings" /> },

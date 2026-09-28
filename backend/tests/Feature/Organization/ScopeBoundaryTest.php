@@ -53,6 +53,20 @@ class ScopeBoundaryTest extends OrganizationTestCase
         // used, unmodified, to enforce scope over writes/reads that target it (spec §10). This test's
         // own concern, per its docblock, is S08's subject matter specifically — so this is routine,
         // disclosed, additive test evolution, not a frozen-architecture conflict.
+        //
+        // S12 ("Full Secondment Foundation") adds a third, identically-shaped disclosed exception:
+        // hr.full_secondment_periods.organizational_unit_id
+        // (docs/full-secondment-foundation-specification.md §7.1/§12.1). Same reasoning as the S11
+        // exception — ordinary domain data (the secondment's destination unit), not a new
+        // authorization-scope grant, even though S08's ScopedAuthorizationChecker is called
+        // (twice — once per target unit) to enforce scope over it.
+        //
+        // S16 ("Workplace Assignment Foundation") adds a fourth, identically-shaped disclosed
+        // exception: hr.workplace_assignment_periods.organizational_unit_id
+        // (docs/workplace-assignment-foundation-specification.md §S16.5/§S16.14). Same reasoning
+        // as the S11/S12 exceptions — ordinary domain data (the assignment's destination unit),
+        // not a new authorization-scope grant, even though S08's ScopedAuthorizationChecker is
+        // called (up to twice per target unit) to enforce scope over it.
         $offendingTables = DB::table('information_schema.columns')
             ->whereIn('column_name', ['organizational_unit_id', 'organization_scope', 'org_unit_id', 'branch_id'])
             ->where(function ($query): void {
@@ -62,6 +76,12 @@ class ScopeBoundaryTest extends OrganizationTestCase
                 })->where(function ($inner): void {
                     $inner->where('table_schema', '!=', 'hr')
                         ->orWhere('table_name', '!=', 'organizational_placement_periods');
+                })->where(function ($inner): void {
+                    $inner->where('table_schema', '!=', 'hr')
+                        ->orWhere('table_name', '!=', 'full_secondment_periods');
+                })->where(function ($inner): void {
+                    $inner->where('table_schema', '!=', 'hr')
+                        ->orWhere('table_name', '!=', 'workplace_assignment_periods');
                 });
             })
             ->pluck('table_name')->all();
@@ -69,7 +89,7 @@ class ScopeBoundaryTest extends OrganizationTestCase
         $this->assertSame(
             [],
             $offendingTables,
-            'no organizational-scope column may exist outside security.organizational_scope_grants and the disclosed S11 hr.organizational_placement_periods exception',
+            'no organizational-scope column may exist outside security.organizational_scope_grants and the disclosed S11/S12/S16 hr exceptions',
         );
     }
 

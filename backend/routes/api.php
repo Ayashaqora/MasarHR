@@ -3,23 +3,34 @@
 use App\Modules\HumanResources\Infrastructure\Authorization\HumanResourcesPermissionCatalog as HrPerm;
 use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentRelationshipController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentStatusPeriodController;
+use App\Modules\HumanResources\Presentation\Http\Controllers\FullSecondmentPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\OrganizationalPlacementPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\PersonController;
+use App\Modules\HumanResources\Presentation\Http\Controllers\TransferController;
+use App\Modules\HumanResources\Presentation\Http\Controllers\WorkplaceAssignmentPeriodController;
 use App\Modules\Organization\Infrastructure\Authorization\OrganizationPermissionCatalog as OrgPerm;
 use App\Modules\Organization\Presentation\Http\Controllers\OrganizationalUnitController;
 use App\Modules\Platform\Presentation\Http\Controllers\HealthController;
 use App\Modules\Reference\Infrastructure\Authorization\ReferencePermissionCatalog as RefPerm;
+use App\Modules\Reference\Presentation\Http\Controllers\AcademicDegreeController;
 use App\Modules\Reference\Presentation\Http\Controllers\ContractBasedPopulationCategoryController;
+use App\Modules\Reference\Presentation\Http\Controllers\ContractTypeController;
 use App\Modules\Reference\Presentation\Http\Controllers\ContractTypePopulationMappingController;
 use App\Modules\Reference\Presentation\Http\Controllers\DecisionTypeController;
+use App\Modules\Reference\Presentation\Http\Controllers\EmploymentCategoryController;
 use App\Modules\Reference\Presentation\Http\Controllers\EmploymentStatusCategoryController;
 use App\Modules\Reference\Presentation\Http\Controllers\EmploymentStatusDetailBehaviorController;
 use App\Modules\Reference\Presentation\Http\Controllers\EmploymentStatusDetailController;
 use App\Modules\Reference\Presentation\Http\Controllers\GenderController;
 use App\Modules\Reference\Presentation\Http\Controllers\JobTitleAdministratorClassificationController;
+use App\Modules\Reference\Presentation\Http\Controllers\JobTitleController;
+use App\Modules\Reference\Presentation\Http\Controllers\LeaveStatusController;
+use App\Modules\Reference\Presentation\Http\Controllers\LeaveTypeController;
 use App\Modules\Reference\Presentation\Http\Controllers\MaritalStatusController;
 use App\Modules\Reference\Presentation\Http\Controllers\MonthlyCadreCategoryController;
+use App\Modules\Reference\Presentation\Http\Controllers\QualificationTypeController;
 use App\Modules\Reference\Presentation\Http\Controllers\SpecialtyCadreCategoryMappingController;
+use App\Modules\Reference\Presentation\Http\Controllers\SupervisoryTitleController;
 use App\Modules\Security\Infrastructure\Authorization\PermissionCatalog as Perm;
 use App\Modules\Security\Presentation\Http\Controllers\Auth\ChangeOwnPasswordController;
 use App\Modules\Security\Presentation\Http\Controllers\Auth\CsrfCookieController;
@@ -131,6 +142,18 @@ Route::middleware('web')->group(function (): void {
                 'employment-status-categories' => [EmploymentStatusCategoryController::class, 'employmentStatusCategory'],
                 'monthly-cadre-categories' => [MonthlyCadreCategoryController::class, 'monthlyCadreCategory'],
                 'contract-based-population-categories' => [ContractBasedPopulationCategoryController::class, 'contractBasedPopulationCategory'],
+                // S13 Reference Catalog Administration Foundation (docs/reference-catalog-administration-foundation-specification.md
+                // §6): eight already-modeled-but-unadministered catalogs, added to this same explicit,
+                // compile-time, allowlisted registry — never a client-selected table. ref.decision_types
+                // already has full administration since S05 and needs no new entry here (spec §4.2/§7).
+                'job-titles' => [JobTitleController::class, 'jobTitle'],
+                'employment-categories' => [EmploymentCategoryController::class, 'employmentCategory'],
+                'contract-types' => [ContractTypeController::class, 'contractType'],
+                'qualification-types' => [QualificationTypeController::class, 'qualificationType'],
+                'academic-degrees' => [AcademicDegreeController::class, 'academicDegree'],
+                'supervisory-titles' => [SupervisoryTitleController::class, 'supervisoryTitle'],
+                'leave-types' => [LeaveTypeController::class, 'leaveType'],
+                'leave-statuses' => [LeaveStatusController::class, 'leaveStatus'],
             ];
 
             foreach ($simpleFamilies as $segment => [$controller, $param]) {
@@ -249,5 +272,45 @@ Route::middleware('web')->group(function (): void {
                 ->middleware('permission:'.HrPerm::ORGANIZATIONAL_PLACEMENT_PERIODS_VIEW)->name('persons.employment-relationships.placement-periods.index');
             Route::post('/persons/{person}/employment-relationships/{employmentRelationship}/placement-periods', [OrganizationalPlacementPeriodController::class, 'store'])
                 ->middleware('permission:'.HrPerm::ORGANIZATIONAL_PLACEMENT_PERIODS_RECORD)->name('persons.employment-relationships.placement-periods.store');
+
+            // S12: Full Secondment, nested under the same {person}/{employmentRelationship}. The
+            // permission: middleware is the coarse RBAC (WHAT) gate only — the controller
+            // additionally composes S08 organizational scope (WHERE) against up to two target
+            // units per operation via ScopedAuthorizationChecker
+            // (docs/full-secondment-foundation-specification.md §12.1).
+            Route::get('/persons/{person}/employment-relationships/{employmentRelationship}/full-secondment-periods', [FullSecondmentPeriodController::class, 'index'])
+                ->middleware('permission:'.HrPerm::FULL_SECONDMENT_PERIODS_VIEW)->name('persons.employment-relationships.full-secondment-periods.index');
+            Route::post('/persons/{person}/employment-relationships/{employmentRelationship}/full-secondment-periods', [FullSecondmentPeriodController::class, 'store'])
+                ->middleware('permission:'.HrPerm::FULL_SECONDMENT_PERIODS_START)->name('persons.employment-relationships.full-secondment-periods.store');
+            Route::post('/persons/{person}/employment-relationships/{employmentRelationship}/full-secondment-periods/end', [FullSecondmentPeriodController::class, 'end'])
+                ->middleware('permission:'.HrPerm::FULL_SECONDMENT_PERIODS_END)->name('persons.employment-relationships.full-secondment-periods.end');
+            Route::get('/persons/{person}/employment-relationships/{employmentRelationship}/actual-workplace', [FullSecondmentPeriodController::class, 'actualWorkplace'])
+                ->middleware('permission:'.HrPerm::FULL_SECONDMENT_PERIODS_VIEW)->name('persons.employment-relationships.actual-workplace.show');
+
+            // S14: Transfer Foundation, nested under the same {person}/{employmentRelationship}. An
+            // explicit action route (POST .../transfer), not a generic PATCH (spec §20,
+            // mirroring S12's own §21 "no generic PATCH" convention) — no new list/show route exists
+            // because Transfer writes no resource of its own to read back (spec §16); its effects
+            // are read via the existing placement-periods/full-secondment-periods/actual-workplace
+            // routes above. The permission: middleware is the coarse RBAC (WHAT) gate only — the
+            // controller additionally composes S08 organizational scope (WHERE) against up to THREE
+            // target units (docs/transfer-foundation-specification.md §12.1).
+            Route::post('/persons/{person}/employment-relationships/{employmentRelationship}/transfer', [TransferController::class, 'store'])
+                ->middleware('permission:'.HrPerm::EMPLOYMENT_RELATIONSHIPS_TRANSFER)->name('persons.employment-relationships.transfer.store');
+
+            // S16: Workplace Assignment, nested under the same {person}/{employmentRelationship}.
+            // The permission: middleware is the coarse RBAC (WHAT) gate only — the controller
+            // additionally composes S08 organizational scope (WHERE) against up to two target
+            // units per operation via ScopedAuthorizationChecker
+            // (docs/workplace-assignment-foundation-specification.md §S16.14/§S16.16). No new
+            // "resolve actual workplace" route is added — the existing actual-workplace route
+            // above already covers an active assignment, since ResolveActualWorkplaceForRelationship
+            // was extended in place (spec §S16.8).
+            Route::get('/persons/{person}/employment-relationships/{employmentRelationship}/workplace-assignment-periods', [WorkplaceAssignmentPeriodController::class, 'index'])
+                ->middleware('permission:'.HrPerm::WORKPLACE_ASSIGNMENT_PERIODS_VIEW)->name('persons.employment-relationships.workplace-assignment-periods.index');
+            Route::post('/persons/{person}/employment-relationships/{employmentRelationship}/workplace-assignment-periods', [WorkplaceAssignmentPeriodController::class, 'store'])
+                ->middleware('permission:'.HrPerm::WORKPLACE_ASSIGNMENT_PERIODS_START)->name('persons.employment-relationships.workplace-assignment-periods.store');
+            Route::post('/persons/{person}/employment-relationships/{employmentRelationship}/workplace-assignment-periods/end', [WorkplaceAssignmentPeriodController::class, 'end'])
+                ->middleware('permission:'.HrPerm::WORKPLACE_ASSIGNMENT_PERIODS_END)->name('persons.employment-relationships.workplace-assignment-periods.end');
         });
 });
