@@ -35,6 +35,10 @@ namespace App\Modules\HumanResources\Infrastructure\Authorization;
  * (docs/employment-category-history-foundation-specification.md §S20.12, ADR-S20-001 §8). They
  * authorize the temporal employment fact (hr.*), never the ref.employment_categories catalog
  * itself, which remains administered by the Reference module's own reference.* permissions.
+ * The two S21 permissions (from 2026_10_07_000002_seed_security_employment_contract_period_permissions)
+ * follow exactly the same plain-RBAC, hr.*-not-reference.* precedent for the employment contract
+ * fact (docs/employment-contract-foundation-specification.md §S21.13, ADR-S21-001 §10);
+ * ref.contract_types stays administered solely by reference.*.
  */
 final class HumanResourcesPermissionCatalog
 {
@@ -83,6 +87,11 @@ final class HumanResourcesPermissionCatalog
 
     public const EMPLOYMENT_CATEGORY_PERIODS_RECORD = 'hr.employment_category_periods.record';
 
+    /** S21 (docs/employment-contract-foundation-specification.md §S21.13). */
+    public const EMPLOYMENT_CONTRACT_PERIODS_VIEW = 'hr.employment_contract_periods.view';
+
+    public const EMPLOYMENT_CONTRACT_PERIODS_RECORD = 'hr.employment_contract_periods.record';
+
     public const ALL = [
         self::PERSONS_VIEW,
         self::PERSONS_CREATE,
@@ -102,5 +111,7 @@ final class HumanResourcesPermissionCatalog
         self::WORKPLACE_ASSIGNMENT_PERIODS_END,
         self::EMPLOYMENT_CATEGORY_PERIODS_VIEW,
         self::EMPLOYMENT_CATEGORY_PERIODS_RECORD,
+        self::EMPLOYMENT_CONTRACT_PERIODS_VIEW,
+        self::EMPLOYMENT_CONTRACT_PERIODS_RECORD,
     ];
 }

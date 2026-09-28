@@ -27,12 +27,12 @@ class ApiEndpointsTest extends SecurityTestCase
         // security.permissions is a cross-module catalog (S05 §16, extended by S07 §17, extended
         // again by S08 §18, extended again by S09 §17, extended again by S10 §13, extended again by
         // S11 §16, extended again by S12 §17, extended again by S14 §19 per ADR-S14-002, extended
-        // again by S16 §S16.14 per ADR-S16-001, extended again by S20 §S20.12 per ADR-S20-001): by
-        // S20 it also contains the two Reference-module,
+        // again by S16 §S16.14 per ADR-S16-001, extended again by S20 §S20.12 per ADR-S20-001, and
+        // by S21 §S21.13 per ADR-S21-001): by S21 it also contains the two Reference-module,
         // two Organization-module, five S09 HumanResources-module, two S10 HumanResources-module,
         // two S11 HumanResources-module, three S12 HumanResources-module, one S14
-        // HumanResources-module, three S16 HumanResources-module, and two S20 HumanResources-module
-        // permission codes seeded
+        // HumanResources-module, three S16 HumanResources-module, two S20 HumanResources-module, and
+        // two S21 HumanResources-module permission codes seeded
         // alongside PermissionCatalog::ALL — which already includes ORGANIZATION_SCOPES_MANAGE
         // itself, since that permission is owned by the Security module, not a separate module
         // catalog. Reference/Organization/HumanResources codes are still named literally here (not
@@ -50,6 +50,7 @@ class ApiEndpointsTest extends SecurityTestCase
                 'hr.full_secondment_periods.view', 'hr.full_secondment_periods.start', 'hr.full_secondment_periods.end',
                 'hr.workplace_assignment_periods.view', 'hr.workplace_assignment_periods.start', 'hr.workplace_assignment_periods.end',
                 'hr.employment_category_periods.view', 'hr.employment_category_periods.record',
+                'hr.employment_contract_periods.view', 'hr.employment_contract_periods.record',
             ],
             $codes,
         );

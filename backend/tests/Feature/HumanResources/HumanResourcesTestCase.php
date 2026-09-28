@@ -10,6 +10,7 @@ use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRel
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\OrganizationalPlacementPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\Person;
 use App\Modules\Organization\Infrastructure\Persistence\Eloquent\OrganizationalUnit;
+use App\Modules\Reference\Infrastructure\Persistence\Eloquent\ContractType;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\DecisionType;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\EmploymentCategory;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\EmploymentStatusDetail;
@@ -150,6 +151,25 @@ abstract class HumanResourcesTestCase extends AuditTestCase
      * transaction) — used where a test must deactivate a category without touching the seeded
      * grades' state.
      */
+    /**
+     * A synthetic, test-only ref.contract_types row (rolled back with the test's own transaction).
+     * ref.contract_types has NO seeded content — S13 deliberately refused to invent contract-type
+     * values — so every S21 test supplies its own synthetic type rather than relying on any.
+     */
+    protected function createSyntheticContractType(bool $active = true): ContractType
+    {
+        $type = new ContractType([
+            'code' => 's21_test_'.Str::lower(Str::random(8)),
+            'name_ar' => 'نوع عقد اختبار',
+            'name_en' => null,
+            'display_order' => 99,
+            'is_active' => $active,
+        ]);
+        $type->save();
+
+        return $type->refresh();
+    }
+
     protected function createSyntheticEmploymentCategory(bool $active = true): EmploymentCategory
     {
         $category = new EmploymentCategory([

@@ -7,6 +7,7 @@ use App\Modules\Audit\Domain\AuditSpec;
 use App\Modules\HumanResources\Application\Commands\RecordEmploymentStatusPeriod;
 use App\Modules\HumanResources\Application\Queries\ListEmploymentStatusPeriodsForRelationship;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentCategoryPeriod;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentContractPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRelationship;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentStatusPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\FullSecondmentPeriod;
@@ -107,6 +108,14 @@ class EmploymentStatusPeriodController
                 ->whereNull('effective_to')
                 ->exists();
 
+            // S21 (docs/employment-contract-foundation-specification.md §S21.11/§S21.18): whether a
+            // contract period's actual validity still extends past the requested end date — if the
+            // termination closes it, that consequence is exposed in THIS entry's metadata.
+            $hadContractBeyondEnd = EmploymentContractPeriod::query()
+                ->where('employment_relationship_id', $employmentRelationship->getKey())
+                ->where(fn ($q) => $q->whereNull('effective_to')->orWhere('effective_to', '>', $data['effective_from']))
+                ->exists();
+
             $spec = new AuditSpec(
                 action: 'hr.employment_status_period.record',
                 targetType: 'hr_employment_status_period',
@@ -116,7 +125,7 @@ class EmploymentStatusPeriodController
                     'status_detail_id' => $period->status_detail_id,
                     'effective_from' => $period->effective_from?->toDateString(),
                 ],
-                metadata: function () use ($statusDetail, $employmentRelationship, $wasAlreadyEnded, $hadOpenSecondment, $hadOpenCategoryPeriod) {
+                metadata: function () use ($statusDetail, $employmentRelationship, $wasAlreadyEnded, $hadOpenSecondment, $hadOpenCategoryPeriod, $hadContractBeyondEnd, $data) {
                     $metadata = ['status_detail_code' => $statusDetail->code];
 
                     $freshRelationship = EmploymentRelationship::query()
@@ -149,6 +158,15 @@ class EmploymentStatusPeriodController
 
                         if ($hadOpenCategoryPeriod && ! $stillOpenCategoryPeriod) {
                             $metadata['employment_category_period_closed_as_consequence'] = true;
+                        }
+
+                        $stillContractBeyondEnd = EmploymentContractPeriod::query()
+                            ->where('employment_relationship_id', $employmentRelationship->getKey())
+                            ->where(fn ($q) => $q->whereNull('effective_to')->orWhere('effective_to', '>', $data['effective_from']))
+                            ->exists();
+
+                        if ($hadContractBeyondEnd && ! $stillContractBeyondEnd) {
+                            $metadata['employment_contract_period_closed_as_consequence'] = true;
                         }
                     }
 

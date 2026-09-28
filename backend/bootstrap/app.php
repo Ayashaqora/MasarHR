@@ -5,8 +5,12 @@ use App\Modules\HumanResources\Domain\Exceptions\ActiveWorkplaceAssignmentAlread
 use App\Modules\HumanResources\Domain\Exceptions\DuplicateNationalIdException;
 use App\Modules\HumanResources\Domain\Exceptions\DuplicatePermanentEmployeeNumberException;
 use App\Modules\HumanResources\Domain\Exceptions\EmploymentRelationshipAlreadyEndedException;
+use App\Modules\HumanResources\Domain\Exceptions\EmploymentRelationshipNotContractSchemeException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidEmploymentCategoryException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidEmploymentCategoryPeriodDateException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidEmploymentContractPeriodDateException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidEmploymentContractTermException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidEmploymentContractTypeException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidEndDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidFullSecondmentEndDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidFullSecondmentStartDateException;
@@ -118,6 +122,10 @@ return Application::configure(basePath: dirname(__DIR__))
             InvalidWorkplaceAssignmentEndDateException::class,
             InvalidEmploymentCategoryException::class,
             InvalidEmploymentCategoryPeriodDateException::class,
+            EmploymentRelationshipNotContractSchemeException::class,
+            InvalidEmploymentContractTypeException::class,
+            InvalidEmploymentContractPeriodDateException::class,
+            InvalidEmploymentContractTermException::class,
         ]);
 
         // §22 of the S03 authorization: preserve stated HTTP semantics for Security domain
@@ -242,6 +250,25 @@ return Application::configure(basePath: dirname(__DIR__))
         $exceptions->render(fn (InvalidEmploymentCategoryPeriodDateException $e) => response()->json([
             'message' => $e->getMessage(),
             'errors' => ['effective_from' => [$e->getMessage()]],
+        ], 422));
+
+        // S21 HumanResources-module domain failures
+        // (docs/employment-contract-foundation-specification.md §S21.15). An already-ended
+        // relationship reuses EmploymentRelationshipAlreadyEndedException (S09, 409); a relationship
+        // end that would leave a contract period starting beyond it reuses S09's own
+        // InvalidEndDateException (422) — both already mapped above.
+        $exceptions->render(fn (EmploymentRelationshipNotContractSchemeException $e) => response()->json(['message' => $e->getMessage()], 409));
+        $exceptions->render(fn (InvalidEmploymentContractTypeException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['contract_type_id' => [$e->getMessage()]],
+        ], 422));
+        $exceptions->render(fn (InvalidEmploymentContractPeriodDateException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['effective_from' => [$e->getMessage()]],
+        ], 422));
+        $exceptions->render(fn (InvalidEmploymentContractTermException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['contractual_effective_to' => [$e->getMessage()]],
         ], 422));
 
         $exceptions->render(fn (DuplicateUsernameException $e) => response()->json([

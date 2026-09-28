@@ -28,7 +28,7 @@ class DatabaseConstraintsTest extends HumanResourcesTestCase
             ->pluck('table_name')->sort()->values()->all();
 
         $this->assertSame(
-            ['employment_category_periods', 'employment_relationships', 'employment_status_periods', 'full_secondment_periods', 'organizational_placement_periods', 'persons', 'workplace_assignment_periods'],
+            ['employment_category_periods', 'employment_contract_periods', 'employment_relationships', 'employment_status_periods', 'full_secondment_periods', 'organizational_placement_periods', 'persons', 'workplace_assignment_periods'],
             $tables,
         );
     }

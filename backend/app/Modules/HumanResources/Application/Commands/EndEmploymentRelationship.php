@@ -6,6 +6,7 @@ use App\Modules\HumanResources\Domain\Exceptions\EmploymentRelationshipAlreadyEn
 use App\Modules\HumanResources\Domain\Exceptions\InvalidEndDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidFullSecondmentEndDateException;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentCategoryPeriod;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentContractPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRelationship;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentStatusPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\FullSecondmentPeriod;
@@ -53,6 +54,12 @@ use Illuminate\Support\Carbon;
  * Employment Category period at the exact same effectiveTo — an EmploymentCategoryPeriod must
  * never extend beyond its EmploymentRelationship. Nothing is deleted or rewritten other than that
  * one effective_to.
+ *
+ * S21 (docs/employment-contract-foundation-specification.md §S21.11, ADR-S21-001 §8): extended in
+ * the same place to keep contract history temporally coherent — a contract period's ACTUAL
+ * validity is closed at the relationship's effectiveTo when it would otherwise extend beyond it
+ * (including a known-term contract ended early), so history never claims a contract in force
+ * after employment ended. The agreed term (contractual_effective_to) is never rewritten.
  *
  * No explicit lockForUpdate() is added here for the S15/S16 writes — the existing scoped UPDATE
  * above already acquires an implicit row-level lock on this relationship for the rest of the
@@ -116,6 +123,7 @@ final class EndEmploymentRelationship
         $this->closeOpenWorkplaceAssignmentIfAny($relationship, $effectiveTo);
         $this->closeOpenStatusPeriodIfAny($relationship, $effectiveTo);
         $this->closeOpenEmploymentCategoryPeriodIfAny($relationship, $effectiveTo);
+        $this->closeEmploymentContractValidityAtEndIfAny($relationship, $effectiveTo);
 
         return $relationship->refresh();
     }
@@ -249,6 +257,46 @@ final class EndEmploymentRelationship
             }
 
             throw $e;
+        }
+    }
+
+    /**
+     * S21 spec §S21.11 / ADR-S21-001 §8. Bounds are validated before anything is written: a
+     * contract period that STARTS on or after effectiveTo (e.g. a scheduled future renewal) would
+     * lie entirely outside the relationship, so the end is rejected with S09's own
+     * InvalidEndDateException rather than deleting or rewriting it — the same rule S20 applies to
+     * category periods. Otherwise, any period whose actual validity is still open or extends past
+     * effectiveTo (the ordinary "terminated before the agreed term" case) has its effective_to
+     * moved back to exactly effectiveTo; its contractual_effective_to is preserved, so both the
+     * agreed term and the real end remain on record. A period that already ended on or before
+     * effectiveTo is left exactly as it is — never extended.
+     */
+    private function closeEmploymentContractValidityAtEndIfAny(EmploymentRelationship $relationship, string $effectiveTo): void
+    {
+        $startsOnOrAfterEnd = EmploymentContractPeriod::query()
+            ->where('employment_relationship_id', $relationship->getKey())
+            ->where('effective_from', '>=', $effectiveTo)
+            ->exists();
+
+        if ($startsOnOrAfterEnd) {
+            throw new InvalidEndDateException;
+        }
+
+        $extendingPeriods = EmploymentContractPeriod::query()
+            ->where('employment_relationship_id', $relationship->getKey())
+            ->where(fn ($q) => $q->whereNull('effective_to')->orWhere('effective_to', '>', $effectiveTo))
+            ->get();
+
+        foreach ($extendingPeriods as $period) {
+            try {
+                $period->update(['effective_to' => $effectiveTo]);
+            } catch (QueryException $e) {
+                if (Errors::isCheckViolation($e)) {
+                    throw new InvalidEndDateException;
+                }
+
+                throw $e;
+            }
         }
     }
 }

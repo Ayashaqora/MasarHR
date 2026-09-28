@@ -52,6 +52,8 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
             // employment_category_periods (S20) likewise carries a RESTRICT FK to
             // employment_relationships.
             DB::table('hr.employment_category_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
+            // employment_contract_periods (S21) likewise.
+            DB::table('hr.employment_contract_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
             DB::table('hr.full_secondment_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
             DB::table('hr.workplace_assignment_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
             DB::table('hr.organizational_placement_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
@@ -1218,5 +1220,117 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
         });
 
         $this->assertSame(0, (int) $this->scalar('select count(*) from hr.employment_category_periods where employment_relationship_id = ?', [$relationshipId]));
+    }
+
+    /**
+     * S21 (docs/employment-contract-foundation-specification.md §S21.8): the database-level backstop
+     * for contract periods — two real, independent sessions racing overlapping inserts for the same
+     * relationship cannot both commit. The contract type is inserted and committed here (no contract
+     * type is seeded — S13 refused to invent values) and removed in cleanup.
+     */
+    public function test_concurrent_overlapping_employment_contract_periods_for_the_same_relationship_are_serialised_by_the_exclusion_constraint(): void
+    {
+        $personId = $this->person();
+        $relationshipId = (string) Str::uuid7();
+        $this->pg()->insert($this->insertSql(), [$relationshipId, $personId, $this->contractEmploymentTypeId(), 'CN-RACE-'.Str::random(6), 'CONTRACT', '2026-01-01']);
+        $contractTypeId = $this->contractTypeId();
+
+        $periodInsertSql = <<<'SQL'
+            insert into hr.employment_contract_periods
+                (id, employment_relationship_id, contract_type_id, effective_from, effective_to,
+                 contractual_effective_to, contract_end_knowledge_state, created_at)
+            values (?, ?, ?, ?, ?, ?, 'KNOWN', now())
+            SQL;
+
+        $first = $this->pg();
+        $second = $this->second();
+
+        try {
+            $first->beginTransaction();
+            $first->insert($periodInsertSql, [(string) Str::uuid7(), $relationshipId, $contractTypeId, '2026-01-01', '2027-01-01', '2027-01-01']); // not committed yet
+
+            $second->statement("set lock_timeout = '300ms'");
+            $blocked = $this->databaseError(fn () => $second->transaction(fn () => $second->insert($periodInsertSql, [
+                (string) Str::uuid7(), $relationshipId, $contractTypeId, '2026-06-01', '2027-06-01', '2027-06-01',
+            ])));
+            $this->assertTrue(Errors::isLockNotAvailable($blocked), 'the second session waits on the first (lock_timeout fired)');
+
+            $first->commit();
+
+            $rejected = $this->databaseError(fn () => $second->transaction(fn () => $second->insert($periodInsertSql, [
+                (string) Str::uuid7(), $relationshipId, $contractTypeId, '2026-06-01', '2027-06-01', '2027-06-01',
+            ])));
+            $this->assertTrue(Errors::isExclusionViolation($rejected), 'once committed, the overlap is rejected by PostgreSQL itself');
+
+            $this->assertSame(1, (int) $this->scalar('select count(*) from hr.employment_contract_periods where employment_relationship_id = ?', [$relationshipId]));
+        } finally {
+            $this->cleanUpContractPeriodsAndType($relationshipId, $contractTypeId);
+        }
+    }
+
+    /**
+     * S21 §S21.8/§S21.10: two concurrent renewals (or a renewal and a relationship end) of the same
+     * relationship contend for the same relationship row lock that RecordEmploymentContractPeriod
+     * takes first, so the second can only ever run against the first one's committed result — a
+     * stale renewal can never truncate or overlap history computed from an out-of-date "latest
+     * period".
+     */
+    public function test_concurrent_contract_renewals_for_the_same_relationship_are_serialised_by_the_relationship_row_lock(): void
+    {
+        $personId = $this->person();
+        $relationshipId = (string) Str::uuid7();
+        $this->pg()->insert($this->insertSql(), [$relationshipId, $personId, $this->contractEmploymentTypeId(), 'CN-RENEW-'.Str::random(6), 'CONTRACT', '2026-01-01']);
+
+        $lockSql = 'select id from hr.employment_relationships where id = ? for update';
+        $first = $this->pg();
+        $second = $this->second();
+
+        $first->beginTransaction();
+        $first->select($lockSql, [$relationshipId]); // renewal #1 holds the lock, not committed yet
+
+        $second->statement("set lock_timeout = '300ms'");
+        $blocked = $this->databaseError(fn () => $second->transaction(fn () => $second->select($lockSql, [$relationshipId])));
+        $this->assertTrue(Errors::isLockNotAvailable($blocked), 'renewal #2 waits on renewal #1 (lock_timeout fired)');
+
+        $first->commit();
+
+        $second->transaction(fn () => $second->select($lockSql, [$relationshipId]));
+        $this->assertSame(0, (int) $this->scalar('select count(*) from hr.employment_contract_periods where employment_relationship_id = ?', [$relationshipId]));
+    }
+
+    private function contractEmploymentTypeId(): string
+    {
+        return (string) DB::table('ref.employment_types')->where('code', 'contract')->value('id');
+    }
+
+    /** Committed directly so the independent second session can see it; removed in cleanup. */
+    private function contractTypeId(): string
+    {
+        $id = (string) Str::uuid7();
+        DB::table('ref.contract_types')->insert([
+            'id' => $id,
+            'code' => 's21_race_'.Str::lower(Str::random(8)),
+            'name_ar' => 'نوع عقد اختبار',
+            'name_en' => null,
+            'is_active' => true,
+            'display_order' => 99,
+            'version' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return $id;
+    }
+
+    private function cleanUpContractPeriodsAndType(string $relationshipId, string $contractTypeId): void
+    {
+        foreach ([DB::connection(), $this->hasSecond() ? $this->second() : null] as $connection) {
+            while ($connection !== null && $connection->transactionLevel() > 0) {
+                $connection->rollBack();
+            }
+        }
+
+        DB::table('hr.employment_contract_periods')->where('employment_relationship_id', $relationshipId)->delete();
+        DB::table('ref.contract_types')->where('id', $contractTypeId)->delete();
     }
 }

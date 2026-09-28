@@ -2,6 +2,7 @@
 
 use App\Modules\HumanResources\Infrastructure\Authorization\HumanResourcesPermissionCatalog as HrPerm;
 use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentCategoryPeriodController;
+use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentContractPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentRelationshipController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentStatusPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\FullSecondmentPeriodController;
@@ -324,5 +325,16 @@ Route::middleware('web')->group(function (): void {
                 ->middleware('permission:'.HrPerm::EMPLOYMENT_CATEGORY_PERIODS_VIEW)->name('persons.employment-relationships.employment-category-periods.index');
             Route::post('/persons/{person}/employment-relationships/{employmentRelationship}/employment-category-periods', [EmploymentCategoryPeriodController::class, 'store'])
                 ->middleware('permission:'.HrPerm::EMPLOYMENT_CATEGORY_PERIODS_RECORD)->name('persons.employment-relationships.employment-category-periods.store');
+
+            // S21: Employment Contract periods, nested under the same {person}/{employmentRelationship}
+            // (docs/employment-contract-foundation-specification.md §S21.14). Plain RBAC only — the
+            // permission: middleware is the whole gate, exactly like S10/S20 (ADR-S21-001 §10). One
+            // explicit record action covers the initial contract and renewals; no PATCH, no DELETE,
+            // no manual contract-end route. ref.contract_types stays administered solely by the
+            // existing /reference/contract-types routes.
+            Route::get('/persons/{person}/employment-relationships/{employmentRelationship}/employment-contract-periods', [EmploymentContractPeriodController::class, 'index'])
+                ->middleware('permission:'.HrPerm::EMPLOYMENT_CONTRACT_PERIODS_VIEW)->name('persons.employment-relationships.employment-contract-periods.index');
+            Route::post('/persons/{person}/employment-relationships/{employmentRelationship}/employment-contract-periods', [EmploymentContractPeriodController::class, 'store'])
+                ->middleware('permission:'.HrPerm::EMPLOYMENT_CONTRACT_PERIODS_RECORD)->name('persons.employment-relationships.employment-contract-periods.store');
         });
 });
