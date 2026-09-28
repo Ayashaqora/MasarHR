@@ -570,4 +570,35 @@ class EmploymentStatusHistoryTest extends HumanResourcesTestCase
         $this->assertSame($assignmentUnit->id, $workplace->organizationalUnitId(), 'actual-workplace resolution remains governed by the still-open S16 assignment');
         $this->assertSame('assignment', $workplace->source());
     }
+
+    /**
+     * ADR-S19-001 (docs/leave-management-foundation-specification.md §S19.4): the one narrow,
+     * genuine residual gap this stage's discovery found in the otherwise-already-complete S10/S15/
+     * S17 coverage — test_ending_the_relationship_directly_now_closes_the_open_status_period above
+     * proves the same closeOpenStatusPeriodIfAny() consequence generically using `on_duty`, but no
+     * existing test names one of the two currently-frozen leave-like states (إجازة بدون راتب /
+     * إجازة خارجية مرضية) in this exact scenario. Test-only, zero production code — the same
+     * unmodified S15 mechanism, exercised with the two S19-relevant codes instead of `on_duty`.
+     */
+    public function test_ending_the_relationship_directly_closes_an_open_leave_like_status_period(): void
+    {
+        foreach (['unpaid_leave', 'external_sick_leave'] as $code) {
+            $this->actingAsHrAdministrator();
+            $person = $this->createPersonRecord();
+            $relationship = $this->createEmploymentRelationship($person);
+            $period = app(RecordEmploymentStatusPeriod::class)->handle($person, $relationship, $this->statusDetail($code), '2026-09-27');
+
+            $this->postJson(
+                "/api/v1/hr/persons/{$person->id}/employment-relationships/{$relationship->id}/end",
+                ['expected_version' => $relationship->version, 'effective_to' => '2026-10-01', 'is_terminal' => false],
+            )->assertStatus(200);
+
+            $this->assertSame('2026-10-01', $period->refresh()->effective_to->toDateString(), "[$code] open leave-like period is closed when the relationship ends directly");
+            $this->assertSame(
+                1,
+                EmploymentStatusPeriod::query()->where('employment_relationship_id', $relationship->getKey())->count(),
+                "[$code] the closed period is preserved as history, not deleted or replaced",
+            );
+        }
+    }
 }
