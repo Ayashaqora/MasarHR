@@ -125,6 +125,8 @@ export const ar = {
     title: 'الملف الشامل للموظف',
     headerTitle: 'بيانات الهوية والتوظيف',
     nationalId: 'رقم الهوية الوطنية',
+    fullNameAr: 'الاسم الكامل',
+    notRecorded: 'غير مسجَّل',
     currentStatus: 'الحالة الوظيفية الحالية',
     actualWorkplace: 'مكان العمل الفعلي الحالي',
     loading: 'جارٍ التحميل…',

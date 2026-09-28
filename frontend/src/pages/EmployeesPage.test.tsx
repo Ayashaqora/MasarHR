@@ -9,7 +9,17 @@ const AUTHENTICATED_HR_VIEWER: CurrentPrincipal = {
   permissions: [...CURRENT_PRINCIPAL_BODY.permissions, 'hr.persons.view', 'hr.employment_relationships.view'],
 }
 
-const PERSON = { id: 'person-1', national_id: '1234567890', is_terminal: false, version: 1 }
+const PERSON = {
+  id: 'person-1',
+  national_id: '1234567890',
+  is_terminal: false,
+  version: 1,
+  full_name_ar: 'موظف اختبار',
+  gender_id: null,
+  marital_status_id: null,
+  birth_date: null,
+  birth_place: null,
+}
 
 const RELATIONSHIPS = [
   {

@@ -11,9 +11,10 @@ import type {
 /**
  * Compact identity/employment header (spec §S18 §11), always visible above the tabs. Only fields
  * the backend actually supports are shown — no profile photo, email, phone, address, manager or
- * salary (none exist in the domain; spec §11 forbids fabricating them), and no employee "name" —
- * S09's Person resource has no name field in v1 (spec §S18 discovery §4), a disclosed, deferred
- * capability gap rather than an invented one.
+ * salary (none exist in the domain; spec §11 forbids fabricating them). S24 adds the Person's
+ * full_name_ar (docs/person-profile-foundation-specification.md §S24.17); a legacy Person with no
+ * recorded name shows "not recorded", never a placeholder. The other S24 profile fields are not
+ * displayed here yet (deferred — §S24.17).
  */
 export function Employee360Header({
   person,
@@ -53,6 +54,10 @@ export function Employee360Header({
         {messages.employee360.headerTitle}
       </h2>
       <dl className="description-list">
+        <div className="description-list__row">
+          <dt>{messages.employee360.fullNameAr}</dt>
+          <dd>{person.full_name_ar ?? messages.employee360.notRecorded}</dd>
+        </div>
         <div className="description-list__row">
           <dt>{messages.employee360.nationalId}</dt>
           <dd>{person.national_id}</dd>

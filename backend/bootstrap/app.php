@@ -17,6 +17,7 @@ use App\Modules\HumanResources\Domain\Exceptions\InvalidEmploymentJobTitlePeriod
 use App\Modules\HumanResources\Domain\Exceptions\InvalidEndDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidFullSecondmentEndDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidFullSecondmentStartDateException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidPersonProfileException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidPersonQualificationAcademicDegreeException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidPersonQualificationTypeException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidPlacementPeriodDateException;
@@ -30,6 +31,7 @@ use App\Modules\HumanResources\Domain\Exceptions\NoActiveWorkplaceAssignmentExce
 use App\Modules\HumanResources\Domain\Exceptions\OverlappingEmploymentRelationshipException;
 use App\Modules\HumanResources\Domain\Exceptions\PersonIsTerminalException;
 use App\Modules\HumanResources\Domain\Exceptions\PersonQualificationIdentityMissingException;
+use App\Modules\HumanResources\Domain\Exceptions\PersonStaleVersionException;
 use App\Modules\HumanResources\Domain\Exceptions\UnresolvedEmploymentStatusBehaviorException;
 use App\Modules\Organization\Domain\Exceptions\StaleVersionException as OrganizationStaleVersionException;
 use App\Modules\Organization\Domain\Exceptions\WouldCreateCycleException;
@@ -138,6 +140,8 @@ return Application::configure(basePath: dirname(__DIR__))
             InvalidPersonQualificationAcademicDegreeException::class,
             InvalidPersonQualificationTypeException::class,
             PersonQualificationIdentityMissingException::class,
+            InvalidPersonProfileException::class,
+            PersonStaleVersionException::class,
         ]);
 
         // §22 of the S03 authorization: preserve stated HTTP semantics for Security domain
@@ -295,6 +299,14 @@ return Application::configure(basePath: dirname(__DIR__))
             'message' => $e->getMessage(),
             'errors' => ['effective_from' => [$e->getMessage()]],
         ], 422));
+
+        // S24 HumanResources-module domain failures
+        // (docs/person-profile-foundation-specification.md §S24.15).
+        $exceptions->render(fn (InvalidPersonProfileException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => [$e->field => [$e->getMessage()]],
+        ], 422));
+        $exceptions->render(fn (PersonStaleVersionException $e) => response()->json(['message' => $e->getMessage()], 409));
 
         // S23 HumanResources-module domain failures
         // (docs/person-qualification-foundation-specification.md §S23.14).

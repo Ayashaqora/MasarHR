@@ -2,7 +2,6 @@
 
 namespace Tests\Feature\HumanResources;
 
-use App\Modules\HumanResources\Application\Commands\CreatePerson;
 use App\Modules\HumanResources\Application\Queries\FindPersonByNationalId;
 use App\Modules\HumanResources\Domain\Exceptions\DuplicateNationalIdException;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\Person;
@@ -16,7 +15,7 @@ class PersonLifecycleTest extends HumanResourcesTestCase
 {
     public function test_creating_a_person_persists_a_uuid_identity_and_trimmed_national_id(): void
     {
-        $person = app(CreatePerson::class)->handle('  1234567890  ');
+        $person = $this->createPersonRecord('  1234567890  ');
 
         $this->assertTrue(Str::isUuid($person->id));
         $this->assertSame('1234567890', $person->national_id);
@@ -27,16 +26,16 @@ class PersonLifecycleTest extends HumanResourcesTestCase
     public function test_a_duplicate_national_id_is_rejected_at_the_application_layer(): void
     {
         $nationalId = $this->uniqueNationalId();
-        app(CreatePerson::class)->handle($nationalId);
+        $this->createPersonRecord($nationalId);
 
         $this->expectException(DuplicateNationalIdException::class);
-        app(CreatePerson::class)->handle($nationalId);
+        $this->createPersonRecord($nationalId);
     }
 
     public function test_a_concurrent_duplicate_national_id_insert_is_rejected_by_the_database_not_just_the_application(): void
     {
         $nationalId = $this->uniqueNationalId();
-        app(CreatePerson::class)->handle($nationalId);
+        $this->createPersonRecord($nationalId);
 
         // Bypass the application command entirely: the UNIQUE constraint on national_id is what
         // actually prevents the race, not merely an application-level pre-check (mirrors
@@ -54,7 +53,7 @@ class PersonLifecycleTest extends HumanResourcesTestCase
 
     public function test_national_id_normalization_only_trims_whitespace(): void
     {
-        $person = app(CreatePerson::class)->handle(' 5555555555 ');
+        $person = $this->createPersonRecord(' 5555555555 ');
 
         $this->assertSame('5555555555', $person->national_id);
     }
@@ -89,7 +88,7 @@ class PersonLifecycleTest extends HumanResourcesTestCase
         $this->actingAsHrAdministrator();
         $nationalId = $this->uniqueNationalId();
 
-        $response = $this->postJson('/api/v1/hr/persons', ['national_id' => $nationalId])->assertCreated();
+        $response = $this->postJson('/api/v1/hr/persons', $this->personPayload($nationalId))->assertCreated();
 
         $response->assertJsonPath('national_id', $nationalId)->assertJsonPath('is_terminal', false);
 
@@ -104,7 +103,7 @@ class PersonLifecycleTest extends HumanResourcesTestCase
         $nationalId = $this->uniqueNationalId();
         $this->createPersonRecord($nationalId);
 
-        $this->postJson('/api/v1/hr/persons', ['national_id' => $nationalId])->assertStatus(409);
+        $this->postJson('/api/v1/hr/persons', $this->personPayload($nationalId))->assertStatus(409);
     }
 
     public function test_lookup_via_the_api_returns_the_matching_person_only(): void
@@ -161,7 +160,7 @@ class PersonLifecycleTest extends HumanResourcesTestCase
         $principal = $this->createPrincipal();
         $this->actingAs($principal, 'web');
 
-        $this->postJson('/api/v1/hr/persons', ['national_id' => $this->uniqueNationalId()])->assertStatus(403);
+        $this->postJson('/api/v1/hr/persons', $this->personPayload())->assertStatus(403);
     }
 
     public function test_error_responses_never_leak_sql_or_stack_traces(): void
@@ -170,7 +169,7 @@ class PersonLifecycleTest extends HumanResourcesTestCase
         $nationalId = $this->uniqueNationalId();
         $this->createPersonRecord($nationalId);
 
-        $body = $this->postJson('/api/v1/hr/persons', ['national_id' => $nationalId])->getContent();
+        $body = $this->postJson('/api/v1/hr/persons', $this->personPayload($nationalId))->getContent();
 
         foreach (['SQLSTATE', '.php:', 'Stack trace', 'PDOException', 'select *'] as $forbidden) {
             $this->assertStringNotContainsString($forbidden, $body);
@@ -182,7 +181,7 @@ class PersonLifecycleTest extends HumanResourcesTestCase
         $this->actingAsHrAdministrator();
         $nationalId = $this->uniqueNationalId();
 
-        $this->postJson('/api/v1/hr/persons', ['national_id' => $nationalId])->assertCreated();
+        $this->postJson('/api/v1/hr/persons', $this->personPayload($nationalId))->assertCreated();
 
         $entry = $this->latestAuditEntryFor('hr.person.create');
         $this->assertNotNull($entry);

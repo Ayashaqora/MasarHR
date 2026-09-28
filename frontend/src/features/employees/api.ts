@@ -1,11 +1,21 @@
 import { apiRequest } from '../../shared/api'
 
-/** Mirrors backend PersonResource (S09 spec §4/§19). No name/profile fields exist in S09 v1. */
+/**
+ * Mirrors backend PersonResource (S09 spec §4/§19, extended by S24 — docs/person-profile-foundation-
+ * specification.md §S24.12). Every S24 profile field is null for a legacy Person whose value was
+ * never recorded; the UI must show "not recorded", never a placeholder or a derived value.
+ */
 export interface Person {
   id: string
   national_id: string
   is_terminal: boolean
   version: number
+  full_name_ar: string | null
+  gender_id: string | null
+  marital_status_id: string | null
+  /** A business DATE (YYYY-MM-DD). */
+  birth_date: string | null
+  birth_place: string | null
 }
 
 /** Mirrors backend EmploymentRelationshipResource (S09 spec §6/§19). */

@@ -16,7 +16,9 @@ use App\Modules\Reference\Infrastructure\Persistence\Eloquent\DecisionType;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\EmploymentCategory;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\EmploymentStatusDetail;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\EmploymentType;
+use App\Modules\Reference\Infrastructure\Persistence\Eloquent\Gender;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\JobTitle;
+use App\Modules\Reference\Infrastructure\Persistence\Eloquent\MaritalStatus;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\QualificationType;
 use App\Modules\Security\Application\Commands\GrantOrganizationalScope;
 use App\Modules\Security\Infrastructure\Persistence\Eloquent\Principal;
@@ -75,9 +77,45 @@ abstract class HumanResourcesTestCase extends AuditTestCase
         return (string) random_int(1_000_000_000, 9_999_999_999);
     }
 
+    /**
+     * Creates a NEW Person through CreatePerson. Since S24 every new Person requires a profile
+     * (docs/person-profile-foundation-specification.md §S24.6), so this supplies synthetic,
+     * obviously-test values using the two S05-seeded reference catalogs.
+     */
     protected function createPersonRecord(?string $nationalId = null): Person
     {
-        return app(CreatePerson::class)->handle($nationalId ?? $this->uniqueNationalId());
+        return app(CreatePerson::class)->handle(
+            $nationalId ?? $this->uniqueNationalId(),
+            'موظف اختبار',
+            $this->gender('male'),
+            $this->maritalStatus('single'),
+            '1990-05-17',
+        );
+    }
+
+    /** A synthetic API payload for POST /api/v1/hr/persons (S09 + the S24 required profile). */
+    protected function personPayload(?string $nationalId = null, array $overrides = []): array
+    {
+        return [
+            'national_id' => $nationalId ?? $this->uniqueNationalId(),
+            'full_name_ar' => 'موظف اختبار',
+            'gender_id' => $this->gender('male')->id,
+            'marital_status_id' => $this->maritalStatus('single')->id,
+            'birth_date' => '1990-05-17',
+            ...$overrides,
+        ];
+    }
+
+    /** One of the two S05-seeded ref.genders rows (male/female), by code. */
+    protected function gender(string $code): Gender
+    {
+        return Gender::query()->where('code', $code)->firstOrFail();
+    }
+
+    /** One of the four S05-seeded ref.marital_statuses rows, by code. */
+    protected function maritalStatus(string $code): MaritalStatus
+    {
+        return MaritalStatus::query()->where('code', $code)->firstOrFail();
     }
 
     protected function employmentType(string $code): EmploymentType

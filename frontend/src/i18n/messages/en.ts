@@ -127,6 +127,8 @@ export const en: Messages = {
     title: 'Employee 360',
     headerTitle: 'Identity and employment',
     nationalId: 'National ID',
+    fullNameAr: 'Full name (Arabic)',
+    notRecorded: 'Not recorded',
     currentStatus: 'Current employment status',
     actualWorkplace: 'Current actual workplace',
     loading: 'Loading…',

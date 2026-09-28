@@ -254,6 +254,11 @@ Route::middleware('web')->group(function (): void {
                 ->middleware('permission:'.HrPerm::PERSONS_VIEW)->name('persons.show');
             Route::post('/persons', [PersonController::class, 'store'])
                 ->middleware('permission:'.HrPerm::PERSONS_CREATE)->name('persons.store');
+            // S24: explicit Person profile action route (docs/person-profile-foundation-specification.md
+            // §S24.8/§S24.13) — the HR command-route convention (/end, /transfer, /move), never a
+            // generic PATCH of the Person. Cannot touch national_id or any employment data.
+            Route::post('/persons/{person}/update-profile', [PersonController::class, 'updateProfile'])
+                ->middleware('permission:'.HrPerm::PERSONS_UPDATE_PROFILE)->name('persons.update-profile');
 
             // S23: Person Qualifications, nested directly under {person} — a Person fact, never an
             // Employment Relationship one (docs/person-qualification-foundation-specification.md

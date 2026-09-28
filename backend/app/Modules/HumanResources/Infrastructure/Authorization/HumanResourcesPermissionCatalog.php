@@ -54,6 +54,12 @@ final class HumanResourcesPermissionCatalog
 
     public const PERSONS_CREATE = 'hr.persons.create';
 
+    /**
+     * S24 (docs/person-profile-foundation-specification.md §S24.12): explicit write authority for
+     * a Person's profile. Reads keep hr.persons.view; creation keeps hr.persons.create.
+     */
+    public const PERSONS_UPDATE_PROFILE = 'hr.persons.update_profile';
+
     public const EMPLOYMENT_RELATIONSHIPS_VIEW = 'hr.employment_relationships.view';
 
     public const EMPLOYMENT_RELATIONSHIPS_CREATE = 'hr.employment_relationships.create';
@@ -113,6 +119,7 @@ final class HumanResourcesPermissionCatalog
     public const ALL = [
         self::PERSONS_VIEW,
         self::PERSONS_CREATE,
+        self::PERSONS_UPDATE_PROFILE,
         self::EMPLOYMENT_RELATIONSHIPS_VIEW,
         self::EMPLOYMENT_RELATIONSHIPS_CREATE,
         self::EMPLOYMENT_RELATIONSHIPS_END,

@@ -163,15 +163,21 @@ class ScopeBoundaryTest extends HumanResourcesTestCase
         $this->assertNotContains('version', $columns, 'S10 spec §5: status periods are append-only, no independently client-versioned column');
     }
 
-    public function test_person_has_no_name_or_demographic_columns(): void
+    /**
+     * S09 spec §4 kept hr.persons identity-only; S24 (docs/person-profile-foundation-specification.md
+     * §S24.6) adds exactly five current profile attributes and nothing else — no name parts, no
+     * English name, no age, no start-work date, no specialty/experience, no demographic history.
+     */
+    public function test_person_has_exactly_the_s09_identity_and_s24_profile_columns(): void
     {
         $columns = DB::table('information_schema.columns')
             ->where('table_schema', 'hr')->where('table_name', 'persons')
-            ->pluck('column_name')->all();
+            ->pluck('column_name')->sort()->values()->all();
 
-        foreach (['name', 'name_ar', 'name_en', 'gender', 'marital_status', 'date_of_birth'] as $forbidden) {
-            $this->assertNotContains($forbidden, $columns, "spec §4: no {$forbidden} column in S09 v1");
-        }
+        $this->assertSame([
+            'birth_date', 'birth_place', 'created_at', 'full_name_ar', 'gender_id', 'id', 'is_terminal',
+            'marital_status_id', 'national_id', 'updated_at', 'version',
+        ], $columns);
     }
 
     public function test_no_hr_route_exposes_an_out_of_scope_s14_plus_concept(): void

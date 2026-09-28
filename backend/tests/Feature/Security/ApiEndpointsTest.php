@@ -42,7 +42,7 @@ class ApiEndpointsTest extends SecurityTestCase
             [
                 ...PermissionCatalog::ALL,
                 'reference.view', 'reference.manage', 'organization.view', 'organization.manage',
-                'hr.persons.view', 'hr.persons.create', 'hr.employment_relationships.view',
+                'hr.persons.view', 'hr.persons.create', 'hr.persons.update_profile', 'hr.employment_relationships.view',
                 'hr.employment_relationships.create', 'hr.employment_relationships.end',
                 'hr.employment_relationships.transfer',
                 'hr.employment_status_periods.view', 'hr.employment_status_periods.record',

@@ -17,7 +17,17 @@ const AUTHENTICATED_HR_VIEWER: CurrentPrincipal = {
   ],
 }
 
-const PERSON = { id: 'person-1', national_id: '1234567890', is_terminal: false, version: 1 }
+const PERSON = {
+  id: 'person-1',
+  national_id: '1234567890',
+  is_terminal: false,
+  version: 1,
+  full_name_ar: 'موظف اختبار',
+  gender_id: null,
+  marital_status_id: null,
+  birth_date: null,
+  birth_place: null,
+}
 
 const RELATIONSHIP = {
   id: 'rel-1',
@@ -85,11 +95,29 @@ describe('Employee360Page', () => {
     if (!headerSection) throw new Error('expected the Employee 360 header section to be present')
     const header = within(headerSection)
     expect(header.getByText('1234567890')).toBeInTheDocument()
+    expect(header.getByText('موظف اختبار')).toBeInTheDocument()
     expect(header.getByText('EMP-001')).toBeInTheDocument()
     expect(await header.findByText('على رأس العمل')).toBeInTheDocument()
     // The resolved unit name appears in both the always-visible header and the default
     // Overview tab (original workplace) — assert presence, not a single exact match.
     expect((await screen.findAllByText('الإدارة العامة للمستشفيات')).length).toBeGreaterThan(0)
+  })
+
+  it('shows "not recorded" for a legacy person with no recorded name, never a placeholder (S24)', async () => {
+    stub360App((url) =>
+      url.includes('/hr/persons/person-1') && !url.includes('employment-relationships')
+        ? jsonResponse({ ...PERSON, full_name_ar: null })
+        : undefined,
+    )
+    renderApp(ROUTE)
+
+    const headerSection = (await screen.findByRole('heading', { level: 2 })).closest('section')
+    if (!headerSection) throw new Error('expected the Employee 360 header section to be present')
+    const header = within(headerSection)
+    expect(await header.findByText('1234567890')).toBeInTheDocument()
+    expect(header.getByText('الاسم الكامل')).toBeInTheDocument()
+    expect(header.getByText('غير مسجَّل')).toBeInTheDocument()
+    expect(header.queryByText('موظف اختبار')).not.toBeInTheDocument()
   })
 
   it('shows the Overview tab by default with original and actual workplace', async () => {
