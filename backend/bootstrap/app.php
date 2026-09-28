@@ -5,6 +5,8 @@ use App\Modules\HumanResources\Domain\Exceptions\ActiveWorkplaceAssignmentAlread
 use App\Modules\HumanResources\Domain\Exceptions\DuplicateNationalIdException;
 use App\Modules\HumanResources\Domain\Exceptions\DuplicatePermanentEmployeeNumberException;
 use App\Modules\HumanResources\Domain\Exceptions\EmploymentRelationshipAlreadyEndedException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidEmploymentCategoryException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidEmploymentCategoryPeriodDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidEndDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidFullSecondmentEndDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidFullSecondmentStartDateException;
@@ -114,6 +116,8 @@ return Application::configure(basePath: dirname(__DIR__))
             InvalidWorkplaceAssignmentDecisionTypeException::class,
             InvalidWorkplaceAssignmentStartDateException::class,
             InvalidWorkplaceAssignmentEndDateException::class,
+            InvalidEmploymentCategoryException::class,
+            InvalidEmploymentCategoryPeriodDateException::class,
         ]);
 
         // §22 of the S03 authorization: preserve stated HTTP semantics for Security domain
@@ -222,6 +226,20 @@ return Application::configure(basePath: dirname(__DIR__))
             'errors' => ['effective_to' => [$e->getMessage()]],
         ], 422));
         $exceptions->render(fn (InvalidWorkplaceAssignmentPeriodDateException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['effective_from' => [$e->getMessage()]],
+        ], 422));
+
+        // S20 HumanResources-module domain failures
+        // (docs/employment-category-history-foundation-specification.md §S20.14). An already-ended
+        // relationship reuses EmploymentRelationshipAlreadyEndedException (S09, 409); a relationship
+        // end that would leave a category period beyond the relationship reuses S09's own
+        // InvalidEndDateException (422) — both already mapped above.
+        $exceptions->render(fn (InvalidEmploymentCategoryException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['employment_category_id' => [$e->getMessage()]],
+        ], 422));
+        $exceptions->render(fn (InvalidEmploymentCategoryPeriodDateException $e) => response()->json([
             'message' => $e->getMessage(),
             'errors' => ['effective_from' => [$e->getMessage()]],
         ], 422));

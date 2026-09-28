@@ -5,6 +5,7 @@ namespace App\Modules\HumanResources\Application\Commands;
 use App\Modules\HumanResources\Domain\Exceptions\EmploymentRelationshipAlreadyEndedException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidEndDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidFullSecondmentEndDateException;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentCategoryPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRelationship;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentStatusPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\FullSecondmentPeriod;
@@ -46,6 +47,12 @@ use Illuminate\Support\Carbon;
  * does NOT touch S11 Organizational Placement (spec §8.2, considered and rejected: no
  * disclosed-gap precedent, and ResolveActualWorkplaceForRelationship already neutralises the
  * read-time effect for an ended relationship without rewriting workplace history).
+ *
+ * S20 (docs/employment-category-history-foundation-specification.md §S20.11, ADR-S20-001 §4):
+ * extended in place, in the same single-orchestration-point pattern, to also close the open S20
+ * Employment Category period at the exact same effectiveTo — an EmploymentCategoryPeriod must
+ * never extend beyond its EmploymentRelationship. Nothing is deleted or rewritten other than that
+ * one effective_to.
  *
  * No explicit lockForUpdate() is added here for the S15/S16 writes — the existing scoped UPDATE
  * above already acquires an implicit row-level lock on this relationship for the rest of the
@@ -108,6 +115,7 @@ final class EndEmploymentRelationship
         $this->closeOpenFullSecondmentIfAny($relationship, $effectiveTo);
         $this->closeOpenWorkplaceAssignmentIfAny($relationship, $effectiveTo);
         $this->closeOpenStatusPeriodIfAny($relationship, $effectiveTo);
+        $this->closeOpenEmploymentCategoryPeriodIfAny($relationship, $effectiveTo);
 
         return $relationship->refresh();
     }
@@ -184,6 +192,53 @@ final class EndEmploymentRelationship
         // own identical pre-check.
         if ($newTo->lt($openPeriod->effective_from)) {
             throw new InvalidEndDateException;
+        }
+
+        try {
+            $openPeriod->update(['effective_to' => $effectiveTo]);
+        } catch (QueryException $e) {
+            if (Errors::isCheckViolation($e)) {
+                throw new InvalidEndDateException;
+            }
+
+            throw $e;
+        }
+    }
+
+    /**
+     * S20 spec §S20.11 / ADR-S20-001 §4. No separate "end category" command exists (spec §S20.9),
+     * so this is inlined exactly as closeOpenStatusPeriodIfAny() above inlines its own close step.
+     *
+     * Bounds are validated before anything is written: if ANY category period of this
+     * relationship starts on or after effectiveTo, or is already closed at a date after
+     * effectiveTo, the relationship end is rejected with S09's own InvalidEndDateException rather
+     * than silently truncated, deleted, or left extending beyond the relationship. Unlike the
+     * status period (whose ending status legitimately starts on exactly effectiveTo when
+     * RecordEmploymentStatusPeriod is the caller), a category period starting on effectiveTo
+     * would lie entirely outside the relationship, so "equal dates" is rejected here too. Under
+     * command discipline only the open (latest) period can ever be affected; a period that
+     * already ended on or before effectiveTo is left exactly as it is — never extended.
+     */
+    private function closeOpenEmploymentCategoryPeriodIfAny(EmploymentRelationship $relationship, string $effectiveTo): void
+    {
+        $extendsBeyondEnd = EmploymentCategoryPeriod::query()
+            ->where('employment_relationship_id', $relationship->getKey())
+            ->where(fn ($q) => $q
+                ->where('effective_from', '>=', $effectiveTo)
+                ->orWhere(fn ($q) => $q->whereNotNull('effective_to')->where('effective_to', '>', $effectiveTo)))
+            ->exists();
+
+        if ($extendsBeyondEnd) {
+            throw new InvalidEndDateException;
+        }
+
+        $openPeriod = EmploymentCategoryPeriod::query()
+            ->where('employment_relationship_id', $relationship->getKey())
+            ->whereNull('effective_to')
+            ->first();
+
+        if ($openPeriod === null) {
+            return;
         }
 
         try {

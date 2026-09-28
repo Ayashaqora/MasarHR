@@ -49,6 +49,9 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
             // organizational_placement_periods first: all three carry a RESTRICT FK to
             // employment_relationships, same most-dependent-first ordering as
             // employment_status_periods below.
+            // employment_category_periods (S20) likewise carries a RESTRICT FK to
+            // employment_relationships.
+            DB::table('hr.employment_category_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
             DB::table('hr.full_secondment_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
             DB::table('hr.workplace_assignment_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
             DB::table('hr.organizational_placement_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
@@ -1130,5 +1133,90 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
         });
 
         $this->assertSame(0, (int) $this->scalar('select count(*) from hr.workplace_assignment_periods where employment_relationship_id = ?', [$relationshipId]));
+    }
+
+    private function employmentCategoryId(string $code): string
+    {
+        return (string) DB::table('ref.employment_categories')->where('code', $code)->value('id');
+    }
+
+    /**
+     * S20 (docs/employment-category-history-foundation-specification.md §S20.8): the database-level
+     * backstop, independent of RecordEmploymentCategoryPeriod's own relationship-row lock — two
+     * real, independent sessions racing overlapping inserts for the same employment_relationship_id
+     * cannot both commit; the EXCLUDE constraint serialises and then rejects the loser. Mirrors
+     * test_concurrent_overlapping_status_periods_for_the_same_relationship_are_serialised_by_the_exclusion_constraint.
+     */
+    public function test_concurrent_overlapping_employment_category_periods_for_the_same_relationship_are_serialised_by_the_exclusion_constraint(): void
+    {
+        $personId = $this->person();
+        $relationshipId = (string) Str::uuid7();
+        $this->pg()->insert($this->insertSql(), [$relationshipId, $personId, $this->permanentEmploymentTypeId(), 'PN-CATEGORY-RACE', 'PERMANENT', '2026-01-01']);
+
+        $periodInsertSql = <<<'SQL'
+            insert into hr.employment_category_periods
+                (id, employment_relationship_id, employment_category_id, effective_from, created_at)
+            values (?, ?, ?, ?, now())
+            SQL;
+
+        $first = $this->pg();
+        $second = $this->second();
+
+        $first->beginTransaction();
+        $first->insert($periodInsertSql, [(string) Str::uuid7(), $relationshipId, $this->employmentCategoryId('grade_3'), '2026-02-01']); // not committed yet
+
+        $second->statement("set lock_timeout = '300ms'");
+        $blocked = $this->databaseError(fn () => $second->transaction(fn () => $second->insert($periodInsertSql, [
+            (string) Str::uuid7(), $relationshipId, $this->employmentCategoryId('grade_2'), '2026-03-01',
+        ])));
+        $this->assertTrue(Errors::isLockNotAvailable($blocked), 'the second session waits on the first (lock_timeout fired)');
+
+        $first->commit();
+
+        $rejected = $this->databaseError(fn () => $second->transaction(fn () => $second->insert($periodInsertSql, [
+            (string) Str::uuid7(), $relationshipId, $this->employmentCategoryId('grade_2'), '2026-03-01',
+        ])));
+        $this->assertTrue(Errors::isExclusionViolation($rejected), 'once committed, the overlap is rejected by PostgreSQL itself, not merely delayed');
+
+        $this->assertSame(1, (int) $this->scalar('select count(*) from hr.employment_category_periods where employment_relationship_id = ?', [$relationshipId]));
+    }
+
+    /**
+     * S20 §S20.8/§S20.11: RecordEmploymentCategoryPeriod's first statement (SELECT ... FOR UPDATE
+     * on the relationship) and EndEmploymentRelationship's scoped UPDATE contend for the same row
+     * lock, so a category can never be recorded against a relationship that a concurrent end is
+     * about to close, nor slip in between the end's own category-bounds check and its commit. The
+     * unblocked recorder must observe the relationship as already ended (and reject, per
+     * RecordEmploymentCategoryPeriod's end_knowledge_state check).
+     */
+    public function test_concurrent_category_recording_and_employment_end_for_the_same_relationship_are_serialised_by_the_relationship_row_lock(): void
+    {
+        $personId = $this->person();
+        $relationshipId = (string) Str::uuid7();
+        $this->pg()->insert($this->insertSql(), [$relationshipId, $personId, $this->permanentEmploymentTypeId(), 'PN-CATEGORY-END-RACE', 'PERMANENT', '2026-01-01']);
+
+        $lockSql = 'select id from hr.employment_relationships where id = ? for update';
+        $endSql = "update hr.employment_relationships set effective_to = ?, end_knowledge_state = 'KNOWN', version = 2 where id = ? and version = 1 and end_knowledge_state != 'KNOWN'";
+
+        $first = $this->pg();
+        $second = $this->second();
+
+        // Session 1 simulates EndEmploymentRelationship: scoped UPDATE (implicit row lock).
+        $first->beginTransaction();
+        $first->update($endSql, ['2026-06-01', $relationshipId]); // not committed yet
+
+        $second->statement("set lock_timeout = '300ms'");
+        // Session 2 simulates RecordEmploymentCategoryPeriod's own first statement.
+        $blocked = $this->databaseError(fn () => $second->transaction(fn () => $second->select($lockSql, [$relationshipId])));
+        $this->assertTrue(Errors::isLockNotAvailable($blocked), "RecordEmploymentCategoryPeriod's lock waits on the in-flight relationship end (lock_timeout fired)");
+
+        $first->commit();
+
+        $second->transaction(function () use ($second, $relationshipId): void {
+            $state = $second->selectOne('select end_knowledge_state from hr.employment_relationships where id = ? for update', [$relationshipId]);
+            $this->assertSame('KNOWN', (string) $state->end_knowledge_state, 'the unblocked recorder observes the committed end, never a stale snapshot');
+        });
+
+        $this->assertSame(0, (int) $this->scalar('select count(*) from hr.employment_category_periods where employment_relationship_id = ?', [$relationshipId]));
     }
 }

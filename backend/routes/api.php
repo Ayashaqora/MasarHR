@@ -1,6 +1,7 @@
 <?php
 
 use App\Modules\HumanResources\Infrastructure\Authorization\HumanResourcesPermissionCatalog as HrPerm;
+use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentCategoryPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentRelationshipController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentStatusPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\FullSecondmentPeriodController;
@@ -312,5 +313,16 @@ Route::middleware('web')->group(function (): void {
                 ->middleware('permission:'.HrPerm::WORKPLACE_ASSIGNMENT_PERIODS_START)->name('persons.employment-relationships.workplace-assignment-periods.store');
             Route::post('/persons/{person}/employment-relationships/{employmentRelationship}/workplace-assignment-periods/end', [WorkplaceAssignmentPeriodController::class, 'end'])
                 ->middleware('permission:'.HrPerm::WORKPLACE_ASSIGNMENT_PERIODS_END)->name('persons.employment-relationships.workplace-assignment-periods.end');
+
+            // S20: Employment Category History, nested under the same {person}/{employmentRelationship}
+            // (docs/employment-category-history-foundation-specification.md §S20.13). Plain RBAC
+            // only — the permission: middleware is the whole gate, exactly like S10's status-period
+            // routes (ADR-S20-001 §8). Explicit record action only: no PATCH, no DELETE, no end
+            // route. The ref.employment_categories catalog itself stays administered solely by the
+            // existing /reference/employment-categories routes above.
+            Route::get('/persons/{person}/employment-relationships/{employmentRelationship}/employment-category-periods', [EmploymentCategoryPeriodController::class, 'index'])
+                ->middleware('permission:'.HrPerm::EMPLOYMENT_CATEGORY_PERIODS_VIEW)->name('persons.employment-relationships.employment-category-periods.index');
+            Route::post('/persons/{person}/employment-relationships/{employmentRelationship}/employment-category-periods', [EmploymentCategoryPeriodController::class, 'store'])
+                ->middleware('permission:'.HrPerm::EMPLOYMENT_CATEGORY_PERIODS_RECORD)->name('persons.employment-relationships.employment-category-periods.store');
         });
 });

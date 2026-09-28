@@ -6,13 +6,14 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Route;
 
 /**
- * S09/S10/S11/S12/S14/S16 scope audit (docs/person-employment-foundation-specification.md
+ * S09/S10/S11/S12/S14/S16/S20 scope audit (docs/person-employment-foundation-specification.md
  * §2/§17/§21/§24 P24, docs/employment-status-history-foundation-specification.md §3/§13/§18,
  * docs/organizational-placement-foundation-specification.md §6.1/§20/§25 P22,
  * docs/full-secondment-foundation-specification.md §18/§26,
  * docs/transfer-foundation-specification.md §7/§26, and
- * docs/workplace-assignment-foundation-specification.md §S16.5/§S16.21): the hr schema contains
- * exactly the six S09/S10/S11/S12/S16-authorized tables and nothing else — S14 adds none
+ * docs/workplace-assignment-foundation-specification.md §S16.5/§S16.21, and
+ * docs/employment-category-history-foundation-specification.md §S20.6/§S20.19): the hr schema
+ * contains exactly the seven S09/S10/S11/S12/S16/S20-authorized tables and nothing else — S14 adds none
  * (persistence-design Option B, ADR-S14-001 §16); no table carries a speculative column
  * (organizational-unit on the S09/S10 tables, name/demographic on persons, a client-versioned or
  * mutable-current-workplace column on placement periods, a decision-type or destination-scheme
@@ -45,13 +46,13 @@ class ScopeBoundaryTest extends HumanResourcesTestCase
         'WorkSchedule',
     ];
 
-    public function test_hr_schema_contains_exactly_the_six_authorized_tables(): void
+    public function test_hr_schema_contains_exactly_the_seven_authorized_tables(): void
     {
         $tables = DB::table('information_schema.tables')->where('table_schema', 'hr')->pluck('table_name')->all();
         sort($tables);
 
         $this->assertSame(
-            ['employment_relationships', 'employment_status_periods', 'full_secondment_periods', 'organizational_placement_periods', 'persons', 'workplace_assignment_periods'],
+            ['employment_category_periods', 'employment_relationships', 'employment_status_periods', 'full_secondment_periods', 'organizational_placement_periods', 'persons', 'workplace_assignment_periods'],
             $tables,
         );
     }

@@ -11,6 +11,7 @@ use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\Organizationa
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\Person;
 use App\Modules\Organization\Infrastructure\Persistence\Eloquent\OrganizationalUnit;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\DecisionType;
+use App\Modules\Reference\Infrastructure\Persistence\Eloquent\EmploymentCategory;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\EmploymentStatusDetail;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\EmploymentType;
 use App\Modules\Security\Application\Commands\GrantOrganizationalScope;
@@ -132,5 +133,34 @@ abstract class HumanResourcesTestCase extends AuditTestCase
     protected function assignmentDecisionType(): DecisionType
     {
         return DecisionType::query()->where('code', 'ASSIGNMENT')->firstOrFail();
+    }
+
+    /**
+     * One of the seven S13-seeded ref.employment_categories grades
+     * (2026_10_03_000001_seed_ref_employment_categories_grades) by its stable code — S20's
+     * Employment Category History reuses this existing catalog, never a new one.
+     */
+    protected function employmentCategory(string $code): EmploymentCategory
+    {
+        return EmploymentCategory::query()->where('code', $code)->firstOrFail();
+    }
+
+    /**
+     * A synthetic, test-only ref.employment_categories row (rolled back with the test's own
+     * transaction) — used where a test must deactivate a category without touching the seeded
+     * grades' state.
+     */
+    protected function createSyntheticEmploymentCategory(bool $active = true): EmploymentCategory
+    {
+        $category = new EmploymentCategory([
+            'code' => 's20_test_'.Str::lower(Str::random(8)),
+            'name_ar' => 'فئة اختبار',
+            'name_en' => null,
+            'display_order' => 99,
+            'is_active' => $active,
+        ]);
+        $category->save();
+
+        return $category->refresh();
     }
 }

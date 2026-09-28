@@ -29,7 +29,12 @@ namespace App\Modules\HumanResources\Infrastructure\Authorization;
  * 2026_10_05_000003_seed_security_workplace_assignment_period_permissions) — they require S08
  * scope against up to TWO target units per operation
  * (docs/workplace-assignment-foundation-specification.md §S16.14), the identical composition
- * shape S12's own three permissions already established.
+ * shape S12's own three permissions already established. The two S20 permissions (from
+ * 2026_10_06_000002_seed_security_employment_category_period_permissions) are plain RBAC only —
+ * the same relationship-level precedent as S10's two status-period permissions
+ * (docs/employment-category-history-foundation-specification.md §S20.12, ADR-S20-001 §8). They
+ * authorize the temporal employment fact (hr.*), never the ref.employment_categories catalog
+ * itself, which remains administered by the Reference module's own reference.* permissions.
  */
 final class HumanResourcesPermissionCatalog
 {
@@ -73,6 +78,11 @@ final class HumanResourcesPermissionCatalog
 
     public const WORKPLACE_ASSIGNMENT_PERIODS_END = 'hr.workplace_assignment_periods.end';
 
+    /** S20 (docs/employment-category-history-foundation-specification.md §S20.12). */
+    public const EMPLOYMENT_CATEGORY_PERIODS_VIEW = 'hr.employment_category_periods.view';
+
+    public const EMPLOYMENT_CATEGORY_PERIODS_RECORD = 'hr.employment_category_periods.record';
+
     public const ALL = [
         self::PERSONS_VIEW,
         self::PERSONS_CREATE,
@@ -90,5 +100,7 @@ final class HumanResourcesPermissionCatalog
         self::WORKPLACE_ASSIGNMENT_PERIODS_VIEW,
         self::WORKPLACE_ASSIGNMENT_PERIODS_START,
         self::WORKPLACE_ASSIGNMENT_PERIODS_END,
+        self::EMPLOYMENT_CATEGORY_PERIODS_VIEW,
+        self::EMPLOYMENT_CATEGORY_PERIODS_RECORD,
     ];
 }
