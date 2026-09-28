@@ -52,8 +52,9 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
             // employment_category_periods (S20) likewise carries a RESTRICT FK to
             // employment_relationships.
             DB::table('hr.employment_category_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
-            // employment_contract_periods (S21) likewise.
+            // employment_contract_periods (S21) and employment_job_title_periods (S22) likewise.
             DB::table('hr.employment_contract_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
+            DB::table('hr.employment_job_title_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
             DB::table('hr.full_secondment_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
             DB::table('hr.workplace_assignment_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
             DB::table('hr.organizational_placement_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
@@ -1332,5 +1333,110 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
 
         DB::table('hr.employment_contract_periods')->where('employment_relationship_id', $relationshipId)->delete();
         DB::table('ref.contract_types')->where('id', $contractTypeId)->delete();
+    }
+
+    /**
+     * S22 (docs/employment-job-title-history-foundation-specification.md §S22.8): the database
+     * backstop for job title periods — two real, independent sessions racing overlapping inserts
+     * for the same relationship cannot both commit. The job title is committed here (none is
+     * seeded — S13 forbade fabricating titles) and removed in cleanup.
+     */
+    public function test_concurrent_overlapping_employment_job_title_periods_for_the_same_relationship_are_serialised_by_the_exclusion_constraint(): void
+    {
+        $personId = $this->person();
+        $relationshipId = (string) Str::uuid7();
+        $this->pg()->insert($this->insertSql(), [$relationshipId, $personId, $this->permanentEmploymentTypeId(), 'PN-TITLE-RACE-'.Str::random(6), 'PERMANENT', '2026-01-01']);
+        $jobTitleId = $this->jobTitleId();
+
+        $periodInsertSql = <<<'SQL'
+            insert into hr.employment_job_title_periods
+                (id, employment_relationship_id, job_title_id, effective_from, start_knowledge_state, created_at)
+            values (?, ?, ?, ?, 'KNOWN', now())
+            SQL;
+
+        $first = $this->pg();
+        $second = $this->second();
+
+        try {
+            $first->beginTransaction();
+            $first->insert($periodInsertSql, [(string) Str::uuid7(), $relationshipId, $jobTitleId, '2026-02-01']); // not committed yet
+
+            $second->statement("set lock_timeout = '300ms'");
+            $blocked = $this->databaseError(fn () => $second->transaction(fn () => $second->insert($periodInsertSql, [
+                (string) Str::uuid7(), $relationshipId, $jobTitleId, '2026-03-01',
+            ])));
+            $this->assertTrue(Errors::isLockNotAvailable($blocked), 'the second session waits on the first (lock_timeout fired)');
+
+            $first->commit();
+
+            $rejected = $this->databaseError(fn () => $second->transaction(fn () => $second->insert($periodInsertSql, [
+                (string) Str::uuid7(), $relationshipId, $jobTitleId, '2026-03-01',
+            ])));
+            $this->assertTrue(Errors::isExclusionViolation($rejected), 'once committed, the overlap is rejected by PostgreSQL itself');
+
+            $this->assertSame(1, (int) $this->scalar('select count(*) from hr.employment_job_title_periods where employment_relationship_id = ?', [$relationshipId]));
+        } finally {
+            foreach ([DB::connection(), $this->hasSecond() ? $this->second() : null] as $connection) {
+                while ($connection !== null && $connection->transactionLevel() > 0) {
+                    $connection->rollBack();
+                }
+            }
+            DB::table('hr.employment_job_title_periods')->where('employment_relationship_id', $relationshipId)->delete();
+            DB::table('ref.job_titles')->where('id', $jobTitleId)->delete();
+        }
+    }
+
+    /**
+     * S22 §S22.8/§S22.11: RecordEmploymentJobTitlePeriod's first statement (SELECT ... FOR UPDATE on
+     * the relationship) waits behind an in-flight EndEmploymentRelationship's scoped UPDATE, so a
+     * title can never be recorded against a relationship a concurrent end is about to close, nor
+     * slip between the end's bounds check and its commit.
+     */
+    public function test_concurrent_job_title_recording_and_employment_end_are_serialised_by_the_relationship_row_lock(): void
+    {
+        $personId = $this->person();
+        $relationshipId = (string) Str::uuid7();
+        $this->pg()->insert($this->insertSql(), [$relationshipId, $personId, $this->permanentEmploymentTypeId(), 'PN-TITLE-END-'.Str::random(6), 'PERMANENT', '2026-01-01']);
+
+        $lockSql = 'select id from hr.employment_relationships where id = ? for update';
+        $endSql = "update hr.employment_relationships set effective_to = ?, end_knowledge_state = 'KNOWN', version = 2 where id = ? and version = 1 and end_knowledge_state != 'KNOWN'";
+
+        $first = $this->pg();
+        $second = $this->second();
+
+        $first->beginTransaction();
+        $first->update($endSql, ['2026-06-01', $relationshipId]); // not committed yet
+
+        $second->statement("set lock_timeout = '300ms'");
+        $blocked = $this->databaseError(fn () => $second->transaction(fn () => $second->select($lockSql, [$relationshipId])));
+        $this->assertTrue(Errors::isLockNotAvailable($blocked), 'the job title recorder waits on the in-flight end');
+
+        $first->commit();
+
+        $second->transaction(function () use ($second, $relationshipId): void {
+            $state = $second->selectOne('select end_knowledge_state from hr.employment_relationships where id = ? for update', [$relationshipId]);
+            $this->assertSame('KNOWN', (string) $state->end_knowledge_state, 'the unblocked recorder sees the committed end, never a stale snapshot');
+        });
+
+        $this->assertSame(0, (int) $this->scalar('select count(*) from hr.employment_job_title_periods where employment_relationship_id = ?', [$relationshipId]));
+    }
+
+    /** Committed directly so the independent second session can see it; removed by the caller. */
+    private function jobTitleId(): string
+    {
+        $id = (string) Str::uuid7();
+        DB::table('ref.job_titles')->insert([
+            'id' => $id,
+            'code' => 's22_race_'.Str::lower(Str::random(8)),
+            'name_ar' => 'مسمى اختبار',
+            'name_en' => null,
+            'is_active' => true,
+            'display_order' => 99,
+            'version' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+
+        return $id;
     }
 }

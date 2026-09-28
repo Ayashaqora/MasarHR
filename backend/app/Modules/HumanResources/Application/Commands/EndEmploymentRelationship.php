@@ -7,6 +7,7 @@ use App\Modules\HumanResources\Domain\Exceptions\InvalidEndDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidFullSecondmentEndDateException;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentCategoryPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentContractPeriod;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentJobTitlePeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRelationship;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentStatusPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\FullSecondmentPeriod;
@@ -60,6 +61,12 @@ use Illuminate\Support\Carbon;
  * validity is closed at the relationship's effectiveTo when it would otherwise extend beyond it
  * (including a known-term contract ended early), so history never claims a contract in force
  * after employment ended. The agreed term (contractual_effective_to) is never rewritten.
+ *
+ * S22 (docs/employment-job-title-history-foundation-specification.md §S22.11, ADR-S22-001 §7):
+ * extended in the same place to close the open S22 Employment Job Title period at the same
+ * effectiveTo, with exactly the S20 category-period rule — a job title never remains in force
+ * beyond its relationship, a title that already ended is never extended, and a period that would
+ * lie outside the relationship rejects the end rather than being deleted or rewritten.
  *
  * No explicit lockForUpdate() is added here for the S15/S16 writes — the existing scoped UPDATE
  * above already acquires an implicit row-level lock on this relationship for the rest of the
@@ -124,6 +131,7 @@ final class EndEmploymentRelationship
         $this->closeOpenStatusPeriodIfAny($relationship, $effectiveTo);
         $this->closeOpenEmploymentCategoryPeriodIfAny($relationship, $effectiveTo);
         $this->closeEmploymentContractValidityAtEndIfAny($relationship, $effectiveTo);
+        $this->closeOpenEmploymentJobTitlePeriodIfAny($relationship, $effectiveTo);
 
         return $relationship->refresh();
     }
@@ -297,6 +305,48 @@ final class EndEmploymentRelationship
 
                 throw $e;
             }
+        }
+    }
+
+    /**
+     * S22 spec §S22.11 / ADR-S22-001 §7 — identical rule to closeOpenEmploymentCategoryPeriodIfAny()
+     * (S20), applied to job title periods. Bounds are validated before anything is written: a period
+     * that starts on or after effectiveTo, or is already closed at a date after it (only possible
+     * through imported history), would lie outside the relationship, so the end is rejected with
+     * S09's own InvalidEndDateException instead of being truncated or deleted. Otherwise the open
+     * period (if any) is temporally closed at exactly effectiveTo; a title that already ended on or
+     * before effectiveTo is left exactly as it is — never extended.
+     */
+    private function closeOpenEmploymentJobTitlePeriodIfAny(EmploymentRelationship $relationship, string $effectiveTo): void
+    {
+        $extendsBeyondEnd = EmploymentJobTitlePeriod::query()
+            ->where('employment_relationship_id', $relationship->getKey())
+            ->where(fn ($q) => $q
+                ->where('effective_from', '>=', $effectiveTo)
+                ->orWhere(fn ($q) => $q->whereNotNull('effective_to')->where('effective_to', '>', $effectiveTo)))
+            ->exists();
+
+        if ($extendsBeyondEnd) {
+            throw new InvalidEndDateException;
+        }
+
+        $openPeriod = EmploymentJobTitlePeriod::query()
+            ->where('employment_relationship_id', $relationship->getKey())
+            ->whereNull('effective_to')
+            ->first();
+
+        if ($openPeriod === null) {
+            return;
+        }
+
+        try {
+            $openPeriod->update(['effective_to' => $effectiveTo]);
+        } catch (QueryException $e) {
+            if (Errors::isCheckViolation($e)) {
+                throw new InvalidEndDateException;
+            }
+
+            throw $e;
         }
     }
 }

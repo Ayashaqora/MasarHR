@@ -3,6 +3,7 @@
 use App\Modules\HumanResources\Infrastructure\Authorization\HumanResourcesPermissionCatalog as HrPerm;
 use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentCategoryPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentContractPeriodController;
+use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentJobTitlePeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentRelationshipController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentStatusPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\FullSecondmentPeriodController;
@@ -336,5 +337,15 @@ Route::middleware('web')->group(function (): void {
                 ->middleware('permission:'.HrPerm::EMPLOYMENT_CONTRACT_PERIODS_VIEW)->name('persons.employment-relationships.employment-contract-periods.index');
             Route::post('/persons/{person}/employment-relationships/{employmentRelationship}/employment-contract-periods', [EmploymentContractPeriodController::class, 'store'])
                 ->middleware('permission:'.HrPerm::EMPLOYMENT_CONTRACT_PERIODS_RECORD)->name('persons.employment-relationships.employment-contract-periods.store');
+
+            // S22: Employment Job Title periods, nested under the same {person}/{employmentRelationship}
+            // (docs/employment-job-title-history-foundation-specification.md §S22.14). Plain RBAC
+            // only, exactly like S10/S20/S21 (ADR-S22-001 §9). Explicit record action only — no
+            // PATCH, no DELETE, no end route. ref.job_titles stays administered solely by the
+            // existing /reference/job-titles routes; supervisory titles are not touched.
+            Route::get('/persons/{person}/employment-relationships/{employmentRelationship}/employment-job-title-periods', [EmploymentJobTitlePeriodController::class, 'index'])
+                ->middleware('permission:'.HrPerm::EMPLOYMENT_JOB_TITLE_PERIODS_VIEW)->name('persons.employment-relationships.employment-job-title-periods.index');
+            Route::post('/persons/{person}/employment-relationships/{employmentRelationship}/employment-job-title-periods', [EmploymentJobTitlePeriodController::class, 'store'])
+                ->middleware('permission:'.HrPerm::EMPLOYMENT_JOB_TITLE_PERIODS_RECORD)->name('persons.employment-relationships.employment-job-title-periods.store');
         });
 });

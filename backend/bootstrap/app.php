@@ -11,6 +11,8 @@ use App\Modules\HumanResources\Domain\Exceptions\InvalidEmploymentCategoryPeriod
 use App\Modules\HumanResources\Domain\Exceptions\InvalidEmploymentContractPeriodDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidEmploymentContractTermException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidEmploymentContractTypeException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidEmploymentJobTitleException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidEmploymentJobTitlePeriodDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidEndDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidFullSecondmentEndDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidFullSecondmentStartDateException;
@@ -126,6 +128,8 @@ return Application::configure(basePath: dirname(__DIR__))
             InvalidEmploymentContractTypeException::class,
             InvalidEmploymentContractPeriodDateException::class,
             InvalidEmploymentContractTermException::class,
+            InvalidEmploymentJobTitleException::class,
+            InvalidEmploymentJobTitlePeriodDateException::class,
         ]);
 
         // §22 of the S03 authorization: preserve stated HTTP semantics for Security domain
@@ -269,6 +273,19 @@ return Application::configure(basePath: dirname(__DIR__))
         $exceptions->render(fn (InvalidEmploymentContractTermException $e) => response()->json([
             'message' => $e->getMessage(),
             'errors' => ['contractual_effective_to' => [$e->getMessage()]],
+        ], 422));
+
+        // S22 HumanResources-module domain failures
+        // (docs/employment-job-title-history-foundation-specification.md §S22.15). An already-ended
+        // relationship reuses EmploymentRelationshipAlreadyEndedException (S09, 409); a relationship
+        // end incompatible with a job title period reuses S09's InvalidEndDateException (422).
+        $exceptions->render(fn (InvalidEmploymentJobTitleException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['job_title_id' => [$e->getMessage()]],
+        ], 422));
+        $exceptions->render(fn (InvalidEmploymentJobTitlePeriodDateException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['effective_from' => [$e->getMessage()]],
         ], 422));
 
         $exceptions->render(fn (DuplicateUsernameException $e) => response()->json([

@@ -38,7 +38,11 @@ namespace App\Modules\HumanResources\Infrastructure\Authorization;
  * The two S21 permissions (from 2026_10_07_000002_seed_security_employment_contract_period_permissions)
  * follow exactly the same plain-RBAC, hr.*-not-reference.* precedent for the employment contract
  * fact (docs/employment-contract-foundation-specification.md §S21.13, ADR-S21-001 §10);
- * ref.contract_types stays administered solely by reference.*.
+ * ref.contract_types stays administered solely by reference.*. The two S22 permissions (from
+ * 2026_10_08_000002_seed_security_employment_job_title_period_permissions) follow the same
+ * plain-RBAC, hr.*-not-reference.* precedent for the employment job title fact
+ * (docs/employment-job-title-history-foundation-specification.md §S22.13, ADR-S22-001 §9);
+ * ref.job_titles stays administered solely by reference.*.
  */
 final class HumanResourcesPermissionCatalog
 {
@@ -92,6 +96,11 @@ final class HumanResourcesPermissionCatalog
 
     public const EMPLOYMENT_CONTRACT_PERIODS_RECORD = 'hr.employment_contract_periods.record';
 
+    /** S22 (docs/employment-job-title-history-foundation-specification.md §S22.13). */
+    public const EMPLOYMENT_JOB_TITLE_PERIODS_VIEW = 'hr.employment_job_title_periods.view';
+
+    public const EMPLOYMENT_JOB_TITLE_PERIODS_RECORD = 'hr.employment_job_title_periods.record';
+
     public const ALL = [
         self::PERSONS_VIEW,
         self::PERSONS_CREATE,
@@ -113,5 +122,7 @@ final class HumanResourcesPermissionCatalog
         self::EMPLOYMENT_CATEGORY_PERIODS_RECORD,
         self::EMPLOYMENT_CONTRACT_PERIODS_VIEW,
         self::EMPLOYMENT_CONTRACT_PERIODS_RECORD,
+        self::EMPLOYMENT_JOB_TITLE_PERIODS_VIEW,
+        self::EMPLOYMENT_JOB_TITLE_PERIODS_RECORD,
     ];
 }

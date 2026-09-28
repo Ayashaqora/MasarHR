@@ -9,6 +9,7 @@ use App\Modules\HumanResources\Application\Commands\EndEmploymentRelationship;
 use App\Modules\HumanResources\Application\Queries\ListEmploymentRelationshipsForPerson;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentCategoryPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentContractPeriod;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentJobTitlePeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRelationship;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentStatusPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\FullSecondmentPeriod;
@@ -158,6 +159,13 @@ class EmploymentRelationshipController
                 ->where(fn ($q) => $q->whereNull('effective_to')->orWhere('effective_to', '>', $data['effective_to']))
                 ->exists();
 
+            // S22 (docs/employment-job-title-history-foundation-specification.md §S22.11/§S22.16): same
+            // locked before/after snapshot as the S20 category flag.
+            $hadOpenJobTitlePeriod = EmploymentJobTitlePeriod::query()
+                ->where('employment_relationship_id', $employmentRelationship->getKey())
+                ->whereNull('effective_to')
+                ->exists();
+
             $spec = new AuditSpec(
                 action: 'hr.employment_relationship.end',
                 targetType: 'hr_employment_relationship',
@@ -168,7 +176,7 @@ class EmploymentRelationshipController
                 ],
                 metadata: function () use (
                     $employmentRelationship, $hadOpenSecondment, $hadOpenStatusPeriod, $hadOpenAssignment, $hadOpenCategoryPeriod,
-                    $hadContractBeyondEnd, $data,
+                    $hadContractBeyondEnd, $data, $hadOpenJobTitlePeriod,
                 ) {
                     $metadata = [];
 
@@ -215,6 +223,15 @@ class EmploymentRelationshipController
 
                     if ($hadContractBeyondEnd && ! $stillContractBeyondEnd) {
                         $metadata['employment_contract_period_closed_as_consequence'] = true;
+                    }
+
+                    $stillOpenJobTitlePeriod = EmploymentJobTitlePeriod::query()
+                        ->where('employment_relationship_id', $employmentRelationship->getKey())
+                        ->whereNull('effective_to')
+                        ->exists();
+
+                    if ($hadOpenJobTitlePeriod && ! $stillOpenJobTitlePeriod) {
+                        $metadata['employment_job_title_period_closed_as_consequence'] = true;
                     }
 
                     return $metadata;

@@ -15,6 +15,7 @@ use App\Modules\Reference\Infrastructure\Persistence\Eloquent\DecisionType;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\EmploymentCategory;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\EmploymentStatusDetail;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\EmploymentType;
+use App\Modules\Reference\Infrastructure\Persistence\Eloquent\JobTitle;
 use App\Modules\Security\Application\Commands\GrantOrganizationalScope;
 use App\Modules\Security\Infrastructure\Persistence\Eloquent\Principal;
 use Illuminate\Support\Str;
@@ -168,6 +169,25 @@ abstract class HumanResourcesTestCase extends AuditTestCase
         $type->save();
 
         return $type->refresh();
+    }
+
+    /**
+     * A synthetic, test-only ref.job_titles row (rolled back with the test's own transaction).
+     * ref.job_titles has NO seeded content — S13 was explicitly told not to fabricate or
+     * reconstruct a job-title list — so every S22 test supplies its own synthetic title.
+     */
+    protected function createSyntheticJobTitle(bool $active = true): JobTitle
+    {
+        $title = new JobTitle([
+            'code' => 's22_test_'.Str::lower(Str::random(8)),
+            'name_ar' => 'مسمى اختبار',
+            'name_en' => null,
+            'display_order' => 99,
+            'is_active' => $active,
+        ]);
+        $title->save();
+
+        return $title->refresh();
     }
 
     protected function createSyntheticEmploymentCategory(bool $active = true): EmploymentCategory
