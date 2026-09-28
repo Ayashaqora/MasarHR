@@ -15,8 +15,9 @@ use Illuminate\Support\Facades\Route;
  * docs/employment-category-history-foundation-specification.md §S20.6/§S20.19, and
  * docs/employment-contract-foundation-specification.md §S21.6, and
  * docs/employment-job-title-history-foundation-specification.md §S22.6, and
- * docs/person-qualification-foundation-specification.md §S23.6): the hr schema contains exactly the
- * ten S09/S10/S11/S12/S16/S20/S21/S22/S23-authorized tables and nothing else — S14 adds none
+ * docs/person-qualification-foundation-specification.md §S23.6, and
+ * docs/employee-specialty-history-foundation-specification.md §S26.6): the hr schema contains
+ * exactly the eleven S09/S10/S11/S12/S16/S20/S21/S22/S23/S26-authorized tables and nothing else — S14 adds none
  * (persistence-design Option B, ADR-S14-001 §16); no table carries a speculative column
  * (organizational-unit on the S09/S10 tables, name/demographic on persons, a client-versioned or
  * mutable-current-workplace column on placement periods, a decision-type or destination-scheme
@@ -53,13 +54,13 @@ class ScopeBoundaryTest extends HumanResourcesTestCase
         'WorkSchedule',
     ];
 
-    public function test_hr_schema_contains_exactly_the_ten_authorized_tables(): void
+    public function test_hr_schema_contains_exactly_the_eleven_authorized_tables(): void
     {
         $tables = DB::table('information_schema.tables')->where('table_schema', 'hr')->pluck('table_name')->all();
         sort($tables);
 
         $this->assertSame(
-            ['employment_category_periods', 'employment_contract_periods', 'employment_job_title_periods', 'employment_relationships', 'employment_status_periods', 'full_secondment_periods', 'organizational_placement_periods', 'person_qualifications', 'persons', 'workplace_assignment_periods'],
+            ['employment_category_periods', 'employment_contract_periods', 'employment_job_title_periods', 'employment_relationships', 'employment_specialty_periods', 'employment_status_periods', 'full_secondment_periods', 'organizational_placement_periods', 'person_qualifications', 'persons', 'workplace_assignment_periods'],
             $tables,
         );
     }

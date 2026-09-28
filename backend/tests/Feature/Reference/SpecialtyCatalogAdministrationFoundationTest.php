@@ -366,12 +366,15 @@ class SpecialtyCatalogAdministrationFoundationTest extends ReferenceTestCase
             ->whereNotIn('table_schema', ['pg_catalog', 'information_schema'])
             ->get(['table_schema', 'table_name', 'column_name'])
             ->map(fn ($c) => "{$c->table_schema}.{$c->table_name}.{$c->column_name}")->sort()->values()->all();
-        $this->assertSame(['ref.specialty_cadre_category_mappings.specialty_id'], $specialtyColumns,
-            'no person/employment specialty FK or any other specialty column exists');
+        // S26 (docs/employee-specialty-history-foundation-specification.md, ADR-S26-001) later
+        // authorized exactly one employee-level specialty fact: the EmploymentRelationship-owned
+        // hr.employment_specialty_periods. S25 itself added none, and no Person specialty exists.
+        $this->assertSame(['hr.employment_specialty_periods.specialty_id', 'ref.specialty_cadre_category_mappings.specialty_id'], $specialtyColumns,
+            'no person specialty FK or any other specialty column exists');
 
         $specialtyTables = DB::table('information_schema.tables')->where('table_name', 'like', '%specialt%')
             ->get(['table_schema', 'table_name'])->map(fn ($t) => "{$t->table_schema}.{$t->table_name}")->sort()->values()->all();
-        $this->assertSame(['ref.specialties', 'ref.specialty_cadre_category_mappings'], $specialtyTables,
+        $this->assertSame(['hr.employment_specialty_periods', 'ref.specialties', 'ref.specialty_cadre_category_mappings'], $specialtyTables,
             'no assignment, history, academic or professional specialty table');
 
         $this->assertSame(0, DB::table('information_schema.tables')->where('table_schema', 'reporting')->count(), 'no Report 1 implementation');
@@ -380,15 +383,18 @@ class SpecialtyCatalogAdministrationFoundationTest extends ReferenceTestCase
     public function test_no_other_or_seed_value_exists(): void
     {
         $this->assertSame(0, Specialty::query()->count());
-        $this->assertSame(0, DB::table('migrations')->where('migration', 'like', '%specialt%')->where('migration', 'like', '%seed%')->count(),
+        $this->assertSame(0, DB::table('migrations')->where('migration', 'like', '%seed_ref%specialt%')->count(),
             'no specialty seed migration');
     }
 
     public function test_no_hr_route_and_no_employee_360_surface_exposes_specialty(): void
     {
+        // S26 later authorized exactly the two employment-specialty-period routes (ADR-S26-001);
+        // anything else under hr/* naming specialty would be an unauthorized assignment surface.
         $hrSpecialtyRoutes = collect(app('router')->getRoutes())
-            ->filter(fn ($route) => str_starts_with($route->uri(), 'api/v1/hr') && str_contains($route->uri(), 'specialt'));
-        $this->assertCount(0, $hrSpecialtyRoutes);
+            ->filter(fn ($route) => str_starts_with($route->uri(), 'api/v1/hr') && str_contains($route->uri(), 'specialt'))
+            ->map(fn ($route) => $route->uri())->unique()->values()->all();
+        $this->assertSame(['api/v1/hr/persons/{person}/employment-relationships/{employmentRelationship}/employment-specialty-periods'], $hrSpecialtyRoutes);
 
         $frontend = base_path('../frontend/src');
         if (is_dir($frontend)) {

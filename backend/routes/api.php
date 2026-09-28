@@ -5,6 +5,7 @@ use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentCategoryP
 use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentContractPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentJobTitlePeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentRelationshipController;
+use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentSpecialtyPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentStatusPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\FullSecondmentPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\OrganizationalPlacementPeriodController;
@@ -368,5 +369,15 @@ Route::middleware('web')->group(function (): void {
                 ->middleware('permission:'.HrPerm::EMPLOYMENT_JOB_TITLE_PERIODS_VIEW)->name('persons.employment-relationships.employment-job-title-periods.index');
             Route::post('/persons/{person}/employment-relationships/{employmentRelationship}/employment-job-title-periods', [EmploymentJobTitlePeriodController::class, 'store'])
                 ->middleware('permission:'.HrPerm::EMPLOYMENT_JOB_TITLE_PERIODS_RECORD)->name('persons.employment-relationships.employment-job-title-periods.store');
+
+            // S26: Employee Specialty periods, nested under the same {person}/{employmentRelationship}
+            // (docs/employee-specialty-history-foundation-specification.md §S26.14). Plain RBAC only,
+            // exactly like S22. Explicit record action only — no PATCH, no DELETE, no end or
+            // correction route. ref.specialties stays administered solely by the S25
+            // /reference/specialties routes.
+            Route::get('/persons/{person}/employment-relationships/{employmentRelationship}/employment-specialty-periods', [EmploymentSpecialtyPeriodController::class, 'index'])
+                ->middleware('permission:'.HrPerm::EMPLOYMENT_SPECIALTY_PERIODS_VIEW)->name('persons.employment-relationships.employment-specialty-periods.index');
+            Route::post('/persons/{person}/employment-relationships/{employmentRelationship}/employment-specialty-periods', [EmploymentSpecialtyPeriodController::class, 'store'])
+                ->middleware('permission:'.HrPerm::EMPLOYMENT_SPECIALTY_PERIODS_RECORD)->name('persons.employment-relationships.employment-specialty-periods.store');
         });
 });

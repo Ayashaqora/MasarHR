@@ -20,6 +20,7 @@ use App\Modules\Reference\Infrastructure\Persistence\Eloquent\Gender;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\JobTitle;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\MaritalStatus;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\QualificationType;
+use App\Modules\Reference\Infrastructure\Persistence\Eloquent\Specialty;
 use App\Modules\Security\Application\Commands\GrantOrganizationalScope;
 use App\Modules\Security\Infrastructure\Persistence\Eloquent\Principal;
 use Illuminate\Support\Str;
@@ -216,6 +217,25 @@ abstract class HumanResourcesTestCase extends AuditTestCase
      * ref.job_titles has NO seeded content — S13 was explicitly told not to fabricate or
      * reconstruct a job-title list — so every S22 test supplies its own synthetic title.
      */
+    /**
+     * A synthetic, test-only ref.specialties row (rolled back with the test's own transaction).
+     * ref.specialties has NO seeded content (S25 ADR-S25-001 D), so every S26 test supplies its own
+     * synthetic specialty. Never an "Other" value.
+     */
+    protected function createSyntheticSpecialty(bool $active = true): Specialty
+    {
+        $specialty = new Specialty([
+            'code' => 's26_test_'.Str::lower(Str::random(8)),
+            'name_ar' => 'تخصص اختبار',
+            'name_en' => null,
+            'display_order' => 99,
+            'is_active' => $active,
+        ]);
+        $specialty->save();
+
+        return $specialty->refresh();
+    }
+
     protected function createSyntheticJobTitle(bool $active = true): JobTitle
     {
         $title = new JobTitle([

@@ -9,6 +9,7 @@ use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentCat
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentContractPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentJobTitlePeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRelationship;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentSpecialtyPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentStatusPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\FullSecondmentPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\Person;
@@ -67,6 +68,9 @@ use Illuminate\Support\Carbon;
  * effectiveTo, with exactly the S20 category-period rule — a job title never remains in force
  * beyond its relationship, a title that already ended is never extended, and a period that would
  * lie outside the relationship rejects the end rather than being deleted or rewritten.
+ *
+ * S26 (docs/employee-specialty-history-foundation-specification.md §S26.11, ADR-S26-001): the open
+ * S26 Employee Specialty period is closed in the same place with exactly the S20/S22 rule.
  *
  * No explicit lockForUpdate() is added here for the S15/S16 writes — the existing scoped UPDATE
  * above already acquires an implicit row-level lock on this relationship for the rest of the
@@ -132,6 +136,7 @@ final class EndEmploymentRelationship
         $this->closeOpenEmploymentCategoryPeriodIfAny($relationship, $effectiveTo);
         $this->closeEmploymentContractValidityAtEndIfAny($relationship, $effectiveTo);
         $this->closeOpenEmploymentJobTitlePeriodIfAny($relationship, $effectiveTo);
+        $this->closeOpenEmploymentSpecialtyPeriodIfAny($relationship, $effectiveTo);
 
         return $relationship->refresh();
     }
@@ -331,6 +336,45 @@ final class EndEmploymentRelationship
         }
 
         $openPeriod = EmploymentJobTitlePeriod::query()
+            ->where('employment_relationship_id', $relationship->getKey())
+            ->whereNull('effective_to')
+            ->first();
+
+        if ($openPeriod === null) {
+            return;
+        }
+
+        try {
+            $openPeriod->update(['effective_to' => $effectiveTo]);
+        } catch (QueryException $e) {
+            if (Errors::isCheckViolation($e)) {
+                throw new InvalidEndDateException;
+            }
+
+            throw $e;
+        }
+    }
+
+    /**
+     * S26 spec §S26.11 — identical rule to closeOpenEmploymentJobTitlePeriodIfAny() (S22), applied
+     * to employee specialty periods: a period lying outside the relationship rejects the end with
+     * S09's InvalidEndDateException (never truncated or deleted); otherwise the open period (if
+     * any) is temporally closed at exactly effectiveTo; an already-ended period is never extended.
+     */
+    private function closeOpenEmploymentSpecialtyPeriodIfAny(EmploymentRelationship $relationship, string $effectiveTo): void
+    {
+        $extendsBeyondEnd = EmploymentSpecialtyPeriod::query()
+            ->where('employment_relationship_id', $relationship->getKey())
+            ->where(fn ($q) => $q
+                ->where('effective_from', '>=', $effectiveTo)
+                ->orWhere(fn ($q) => $q->whereNotNull('effective_to')->where('effective_to', '>', $effectiveTo)))
+            ->exists();
+
+        if ($extendsBeyondEnd) {
+            throw new InvalidEndDateException;
+        }
+
+        $openPeriod = EmploymentSpecialtyPeriod::query()
             ->where('employment_relationship_id', $relationship->getKey())
             ->whereNull('effective_to')
             ->first();

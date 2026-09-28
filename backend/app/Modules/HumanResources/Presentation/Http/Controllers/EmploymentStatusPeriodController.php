@@ -10,6 +10,7 @@ use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentCat
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentContractPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentJobTitlePeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRelationship;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentSpecialtyPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentStatusPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\FullSecondmentPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\Person;
@@ -124,6 +125,13 @@ class EmploymentStatusPeriodController
                 ->whereNull('effective_to')
                 ->exists();
 
+            // S26 (docs/employee-specialty-history-foundation-specification.md §S26.11): same locked
+            // before/after snapshot as the S22 job title flag.
+            $hadOpenSpecialtyPeriod = EmploymentSpecialtyPeriod::query()
+                ->where('employment_relationship_id', $employmentRelationship->getKey())
+                ->whereNull('effective_to')
+                ->exists();
+
             $spec = new AuditSpec(
                 action: 'hr.employment_status_period.record',
                 targetType: 'hr_employment_status_period',
@@ -133,7 +141,7 @@ class EmploymentStatusPeriodController
                     'status_detail_id' => $period->status_detail_id,
                     'effective_from' => $period->effective_from?->toDateString(),
                 ],
-                metadata: function () use ($statusDetail, $employmentRelationship, $wasAlreadyEnded, $hadOpenSecondment, $hadOpenCategoryPeriod, $hadContractBeyondEnd, $data, $hadOpenJobTitlePeriod) {
+                metadata: function () use ($statusDetail, $employmentRelationship, $wasAlreadyEnded, $hadOpenSecondment, $hadOpenCategoryPeriod, $hadContractBeyondEnd, $data, $hadOpenJobTitlePeriod, $hadOpenSpecialtyPeriod) {
                     $metadata = ['status_detail_code' => $statusDetail->code];
 
                     $freshRelationship = EmploymentRelationship::query()
@@ -184,6 +192,15 @@ class EmploymentStatusPeriodController
 
                         if ($hadOpenJobTitlePeriod && ! $stillOpenJobTitlePeriod) {
                             $metadata['employment_job_title_period_closed_as_consequence'] = true;
+                        }
+
+                        $stillOpenSpecialtyPeriod = EmploymentSpecialtyPeriod::query()
+                            ->where('employment_relationship_id', $employmentRelationship->getKey())
+                            ->whereNull('effective_to')
+                            ->exists();
+
+                        if ($hadOpenSpecialtyPeriod && ! $stillOpenSpecialtyPeriod) {
+                            $metadata['employment_specialty_period_closed_as_consequence'] = true;
                         }
                     }
 

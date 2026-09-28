@@ -53,6 +53,7 @@ class ApiEndpointsTest extends SecurityTestCase
                 'hr.employment_contract_periods.view', 'hr.employment_contract_periods.record',
                 'hr.employment_job_title_periods.view', 'hr.employment_job_title_periods.record',
                 'hr.person_qualifications.view', 'hr.person_qualifications.record',
+                'hr.employment_specialty_periods.view', 'hr.employment_specialty_periods.record',
             ],
             $codes,
         );

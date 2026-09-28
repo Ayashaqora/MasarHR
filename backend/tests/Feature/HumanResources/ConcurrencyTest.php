@@ -1423,6 +1423,95 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
         $this->assertSame(0, (int) $this->scalar('select count(*) from hr.employment_job_title_periods where employment_relationship_id = ?', [$relationshipId]));
     }
 
+    /**
+     * S26 (docs/employee-specialty-history-foundation-specification.md §S26.8): the database
+     * backstop for employee specialty periods — two real, independent sessions racing overlapping
+     * inserts for the same relationship cannot both commit (write skew is impossible). The
+     * specialty is committed here (none is seeded — ADR-S25-001 D) and removed in cleanup.
+     */
+    public function test_concurrent_overlapping_employment_specialty_periods_for_the_same_relationship_are_serialised_by_the_exclusion_constraint(): void
+    {
+        $personId = $this->person();
+        $relationshipId = (string) Str::uuid7();
+        $this->pg()->insert($this->insertSql(), [$relationshipId, $personId, $this->permanentEmploymentTypeId(), 'PN-SPEC-RACE-'.Str::random(6), 'PERMANENT', '2026-01-01']);
+        $specialtyId = (string) Str::uuid7();
+        DB::table('ref.specialties')->insert([
+            'id' => $specialtyId, 'code' => 's26_race_'.Str::lower(Str::random(8)), 'name_ar' => 'تخصص اختبار', 'name_en' => null,
+            'is_active' => true, 'display_order' => 99, 'version' => 1, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        $periodInsertSql = <<<'SQL'
+            insert into hr.employment_specialty_periods
+                (id, employment_relationship_id, specialty_id, effective_from, created_at)
+            values (?, ?, ?, ?, now())
+            SQL;
+
+        $first = $this->pg();
+        $second = $this->second();
+
+        try {
+            $first->beginTransaction();
+            $first->insert($periodInsertSql, [(string) Str::uuid7(), $relationshipId, $specialtyId, '2026-02-01']); // not committed yet
+
+            $second->statement("set lock_timeout = '300ms'");
+            $blocked = $this->databaseError(fn () => $second->transaction(fn () => $second->insert($periodInsertSql, [
+                (string) Str::uuid7(), $relationshipId, $specialtyId, '2026-03-01',
+            ])));
+            $this->assertTrue(Errors::isLockNotAvailable($blocked), 'the second session waits on the first (lock_timeout fired)');
+
+            $first->commit();
+
+            $rejected = $this->databaseError(fn () => $second->transaction(fn () => $second->insert($periodInsertSql, [
+                (string) Str::uuid7(), $relationshipId, $specialtyId, '2026-03-01',
+            ])));
+            $this->assertTrue(Errors::isExclusionViolation($rejected), 'once committed, the overlap is rejected by PostgreSQL itself');
+
+            $this->assertSame(1, (int) $this->scalar('select count(*) from hr.employment_specialty_periods where employment_relationship_id = ?', [$relationshipId]));
+        } finally {
+            foreach ([DB::connection(), $this->hasSecond() ? $this->second() : null] as $connection) {
+                while ($connection !== null && $connection->transactionLevel() > 0) {
+                    $connection->rollBack();
+                }
+            }
+            DB::table('hr.employment_specialty_periods')->where('employment_relationship_id', $relationshipId)->delete();
+            DB::table('ref.specialties')->where('id', $specialtyId)->delete();
+        }
+    }
+
+    /**
+     * S26 §S26.8/§S26.11: RecordEmploymentSpecialtyPeriod's first statement (SELECT ... FOR UPDATE
+     * on the relationship) waits behind an in-flight EndEmploymentRelationship's scoped UPDATE, so a
+     * specialty can never be recorded against a relationship a concurrent end is about to close.
+     */
+    public function test_concurrent_specialty_recording_and_employment_end_are_serialised_by_the_relationship_row_lock(): void
+    {
+        $personId = $this->person();
+        $relationshipId = (string) Str::uuid7();
+        $this->pg()->insert($this->insertSql(), [$relationshipId, $personId, $this->permanentEmploymentTypeId(), 'PN-SPEC-END-'.Str::random(6), 'PERMANENT', '2026-01-01']);
+
+        $lockSql = 'select id from hr.employment_relationships where id = ? for update';
+        $endSql = "update hr.employment_relationships set effective_to = ?, end_knowledge_state = 'KNOWN', version = 2 where id = ? and version = 1 and end_knowledge_state != 'KNOWN'";
+
+        $first = $this->pg();
+        $second = $this->second();
+
+        $first->beginTransaction();
+        $first->update($endSql, ['2026-06-01', $relationshipId]); // not committed yet
+
+        $second->statement("set lock_timeout = '300ms'");
+        $blocked = $this->databaseError(fn () => $second->transaction(fn () => $second->select($lockSql, [$relationshipId])));
+        $this->assertTrue(Errors::isLockNotAvailable($blocked), 'the specialty recorder waits on the in-flight end');
+
+        $first->commit();
+
+        $second->transaction(function () use ($second, $relationshipId): void {
+            $state = $second->selectOne('select end_knowledge_state from hr.employment_relationships where id = ? for update', [$relationshipId]);
+            $this->assertSame('KNOWN', (string) $state->end_knowledge_state, 'the unblocked recorder sees the committed end, never a stale snapshot');
+        });
+
+        $this->assertSame(0, (int) $this->scalar('select count(*) from hr.employment_specialty_periods where employment_relationship_id = ?', [$relationshipId]));
+    }
+
     /** Committed directly so the independent second session can see it; removed by the caller. */
     private function jobTitleId(): string
     {

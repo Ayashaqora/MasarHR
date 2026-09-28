@@ -14,6 +14,8 @@ use App\Modules\HumanResources\Domain\Exceptions\InvalidEmploymentContractTermEx
 use App\Modules\HumanResources\Domain\Exceptions\InvalidEmploymentContractTypeException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidEmploymentJobTitleException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidEmploymentJobTitlePeriodDateException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidEmploymentSpecialtyException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidEmploymentSpecialtyPeriodDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidEndDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidFullSecondmentEndDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidFullSecondmentStartDateException;
@@ -136,6 +138,8 @@ return Application::configure(basePath: dirname(__DIR__))
             InvalidEmploymentContractTermException::class,
             InvalidEmploymentJobTitleException::class,
             InvalidEmploymentJobTitlePeriodDateException::class,
+            InvalidEmploymentSpecialtyException::class,
+            InvalidEmploymentSpecialtyPeriodDateException::class,
             DuplicatePersonQualificationException::class,
             InvalidPersonQualificationAcademicDegreeException::class,
             InvalidPersonQualificationTypeException::class,
@@ -296,6 +300,17 @@ return Application::configure(basePath: dirname(__DIR__))
             'errors' => ['job_title_id' => [$e->getMessage()]],
         ], 422));
         $exceptions->render(fn (InvalidEmploymentJobTitlePeriodDateException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['effective_from' => [$e->getMessage()]],
+        ], 422));
+
+        // S26 HumanResources-module domain failures
+        // (docs/employee-specialty-history-foundation-specification.md §S26.15) — same shapes as S22.
+        $exceptions->render(fn (InvalidEmploymentSpecialtyException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['specialty_id' => [$e->getMessage()]],
+        ], 422));
+        $exceptions->render(fn (InvalidEmploymentSpecialtyPeriodDateException $e) => response()->json([
             'message' => $e->getMessage(),
             'errors' => ['effective_from' => [$e->getMessage()]],
         ], 422));
