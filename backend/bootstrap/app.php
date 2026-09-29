@@ -28,6 +28,8 @@ use App\Modules\HumanResources\Domain\Exceptions\InvalidTransferDecisionTypeExce
 use App\Modules\HumanResources\Domain\Exceptions\InvalidWorkplaceAssignmentDecisionTypeException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidWorkplaceAssignmentEndDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidWorkplaceAssignmentStartDateException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidWorkSchedulePeriodDateException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidWorkScheduleWeekdaysException;
 use App\Modules\HumanResources\Domain\Exceptions\NoActiveFullSecondmentException;
 use App\Modules\HumanResources\Domain\Exceptions\NoActiveWorkplaceAssignmentException;
 use App\Modules\HumanResources\Domain\Exceptions\OverlappingEmploymentRelationshipException;
@@ -140,6 +142,8 @@ return Application::configure(basePath: dirname(__DIR__))
             InvalidEmploymentJobTitlePeriodDateException::class,
             InvalidEmploymentSpecialtyException::class,
             InvalidEmploymentSpecialtyPeriodDateException::class,
+            InvalidWorkScheduleWeekdaysException::class,
+            InvalidWorkSchedulePeriodDateException::class,
             DuplicatePersonQualificationException::class,
             InvalidPersonQualificationAcademicDegreeException::class,
             InvalidPersonQualificationTypeException::class,
@@ -311,6 +315,17 @@ return Application::configure(basePath: dirname(__DIR__))
             'errors' => ['specialty_id' => [$e->getMessage()]],
         ], 422));
         $exceptions->render(fn (InvalidEmploymentSpecialtyPeriodDateException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['effective_from' => [$e->getMessage()]],
+        ], 422));
+
+        // S29 HumanResources-module domain failures
+        // (docs/work-schedule-foundation-specification.md §S29.14) — same shapes as S26.
+        $exceptions->render(fn (InvalidWorkScheduleWeekdaysException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['weekdays' => [$e->getMessage()]],
+        ], 422));
+        $exceptions->render(fn (InvalidWorkSchedulePeriodDateException $e) => response()->json([
             'message' => $e->getMessage(),
             'errors' => ['effective_from' => [$e->getMessage()]],
         ], 422));

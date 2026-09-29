@@ -23,10 +23,13 @@ use Illuminate\Support\Facades\DB;
  *
  * S25 (docs/specialty-catalog-administration-foundation-specification.md) likewise adds no ref.*
  * table and no seed — it only adds administration for the existing ref.specialties catalog.
+ *
+ * S29 (docs/work-schedule-foundation-specification.md §S29.5, ADR-S29-002) adds exactly one
+ * structural table, ref.weekdays (seven stable weekday identities, no administration) — 23 total.
  */
 class ScopeBoundaryTest extends ReferenceTestCase
 {
-    public function test_ref_schema_contains_exactly_the_twenty_two_authorized_tables(): void
+    public function test_ref_schema_contains_exactly_the_twenty_three_authorized_tables(): void
     {
         $expected = [
             'genders', 'marital_statuses', 'marital_status_aliases', 'decision_types', 'employment_status_categories',
@@ -38,6 +41,8 @@ class ScopeBoundaryTest extends ReferenceTestCase
             'monthly_cadre_categories', 'contract_based_population_categories',
             'specialty_cadre_category_mappings', 'job_title_administrator_classifications',
             'contract_type_population_mappings',
+            // S29 addition (ADR-S29-002):
+            'weekdays',
         ];
 
         $tables = DB::table('information_schema.tables')->where('table_schema', 'ref')->pluck('table_name')->all();

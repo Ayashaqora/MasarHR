@@ -13,6 +13,7 @@ use App\Modules\HumanResources\Presentation\Http\Controllers\PersonController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\PersonQualificationController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\TransferController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\WorkplaceAssignmentPeriodController;
+use App\Modules\HumanResources\Presentation\Http\Controllers\WorkSchedulePeriodController;
 use App\Modules\Organization\Infrastructure\Authorization\OrganizationPermissionCatalog as OrgPerm;
 use App\Modules\Organization\Presentation\Http\Controllers\OrganizationalUnitController;
 use App\Modules\Platform\Presentation\Http\Controllers\HealthController;
@@ -379,5 +380,14 @@ Route::middleware('web')->group(function (): void {
                 ->middleware('permission:'.HrPerm::EMPLOYMENT_SPECIALTY_PERIODS_VIEW)->name('persons.employment-relationships.employment-specialty-periods.index');
             Route::post('/persons/{person}/employment-relationships/{employmentRelationship}/employment-specialty-periods', [EmploymentSpecialtyPeriodController::class, 'store'])
                 ->middleware('permission:'.HrPerm::EMPLOYMENT_SPECIALTY_PERIODS_RECORD)->name('persons.employment-relationships.employment-specialty-periods.store');
+
+            // S29: Work Schedule periods, nested under the same {person}/{employmentRelationship}
+            // (docs/work-schedule-foundation-specification.md §S29.13, ADR-S29-001). Plain RBAC only,
+            // exactly like S26. Explicit record action only — no PATCH, no DELETE, no end or
+            // correction route. ref.weekdays is structural and has no administration route.
+            Route::get('/persons/{person}/employment-relationships/{employmentRelationship}/work-schedule-periods', [WorkSchedulePeriodController::class, 'index'])
+                ->middleware('permission:'.HrPerm::WORK_SCHEDULE_PERIODS_VIEW)->name('persons.employment-relationships.work-schedule-periods.index');
+            Route::post('/persons/{person}/employment-relationships/{employmentRelationship}/work-schedule-periods', [WorkSchedulePeriodController::class, 'store'])
+                ->middleware('permission:'.HrPerm::WORK_SCHEDULE_PERIODS_RECORD)->name('persons.employment-relationships.work-schedule-periods.store');
         });
 });

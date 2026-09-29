@@ -662,10 +662,12 @@ class EmployeeSpecialtyHistoryFoundationTest extends HumanResourcesTestCase
         foreach (['import', 'staging'] as $schema) {
             $this->assertSame(0, DB::table('information_schema.tables')->where('table_schema', $schema)->count(), "no {$schema} engine");
         }
-        foreach (['promotion', 'job_desc', 'supervisory_assignment', 'partial_secondment', 'work_schedule'] as $forbidden) {
+        // 'work_schedule'/'WorkSchedule' were removed in S29 (docs/work-schedule-foundation-specification.md),
+        // which authorizes that domain itself.
+        foreach (['promotion', 'job_desc', 'supervisory_assignment', 'partial_secondment'] as $forbidden) {
             $this->assertSame(0, DB::table('information_schema.tables')->where('table_name', 'like', "%{$forbidden}%")->count(), "no {$forbidden} table");
         }
-        foreach (['Promotion', 'JobDescription', 'SupervisoryAssignment', 'PartialSecondment', 'WorkSchedule', 'Import'] as $forbidden) {
+        foreach (['Promotion', 'JobDescription', 'SupervisoryAssignment', 'PartialSecondment', 'Import'] as $forbidden) {
             $this->assertSame([], glob(base_path("app/Modules/*/Application/Commands/*{$forbidden}*.php")), "no {$forbidden} command");
         }
     }

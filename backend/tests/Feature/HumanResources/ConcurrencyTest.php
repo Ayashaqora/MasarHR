@@ -2,7 +2,10 @@
 
 namespace Tests\Feature\HumanResources;
 
+use App\Modules\HumanResources\Application\Commands\RecordWorkSchedulePeriod;
 use App\Modules\HumanResources\Application\Commands\StartWorkplaceAssignment;
+use App\Modules\HumanResources\Domain\Exceptions\EmploymentRelationshipAlreadyEndedException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidWorkSchedulePeriodDateException;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRelationship;
 use App\Modules\Organization\Infrastructure\Persistence\Eloquent\OrganizationalUnit;
 use App\Modules\Platform\Infrastructure\Persistence\Postgres\PostgresErrorClassifier as Errors;
@@ -59,6 +62,11 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
             // employment_contract_periods (S21) and employment_job_title_periods (S22) likewise.
             DB::table('hr.employment_contract_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
             DB::table('hr.employment_job_title_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
+            // work_schedule_period_weekdays → work_schedule_periods (S29): membership first, then the
+            // periods (RESTRICT FK to employment_relationships).
+            $schedulePeriodIds = DB::table('hr.work_schedule_periods')->whereIn('employment_relationship_id', $relationshipIds)->pluck('id');
+            DB::table('hr.work_schedule_period_weekdays')->whereIn('work_schedule_period_id', $schedulePeriodIds)->delete();
+            DB::table('hr.work_schedule_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
             DB::table('hr.full_secondment_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
             DB::table('hr.workplace_assignment_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
             DB::table('hr.organizational_placement_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
@@ -1629,5 +1637,120 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
             DB::table('hr.person_qualifications')->where('person_id', $personId)->delete();
             DB::table('ref.academic_degrees')->where('id', $degreeId)->delete();
         }
+    }
+
+    /**
+     * S29 (docs/work-schedule-foundation-specification.md §S29.11): the database backstop for work
+     * schedule periods — two real, independent sessions racing overlapping inserts for the same
+     * relationship cannot both commit (write skew is impossible).
+     */
+    public function test_concurrent_overlapping_work_schedule_periods_for_the_same_relationship_are_serialised_by_the_exclusion_constraint(): void
+    {
+        $personId = $this->person();
+        $relationshipId = (string) Str::uuid7();
+        $this->pg()->insert($this->insertSql(), [$relationshipId, $personId, $this->permanentEmploymentTypeId(), 'PN-S29-RACE-'.Str::random(6), 'PERMANENT', '2026-01-01']);
+
+        $periodInsertSql = 'insert into hr.work_schedule_periods (id, employment_relationship_id, effective_from, created_at) values (?, ?, ?, now())';
+
+        $first = $this->pg();
+        $second = $this->second();
+
+        $first->beginTransaction();
+        $first->insert($periodInsertSql, [(string) Str::uuid7(), $relationshipId, '2026-02-01']); // not committed yet
+
+        $second->statement("set lock_timeout = '300ms'");
+        $blocked = $this->databaseError(fn () => $second->transaction(fn () => $second->insert($periodInsertSql, [
+            (string) Str::uuid7(), $relationshipId, '2026-03-01',
+        ])));
+        $this->assertTrue(Errors::isLockNotAvailable($blocked), 'the second session waits on the first (lock_timeout fired)');
+
+        $first->commit();
+
+        $rejected = $this->databaseError(fn () => $second->transaction(fn () => $second->insert($periodInsertSql, [
+            (string) Str::uuid7(), $relationshipId, '2026-03-01',
+        ])));
+        $this->assertTrue(Errors::isExclusionViolation($rejected), 'once committed, the overlap is rejected by PostgreSQL itself');
+
+        $this->assertSame(1, (int) $this->scalar('select count(*) from hr.work_schedule_periods where employment_relationship_id = ?', [$relationshipId]));
+    }
+
+    /**
+     * S29 §S29.11: RecordWorkSchedulePeriod itself takes the EmploymentRelationship row lock first,
+     * so an in-flight concurrent schedule write (holding that lock, not committed) makes it wait;
+     * once committed, the command sees that period as the latest and applies the ordinary rules —
+     * a later start closes it (adjacent, never overlapping), an earlier or equal start is rejected
+     * without a partial write.
+     */
+    public function test_concurrent_schedule_recordings_are_serialised_by_the_relationship_row_lock(): void
+    {
+        $personId = $this->person();
+        $relationshipId = (string) Str::uuid7();
+        $this->pg()->insert($this->insertSql(), [$relationshipId, $personId, $this->permanentEmploymentTypeId(), 'PN-S29-LOCK-'.Str::random(6), 'PERMANENT', '2026-01-01']);
+        $relationship = EmploymentRelationship::query()->findOrFail($relationshipId);
+        $mondayId = (string) $this->scalar("select id from ref.weekdays where code = 'MONDAY'");
+        $inFlightId = (string) Str::uuid7();
+
+        $second = $this->second();
+        $second->beginTransaction();
+        $second->select('select id from hr.employment_relationships where id = ? for update', [$relationshipId]);
+        $second->insert('insert into hr.work_schedule_periods (id, employment_relationship_id, effective_from, created_at) values (?, ?, ?, now())', [$inFlightId, $relationshipId, '2026-03-01']);
+        $second->insert('insert into hr.work_schedule_period_weekdays (work_schedule_period_id, weekday_id) values (?, ?)', [$inFlightId, $mondayId]);
+
+        DB::statement("set lock_timeout = '300ms'");
+        try {
+            $blocked = $this->databaseError(fn () => app(RecordWorkSchedulePeriod::class)->handle($relationship, '2026-02-01', ['TUESDAY']));
+            $this->assertTrue(Errors::isLockNotAvailable($blocked), 'the recorder waits on the in-flight schedule write (lock_timeout fired)');
+        } finally {
+            DB::statement('set lock_timeout = 0');
+        }
+
+        $second->commit();
+
+        try {
+            app(RecordWorkSchedulePeriod::class)->handle($relationship->refresh(), '2026-02-01', ['TUESDAY']);
+            $this->fail('an earlier start than the committed concurrent period is rejected');
+        } catch (InvalidWorkSchedulePeriodDateException) {
+        }
+        $this->assertNull($this->scalar('select effective_to from hr.work_schedule_periods where id = ?', [$inFlightId]), 'no partial closure');
+
+        app(RecordWorkSchedulePeriod::class)->handle($relationship->refresh(), '2026-05-01', ['TUESDAY']);
+
+        $this->assertSame('2026-05-01', (string) $this->scalar('select effective_to from hr.work_schedule_periods where id = ?', [$inFlightId]));
+        $this->assertSame(2, (int) $this->scalar('select count(*) from hr.work_schedule_periods where employment_relationship_id = ?', [$relationshipId]));
+    }
+
+    /**
+     * S29 §S29.10/§S29.11: a schedule can never be recorded against a relationship a concurrent end
+     * is about to close — RecordWorkSchedulePeriod waits behind the in-flight end's row lock and,
+     * once unblocked, sees the committed KNOWN end and rejects (409).
+     */
+    public function test_concurrent_schedule_recording_and_employment_end_are_serialised_by_the_relationship_row_lock(): void
+    {
+        $personId = $this->person();
+        $relationshipId = (string) Str::uuid7();
+        $this->pg()->insert($this->insertSql(), [$relationshipId, $personId, $this->permanentEmploymentTypeId(), 'PN-S29-END-'.Str::random(6), 'PERMANENT', '2026-01-01']);
+        $relationship = EmploymentRelationship::query()->findOrFail($relationshipId);
+
+        $second = $this->second();
+        $second->beginTransaction();
+        $second->update("update hr.employment_relationships set effective_to = ?, end_knowledge_state = 'KNOWN', version = 2 where id = ? and version = 1 and end_knowledge_state != 'KNOWN'", ['2026-06-01', $relationshipId]);
+
+        DB::statement("set lock_timeout = '300ms'");
+        try {
+            $blocked = $this->databaseError(fn () => app(RecordWorkSchedulePeriod::class)->handle($relationship, '2026-03-01', ['MONDAY']));
+            $this->assertTrue(Errors::isLockNotAvailable($blocked), 'the recorder waits on the in-flight end');
+        } finally {
+            DB::statement('set lock_timeout = 0');
+        }
+
+        $second->commit();
+
+        try {
+            app(RecordWorkSchedulePeriod::class)->handle($relationship, '2026-03-01', ['MONDAY']);
+            $this->fail('the unblocked recorder sees the committed end, never a stale snapshot');
+        } catch (EmploymentRelationshipAlreadyEndedException) {
+        }
+
+        $this->assertSame(0, (int) $this->scalar('select count(*) from hr.work_schedule_periods where employment_relationship_id = ?', [$relationshipId]));
     }
 }

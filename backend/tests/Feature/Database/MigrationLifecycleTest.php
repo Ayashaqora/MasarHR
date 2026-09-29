@@ -206,6 +206,18 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
         'database/migrations/2026_10_11_000002_seed_security_employment_specialty_period_permissions.php',
     ];
 
+    /**
+     * S29 migrations, in up() order (2026_10_12). One structural ref table (ref.weekdays, seven
+     * seeded weekday identities), two new hr tables (docs/work-schedule-foundation-specification.md
+     * §S29.5/§S29.6) with RESTRICT FKs to hr.employment_relationships (S09) and ref.weekdays, plus
+     * one permission seed — so it rolls back before S09.
+     */
+    private const S29_MIGRATIONS = [
+        'database/migrations/2026_10_12_000001_create_ref_weekdays_table.php',
+        'database/migrations/2026_10_12_000002_create_hr_work_schedule_periods_table.php',
+        'database/migrations/2026_10_12_000003_seed_security_work_schedule_period_permissions.php',
+    ];
+
     protected function tearDown(): void
     {
         // Whatever a test did, leave the test database fully migrated and free of probe objects.
@@ -303,6 +315,9 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
         // hr.employment_specialty_periods (S26): RESTRICT FKs to hr.employment_relationships and
         // ref.specialties.
         $this->dropEmploymentSpecialtyPeriodSchemaObjects();
+        // hr.work_schedule_periods / hr.work_schedule_period_weekdays and ref.weekdays (S29):
+        // RESTRICT FKs to hr.employment_relationships and ref.weekdays.
+        $this->dropWorkSchedulePeriodSchemaObjects();
         // Dropped next: hr.employment_relationships (S09) carries RESTRICT FKs to both
         // hr.persons and ref.employment_types, and hr.employment_status_periods (S10) carries
         // RESTRICT FKs to both hr.employment_relationships and ref.employment_status_details, so
@@ -587,6 +602,18 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
         DB::table('migrations')->where('migration', 'like', '2026_10_11%')->delete();
     }
 
+    /**
+     * S29's two hr tables, its ref.weekdays table (whose seven rows the 2026_10_12 migration
+     * seeds itself) and its permission seed (2026_10_12 — see S29_MIGRATIONS).
+     */
+    private function dropWorkSchedulePeriodSchemaObjects(): void
+    {
+        $this->pg()->statement('drop table if exists hr.work_schedule_period_weekdays cascade');
+        $this->pg()->statement('drop table if exists hr.work_schedule_periods cascade');
+        $this->pg()->statement('drop table if exists ref.weekdays cascade');
+        DB::table('migrations')->where('migration', 'like', '2026_10_12%')->delete();
+    }
+
     /** S24's five hr.persons profile columns plus its permission seed (2026_10_10 — see S24_MIGRATIONS). */
     private function dropPersonProfileSchemaObjects(): void
     {
@@ -819,16 +846,24 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
         // S12's three, S14's one, S16's three, and S20's two (S10/S11/S12/S14/S16/S20 spec
         // §13/§16/§17/§13/§S16.14/§S20.12: none adds a new module name, since all extend the same
         // HumanResources module S09 owns), plus S21's, S22's and S23's two each, so the fixture
-        // assumption below is 24, plus S24's one and S26's two, so 27.
+        // assumption below is 24, plus S24's one, S26's two and S29's two, so 29.
         $hrPermissionsBefore = (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'");
         $employmentTypesBefore = (int) $this->scalar("select count(*) from ref.employment_types where code in ('permanent', 'contract')");
 
-        $this->assertSame(27, $hrPermissionsBefore, 'fixture assumption: the S09, S10, S11, S12, S14, S16, S20, S21, S22, S23, S24, and S26 permission seeds already ran');
+        $this->assertSame(29, $hrPermissionsBefore, 'fixture assumption: the S09, S10, S11, S12, S14, S16, S20, S21, S22, S23, S24, S26, and S29 permission seeds already ran');
         $this->assertSame(2, $employmentTypesBefore, 'fixture assumption: the S09 employment-type seed already ran');
 
-        // S26 first (RESTRICT FK to hr.employment_relationships), then S24 (columns on hr.persons),
-        // then S23 (RESTRICT FK to hr.persons), then S22, S21 and S20 (each a RESTRICT FK to
-        // hr.employment_relationships).
+        // S29 and S26 first (RESTRICT FKs to hr.employment_relationships), then S24 (columns on
+        // hr.persons), then S23 (RESTRICT FK to hr.persons), then S22, S21 and S20 (each a RESTRICT
+        // FK to hr.employment_relationships).
+        foreach (array_reverse(self::S29_MIGRATIONS) as $path) {
+            DB::transaction(function () use ($path): void {
+                $this->migration($path)->down();
+                $migrationName = pathinfo($path, PATHINFO_FILENAME);
+                DB::table('migrations')->where('migration', $migrationName)->delete();
+            });
+        }
+
         foreach (array_reverse(self::S26_MIGRATIONS) as $path) {
             DB::transaction(function () use ($path): void {
                 $this->migration($path)->down();
@@ -918,14 +953,14 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
         }
 
         $this->assertSame(0, (int) $this->scalar(
-            "select count(*) from information_schema.tables where table_schema = 'hr' and table_name in ('persons', 'employment_relationships', 'employment_status_periods', 'organizational_placement_periods', 'full_secondment_periods', 'workplace_assignment_periods', 'employment_category_periods', 'employment_contract_periods', 'employment_job_title_periods', 'person_qualifications', 'employment_specialty_periods')"
-        ), 'down() must drop all eleven tables themselves (S09\'s two plus S10\'s, S11\'s, S12\'s, S16\'s, S20\'s, S21\'s, S22\'s, S23\'s, and S26\'s, rolled back first), not just their rows');
+            "select count(*) from information_schema.tables where table_schema = 'hr' and table_name in ('persons', 'employment_relationships', 'employment_status_periods', 'organizational_placement_periods', 'full_secondment_periods', 'workplace_assignment_periods', 'employment_category_periods', 'employment_contract_periods', 'employment_job_title_periods', 'person_qualifications', 'employment_specialty_periods', 'work_schedule_periods', 'work_schedule_period_weekdays')"
+        ), 'down() must drop all thirteen tables themselves (S09\'s two plus S10\'s, S11\'s, S12\'s, S16\'s, S20\'s, S21\'s, S22\'s, S23\'s, S26\'s, and S29\'s two, rolled back first), not just their rows');
         // 1, not 0: this loop rolls back S09/S10/S11/S12/S16. S14 (docs/transfer-foundation-
         // specification.md) adds no table with an FK forcing it to roll back before S09's own
         // table-creation migration (§16 — S14 has no table of its own at all), so its one
         // human_resources permission row is deliberately left behind here, exactly mirroring how
         // S07's organization-module permission is left behind (asserted just below).
-        $this->assertSame(1, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'"), 'the S09, S10, S11, S12, S16, S20, S21, S22, S23, S24, and S26 permission seed rows must be gone, leaving only S14\'s');
+        $this->assertSame(1, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'"), 'the S09, S10, S11, S12, S16, S20, S21, S22, S23, S24, S26, and S29 permission seed rows must be gone, leaving only S14\'s');
         $this->assertSame(0, (int) $this->scalar("select count(*) from ref.employment_types where code in ('permanent', 'contract')"), 'the S09 employment-type seed rows must be gone');
         $this->assertSame(0, (int) $this->scalar("select count(*) from ref.decision_types where code = 'ASSIGNMENT'"), 'the S16 decision-type seed row must be gone');
 
@@ -953,6 +988,8 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
         $this->assertSame(0, (int) $this->scalar('select count(*) from hr.employment_job_title_periods'), 'S22 seeds zero employment_job_title_periods rows');
         $this->assertSame(0, (int) $this->scalar('select count(*) from hr.person_qualifications'), 'S23 seeds zero person_qualifications rows');
         $this->assertSame(0, (int) $this->scalar('select count(*) from hr.employment_specialty_periods'), 'S26 seeds zero employment_specialty_periods rows');
+        $this->assertSame(0, (int) $this->scalar('select count(*) from hr.work_schedule_periods'), 'S29 seeds zero work_schedule_periods rows');
+        $this->assertSame(7, (int) $this->scalar('select count(*) from ref.weekdays'), 'S29 restores its seven weekday identities');
         $this->assertSame(1, (int) $this->scalar("select count(*) from ref.decision_types where code = 'ASSIGNMENT'"));
     }
 
@@ -1006,7 +1043,7 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
             "select count(*) from information_schema.tables where table_schema = 'hr' and table_name = 'workplace_assignment_periods'"
         ), "hr.workplace_assignment_periods (S16) must still exist, untouched by S10's rollback");
         // 22: the 14 above plus S20's, S21's, S22's and S23's two permissions each.
-        $this->assertSame(25, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources' and code not like '%status_periods%'"));
+        $this->assertSame(27, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources' and code not like '%status_periods%'"));
 
         $this->migrateTestDatabase();
 
@@ -1066,7 +1103,7 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
             "select count(*) from information_schema.tables where table_schema = 'hr' and table_name = 'workplace_assignment_periods'"
         ), "hr.workplace_assignment_periods (S16) must still exist, untouched by S11's rollback");
         // 22: plus S20's, S21's, S22's and S23's two permissions each.
-        $this->assertSame(25, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources' and code not like '%organizational_placement_periods%'"));
+        $this->assertSame(27, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources' and code not like '%organizational_placement_periods%'"));
 
         $this->migrateTestDatabase();
 
@@ -1125,7 +1162,7 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
         // total below (13, not 9 or 10) is S09's five permissions plus S10's two plus S11's two
         // plus S14's one plus S16's three.
         // 21: the 13 above plus S20's, S21's, S22's and S23's two permissions each.
-        $this->assertSame(24, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources' and code not like '%full_secondment_periods%'"));
+        $this->assertSame(26, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources' and code not like '%full_secondment_periods%'"));
 
         $this->migrateTestDatabase();
 
@@ -1301,7 +1338,7 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
             ), "hr.{$table} must still exist, untouched by S20's rollback");
         }
         // 22: the 16 pre-S20 hr permissions plus S21's, S22's and S23's two each.
-        $this->assertSame(25, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'"), 'every non-S20 hr permission survives');
+        $this->assertSame(27, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'"), 'every non-S20 hr permission survives');
 
         $this->migrateTestDatabase();
 
@@ -1348,7 +1385,7 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
             ), "hr.{$table} must still exist, untouched by S21's rollback");
         }
         // 22: every hr permission except S21's own two.
-        $this->assertSame(25, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'"), 'every non-S21 hr permission survives');
+        $this->assertSame(27, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'"), 'every non-S21 hr permission survives');
 
         $this->migrateTestDatabase();
 
@@ -1393,7 +1430,7 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
         }
         $this->assertSame($jobTitlesBefore, (int) $this->scalar('select count(*) from ref.job_titles'));
         // 22: every hr permission except S22's own two (S23's are independent of S22's table).
-        $this->assertSame(25, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'"), 'every non-S22 hr permission survives');
+        $this->assertSame(27, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'"), 'every non-S22 hr permission survives');
 
         $this->migrateTestDatabase();
 
@@ -1434,7 +1471,7 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
                 ), "{$schema}.{$table} must survive S23's rollback untouched");
             }
         }
-        $this->assertSame(25, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'"), 'every non-S23 hr permission survives');
+        $this->assertSame(27, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'"), 'every non-S23 hr permission survives');
 
         $this->migrateTestDatabase();
 
@@ -1472,7 +1509,7 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
             }
             $this->assertSame(0, (int) $this->scalar("select count(*) from security.permissions where code = 'hr.persons.update_profile'"));
             $this->assertSame(1, (int) $this->scalar('select count(*) from hr.persons where id = ?', [$legacyId]), 'the legacy person survives S24 rollback');
-            $this->assertSame(26, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'"), 'every non-S24 hr permission survives');
+            $this->assertSame(28, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'"), 'every non-S24 hr permission survives');
 
             $this->migrateTestDatabase();
 
@@ -1524,7 +1561,7 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
             }
         }
         $this->assertSame($specialtiesBefore, (int) $this->scalar('select count(*) from ref.specialties'));
-        $this->assertSame(25, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'"), 'every non-S26 hr permission survives');
+        $this->assertSame(27, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'"), 'every non-S26 hr permission survives');
 
         $this->migrateTestDatabase();
 
@@ -1532,6 +1569,53 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
         $this->assertSame(0, (int) $this->scalar('select count(*) from hr.employment_specialty_periods'), 'S26 seeds zero rows');
         $this->assertSame(1, (int) $this->scalar(
             "select count(*) from pg_constraint where conname = 'employment_specialty_periods_no_overlap' and contype = 'x'"
+        ));
+    }
+
+    /**
+     * S29 spec §S29.19 ("migration rollback/reapply"): round-trips the three S29 migrations directly,
+     * the same batch-independent way as S20–S26. Proves the migrations are additive — every
+     * employment stream survives — and that re-applying restores exactly the seven structural
+     * weekday identities with their constraints.
+     */
+    public function test_s29_migrations_roll_back_and_reapply_cleanly(): void
+    {
+        $permissionCodes = "('hr.work_schedule_periods.view', 'hr.work_schedule_periods.record')";
+        $before = (int) $this->scalar("select count(*) from security.permissions where code in {$permissionCodes}");
+        $this->assertSame(2, $before, 'fixture assumption: the S29 permission seed already ran');
+        $this->assertSame(7, (int) $this->scalar('select count(*) from ref.weekdays'), 'fixture assumption: the S29 weekday seed already ran');
+
+        foreach (array_reverse(self::S29_MIGRATIONS) as $path) {
+            DB::transaction(function () use ($path): void {
+                $this->migration($path)->down();
+                $migrationName = pathinfo($path, PATHINFO_FILENAME);
+                DB::table('migrations')->where('migration', $migrationName)->delete();
+            });
+        }
+
+        $this->assertSame(0, (int) $this->scalar(
+            "select count(*) from information_schema.tables where (table_schema = 'hr' and table_name in ('work_schedule_periods', 'work_schedule_period_weekdays')) or (table_schema = 'ref' and table_name = 'weekdays')"
+        ), 'down() must drop all three S29 tables themselves');
+        $this->assertSame(0, (int) $this->scalar("select count(*) from security.permissions where code in {$permissionCodes}"));
+        foreach (['hr' => ['employment_relationships', 'employment_specialty_periods', 'employment_job_title_periods', 'full_secondment_periods', 'workplace_assignment_periods'], 'ref' => ['specialties', 'employment_types']] as $schema => $tables) {
+            foreach ($tables as $table) {
+                $this->assertSame(1, (int) $this->scalar(
+                    'select count(*) from information_schema.tables where table_schema = ? and table_name = ?', [$schema, $table]
+                ), "{$schema}.{$table} must survive S29's rollback untouched");
+            }
+        }
+        $this->assertSame(27, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'"), 'every non-S29 hr permission survives');
+
+        $this->migrateTestDatabase();
+
+        $this->assertSame($before, (int) $this->scalar("select count(*) from security.permissions where code in {$permissionCodes}"));
+        $this->assertSame(0, (int) $this->scalar('select count(*) from hr.work_schedule_periods'), 'S29 seeds zero schedule rows');
+        $this->assertSame(
+            ['MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY', 'SUNDAY'],
+            DB::table('ref.weekdays')->orderBy('iso_day_number')->pluck('code')->all(),
+        );
+        $this->assertSame(1, (int) $this->scalar(
+            "select count(*) from pg_constraint where conname = 'work_schedule_periods_no_overlap' and contype = 'x'"
         ));
     }
 

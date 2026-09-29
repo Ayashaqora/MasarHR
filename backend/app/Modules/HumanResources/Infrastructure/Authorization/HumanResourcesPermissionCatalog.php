@@ -125,6 +125,11 @@ final class HumanResourcesPermissionCatalog
 
     public const EMPLOYMENT_SPECIALTY_PERIODS_RECORD = 'hr.employment_specialty_periods.record';
 
+    /** S29 (docs/work-schedule-foundation-specification.md §S29.12). */
+    public const WORK_SCHEDULE_PERIODS_VIEW = 'hr.work_schedule_periods.view';
+
+    public const WORK_SCHEDULE_PERIODS_RECORD = 'hr.work_schedule_periods.record';
+
     public const ALL = [
         self::PERSONS_VIEW,
         self::PERSONS_CREATE,
@@ -153,5 +158,7 @@ final class HumanResourcesPermissionCatalog
         self::PERSON_QUALIFICATIONS_RECORD,
         self::EMPLOYMENT_SPECIALTY_PERIODS_VIEW,
         self::EMPLOYMENT_SPECIALTY_PERIODS_RECORD,
+        self::WORK_SCHEDULE_PERIODS_VIEW,
+        self::WORK_SCHEDULE_PERIODS_RECORD,
     ];
 }

@@ -535,19 +535,27 @@ class ReportingAsOfFoundationTest extends HumanResourcesTestCase
         $this->assertIsArray(app(ListReportingPopulationAsOf::class)('2026-03-01', []));
     }
 
-    public function test_s27_adds_no_schema_materialization_partial_secondment_schedule_route_or_output(): void
+    public function test_s27_adds_no_schema_materialization_partial_secondment_route_or_output(): void
     {
         $this->assertSame(0, (int) DB::selectOne('select count(*) as c from pg_matviews')->c, 'no materialized view');
         $this->assertSame(0, DB::table('information_schema.tables')->where('table_schema', 'reporting')->count(), 'no reporting tables / snapshots');
-        foreach (['partial', 'weekday', 'work_schedule', 'schedule', 'allocation', 'snapshot', 'report'] as $forbidden) {
+        // 'weekday'/'work_schedule'/'schedule' were removed in S29 — Work Schedule Foundation
+        // (docs/work-schedule-foundation-specification.md) is now an authorized domain itself, the
+        // same precedent as earlier stages; S27 still adds none of them.
+        foreach (['partial', 'allocation', 'snapshot', 'report'] as $forbidden) {
             $this->assertSame(0, DB::table('information_schema.tables')->whereIn('table_schema', ['hr', 'ref', 'reporting', 'org'])->where('table_name', 'like', "%{$forbidden}%")->count(), "no {$forbidden} table");
         }
-        $this->assertSame([], glob(base_path('database/migrations/2026_10_12_*.php')), 'S27 adds no migration');
+        $s29Migrations = [
+            '2026_10_12_000001_create_ref_weekdays_table.php',
+            '2026_10_12_000002_create_hr_work_schedule_periods_table.php',
+            '2026_10_12_000003_seed_security_work_schedule_period_permissions.php',
+        ];
+        $this->assertSame([], array_values(array_diff(array_map('basename', glob(base_path('database/migrations/2026_10_12_*.php'))), $s29Migrations)), 'S27 adds no migration (the 2026_10_12 files are S29\'s)');
 
         foreach (Route::getRoutes() as $route) {
             $this->assertDoesNotMatchRegularExpression('/report|export|dashboard|as-of|pdf|xlsx|csv/i', $route->uri(), 'S27 exposes no endpoint or output');
         }
-        foreach (['Pdf', 'Xlsx', 'Csv', 'Export', 'Dashboard', 'Chart', 'PartialSecondment', 'WorkSchedule'] as $forbidden) {
+        foreach (['Pdf', 'Xlsx', 'Csv', 'Export', 'Dashboard', 'Chart', 'PartialSecondment'] as $forbidden) {
             $this->assertSame([], glob(base_path("app/Modules/*/*/*{$forbidden}*.php")), "no {$forbidden} class");
             $this->assertSame([], glob(base_path("app/Modules/*/*/*/*{$forbidden}*.php")), "no {$forbidden} class");
             $this->assertSame([], glob(base_path("app/Modules/*/*/*/*/*{$forbidden}*.php")), "no {$forbidden} class");
