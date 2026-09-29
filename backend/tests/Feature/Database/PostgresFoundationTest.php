@@ -68,9 +68,11 @@ class PostgresFoundationTest extends PostgresIntegrationTestCase
      * that claim is true only within S02's own isolated scope and breaks by construction the
      * moment any later, authorized stage runs its migrations.
      */
+    // 'automation' was claimed by S31 (docs/movement-expiry-followup-foundation-specification.md
+    // §S31.6): automation.movement_expiry_followups is its first authorized object.
     public function test_namespaces_not_owned_by_a_later_stage_remain_empty(): void
     {
-        $notYetOwned = array_values(array_diff(self::SCHEMAS, ['security', 'audit', 'ref', 'org', 'hr']));
+        $notYetOwned = array_values(array_diff(self::SCHEMAS, ['security', 'audit', 'ref', 'org', 'hr', 'automation']));
 
         $objects = $this->pg()->select(
             'select n.nspname, c.relname from pg_class c join pg_namespace n on n.oid = c.relnamespace '

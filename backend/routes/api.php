@@ -8,6 +8,7 @@ use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentRelations
 use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentSpecialtyPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentStatusPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\FullSecondmentPeriodController;
+use App\Modules\HumanResources\Presentation\Http\Controllers\MovementExpiryFollowUpController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\OrganizationalPlacementPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\PartialSecondmentPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\PersonController;
@@ -400,5 +401,11 @@ Route::middleware('web')->group(function (): void {
                 ->middleware('permission:'.HrPerm::PARTIAL_SECONDMENT_PERIODS_VIEW)->name('persons.employment-relationships.partial-secondment-periods.index');
             Route::post('/persons/{person}/employment-relationships/{employmentRelationship}/partial-secondment-periods', [PartialSecondmentPeriodController::class, 'store'])
                 ->middleware('permission:'.HrPerm::PARTIAL_SECONDMENT_PERIODS_RECORD)->name('persons.employment-relationships.partial-secondment-periods.store');
+
+            // S31: movement expiry follow-ups — read only (docs/movement-expiry-followup-foundation-
+            // specification.md §S31.17). Written only by the system scanner: no store, no PATCH/PUT,
+            // no DELETE. RBAC via permission: middleware plus S08 scope filtering in the controller.
+            Route::get('/movement-expiry-followups', [MovementExpiryFollowUpController::class, 'index'])
+                ->middleware('permission:'.HrPerm::MOVEMENT_EXPIRY_FOLLOWUPS_VIEW)->name('movement-expiry-followups.index');
         });
 });

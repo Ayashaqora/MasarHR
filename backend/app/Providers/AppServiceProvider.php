@@ -2,6 +2,8 @@
 
 namespace App\Providers;
 
+use App\Modules\Platform\Application\Clock\BusinessDateClock;
+use App\Modules\Platform\Application\Clock\SystemBusinessDateClock;
 use App\Modules\Security\Domain\UsernameNormalizer;
 use Illuminate\Cache\RateLimiting\Limit;
 use Illuminate\Http\Request;
@@ -17,7 +19,9 @@ class AppServiceProvider extends ServiceProvider
      */
     public function register(): void
     {
-        //
+        // S31 (docs/movement-expiry-followup-foundation-specification.md §S31.12): the one business
+        // date boundary; tests rebind it to a fixed clock.
+        $this->app->bind(BusinessDateClock::class, SystemBusinessDateClock::class);
     }
 
     /**

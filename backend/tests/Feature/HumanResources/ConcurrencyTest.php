@@ -3,11 +3,19 @@
 namespace Tests\Feature\HumanResources;
 
 use App\Modules\HumanResources\Application\Commands\RecordWorkSchedulePeriod;
+use App\Modules\HumanResources\Application\Commands\ScanMovementExpiryFollowUps;
 use App\Modules\HumanResources\Application\Commands\StartWorkplaceAssignment;
 use App\Modules\HumanResources\Domain\Exceptions\EmploymentRelationshipAlreadyEndedException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidWorkSchedulePeriodDateException;
+use App\Modules\HumanResources\Domain\ExpiryFollowUpEmission;
+use App\Modules\HumanResources\Domain\FollowUpSuppressionReason;
+use App\Modules\HumanResources\Domain\TemporaryMovementType;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRelationship;
 use App\Modules\Organization\Infrastructure\Persistence\Eloquent\OrganizationalUnit;
+use App\Modules\Platform\Application\Execution\CommandContext;
+use App\Modules\Platform\Domain\Actor;
+use App\Modules\Platform\Domain\CorrelationId;
+use App\Modules\Platform\Domain\Source;
 use App\Modules\Platform\Infrastructure\Persistence\Postgres\PostgresErrorClassifier as Errors;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\DecisionType;
 use Illuminate\Database\Connection;
@@ -56,6 +64,9 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
             // organizational_placement_periods first: all three carry a RESTRICT FK to
             // employment_relationships, same most-dependent-first ordering as
             // employment_status_periods below.
+            // automation.movement_expiry_followups (S31) carries RESTRICT FKs to the movement tables,
+            // employment_relationships and org units, so it goes first.
+            DB::table('automation.movement_expiry_followups')->whereIn('employment_relationship_id', $relationshipIds)->delete();
             // employment_category_periods (S20) likewise carries a RESTRICT FK to
             // employment_relationships.
             DB::table('hr.employment_category_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
@@ -1876,5 +1887,119 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
              where p.employment_relationship_id = ? and daterange(p.effective_from, p.effective_to, '[)') && daterange(a.effective_from, a.effective_to, '[)')",
             [$relationshipId],
         ), 'no effective overlap between assignment and partial secondment');
+    }
+
+    /** A committed relationship, destination unit and bounded Full Secondment [03-01, 05-01) for S31 races. */
+    private function boundedFullSecondment(string $numberPrefix): array
+    {
+        $relationshipId = (string) Str::uuid7();
+        $this->pg()->insert($this->insertSql(), [$relationshipId, $this->person(), $this->permanentEmploymentTypeId(), $numberPrefix.Str::random(6), 'PERMANENT', '2026-01-01']);
+        $unitId = $this->organizationalUnitId();
+        $movementId = (string) Str::uuid7();
+        $this->pg()->insert(
+            'insert into hr.full_secondment_periods (id, employment_relationship_id, organizational_unit_id, effective_from, effective_to, created_at) values (?, ?, ?, ?, ?, now())',
+            [$movementId, $relationshipId, $unitId, '2026-03-01', '2026-05-01'],
+        );
+
+        return [$relationshipId, $movementId];
+    }
+
+    private function followUpEmissionSql(): string
+    {
+        return "INSERT INTO automation.movement_expiry_followups
+                    (id, followup_kind, movement_type, full_secondment_period_id, employment_relationship_id, organizational_unit_id,
+                     expected_effective_to, due_date, status, created_at)
+                SELECT ?, 'EXPIRY_WARNING_7D', 'FULL_SECONDMENT', m.id, m.employment_relationship_id, m.organizational_unit_id,
+                       m.effective_to, m.effective_to - 7, 'ACTIONABLE', now()
+                FROM hr.full_secondment_periods m WHERE m.id = ? AND m.effective_to = CAST(? AS date)
+                ON CONFLICT ON CONSTRAINT movement_expiry_followups_logical_key DO NOTHING
+                RETURNING id";
+    }
+
+    /**
+     * S31 K (docs/movement-expiry-followup-foundation-specification.md §S31.10, ADR-S31-007): the
+     * SAME logical follow-up discovered concurrently by two real, independent sessions yields
+     * exactly ONE durable row. PostgreSQL's logical-identity UNIQUE constraint is the backstop: the
+     * second session's INSERT … ON CONFLICT DO NOTHING waits for the first (lock_timeout fires) and,
+     * once the first commits, becomes a no-op — no duplicate, no error, no application-only guard.
+     */
+    public function test_concurrent_scans_of_the_same_logical_follow_up_produce_exactly_one_row(): void
+    {
+        [$relationshipId, $movementId] = $this->boundedFullSecondment('PN-S31-KEY-');
+
+        $first = $this->pg();
+        $second = $this->second();
+
+        $first->beginTransaction();
+        $this->assertCount(1, $first->select($this->followUpEmissionSql(), [(string) Str::uuid7(), $movementId, '2026-05-01'])); // not committed yet
+
+        $second->statement("set lock_timeout = '300ms'");
+        $blocked = $this->databaseError(fn () => $second->transaction(fn () => $second->select($this->followUpEmissionSql(), [(string) Str::uuid7(), $movementId, '2026-05-01'])));
+        $this->assertTrue(Errors::isLockNotAvailable($blocked), 'the concurrent scan waits on the in-flight identical insert (lock_timeout fired)');
+
+        $first->commit();
+
+        $this->assertCount(0, $second->transaction(fn () => $second->select($this->followUpEmissionSql(), [(string) Str::uuid7(), $movementId, '2026-05-01'])), 'once committed, the same logical key is a silent no-op');
+
+        $this->assertSame(1, (int) $this->scalar('select count(*) from automation.movement_expiry_followups where employment_relationship_id = ?', [$relationshipId]));
+    }
+
+    /**
+     * S31 K (distinct identities): a DIFFERENT logical follow-up (another expected end for the same
+     * movement) is not blocked by, and does not conflict with, the first — identity is per
+     * (kind, movement, expected end), not per movement.
+     */
+    public function test_concurrent_follow_ups_with_different_expected_ends_are_independent(): void
+    {
+        [$relationshipId, $movementId] = $this->boundedFullSecondment('PN-S31-IND-');
+        $this->pg()->update('update hr.full_secondment_periods set effective_to = ? where id = ?', ['2026-05-08', $movementId]);
+
+        $first = $this->pg();
+        $second = $this->second();
+
+        $first->beginTransaction();
+        $this->assertCount(1, $first->select($this->followUpEmissionSql(), [(string) Str::uuid7(), $movementId, '2026-05-08']));
+
+        // A stale key for the same movement (expected end 05-01, which no longer matches) inserts nothing.
+        $second->statement("set lock_timeout = '300ms'");
+        $this->assertCount(0, $second->transaction(fn () => $second->select($this->followUpEmissionSql(), [(string) Str::uuid7(), $movementId, '2026-05-01'])), 'the INSERT … SELECT only copies the CURRENT end date: a stale expected end yields nothing');
+
+        $first->commit();
+        $this->assertSame(1, (int) $this->scalar('select count(*) from automation.movement_expiry_followups where employment_relationship_id = ?', [$relationshipId]));
+    }
+
+    /**
+     * S31 ADR-S31-005 under a REAL race: the scanner takes the EmploymentRelationship row lock like
+     * every movement command, so a movement command in flight (holding the lock with an uncommitted
+     * truncation) makes the emission WAIT; once it commits, the emission reloads the authoritative
+     * movement, sees the new end date and is suppressed — a stale follow-up is never emitted and
+     * nothing is written.
+     */
+    public function test_an_in_flight_movement_change_makes_the_scanner_wait_and_then_recheck_stale(): void
+    {
+        [$relationshipId, $movementId] = $this->boundedFullSecondment('PN-S31-RECHK-');
+        $context = new CommandContext(Actor::system(ScanMovementExpiryFollowUps::ACTOR_LABEL), CorrelationId::generate(), Source::System);
+        $emit = fn () => app(ScanMovementExpiryFollowUps::class)->emit(TemporaryMovementType::FullSecondment, $movementId, $relationshipId, '2026-05-01', '2026-04-25', $context);
+
+        $second = $this->second();
+        $second->beginTransaction();
+        $second->select('select id from hr.employment_relationships where id = ? for update', [$relationshipId]);
+        $second->update('update hr.full_secondment_periods set effective_to = ? where id = ?', ['2026-04-27', $movementId]); // an in-flight movement command, not committed yet
+
+        DB::statement("set lock_timeout = '300ms'");
+        try {
+            $blocked = $this->databaseError($emit);
+            $this->assertTrue(Errors::isLockNotAvailable($blocked), 'the scanner waits on the in-flight movement command');
+        } finally {
+            DB::statement('set lock_timeout = 0');
+        }
+
+        $second->commit();
+
+        $emission = $emit();
+
+        $this->assertSame(ExpiryFollowUpEmission::STALE, $emission->outcome);
+        $this->assertSame(FollowUpSuppressionReason::TruncatedEarlier, $emission->reason);
+        $this->assertSame(0, (int) $this->scalar('select count(*) from automation.movement_expiry_followups where employment_relationship_id = ?', [$relationshipId]), 'nothing was emitted for the stale expected end');
     }
 }

@@ -135,6 +135,9 @@ final class HumanResourcesPermissionCatalog
 
     public const PARTIAL_SECONDMENT_PERIODS_RECORD = 'hr.partial_secondment_periods.record';
 
+    /** S31 (docs/movement-expiry-followup-foundation-specification.md §S31.16). Read-only: follow-ups are written by the system scanner. */
+    public const MOVEMENT_EXPIRY_FOLLOWUPS_VIEW = 'hr.movement_expiry_followups.view';
+
     public const ALL = [
         self::PERSONS_VIEW,
         self::PERSONS_CREATE,
@@ -167,5 +170,6 @@ final class HumanResourcesPermissionCatalog
         self::WORK_SCHEDULE_PERIODS_RECORD,
         self::PARTIAL_SECONDMENT_PERIODS_VIEW,
         self::PARTIAL_SECONDMENT_PERIODS_RECORD,
+        self::MOVEMENT_EXPIRY_FOLLOWUPS_VIEW,
     ];
 }

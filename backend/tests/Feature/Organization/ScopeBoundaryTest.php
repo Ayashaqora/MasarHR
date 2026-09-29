@@ -73,6 +73,13 @@ class ScopeBoundaryTest extends OrganizationTestCase
         // (docs/partial-secondment-foundation-specification.md §S30.6/§S30.21) — the partial
         // secondment's destination unit, ordinary domain data scope-checked by the unmodified
         // ScopedAuthorizationChecker, not an authorization-scope grant.
+        //
+        // S31 ("Movement Expiry & Follow-up Foundation") adds a sixth, identically-shaped disclosed
+        // exception: automation.movement_expiry_followups.organizational_unit_id
+        // (docs/movement-expiry-followup-foundation-specification.md §S31.6/§S31.17) — an immutable
+        // copy of the movement's destination unit, taken by INSERT … SELECT from the movement row and
+        // guarded by a real FK, used only so the read API can filter follow-ups by the unmodified
+        // S08 ScopedAuthorizationChecker. Ordinary domain data, not an authorization-scope grant.
         $offendingTables = DB::table('information_schema.columns')
             ->whereIn('column_name', ['organizational_unit_id', 'organization_scope', 'org_unit_id', 'branch_id'])
             ->where(function ($query): void {
@@ -91,6 +98,9 @@ class ScopeBoundaryTest extends OrganizationTestCase
                 })->where(function ($inner): void {
                     $inner->where('table_schema', '!=', 'hr')
                         ->orWhere('table_name', '!=', 'partial_secondment_periods');
+                })->where(function ($inner): void {
+                    $inner->where('table_schema', '!=', 'automation')
+                        ->orWhere('table_name', '!=', 'movement_expiry_followups');
                 });
             })
             ->pluck('table_name')->all();
@@ -98,7 +108,7 @@ class ScopeBoundaryTest extends OrganizationTestCase
         $this->assertSame(
             [],
             $offendingTables,
-            'no organizational-scope column may exist outside security.organizational_scope_grants and the disclosed S11/S12/S16/S30 hr exceptions',
+            'no organizational-scope column may exist outside security.organizational_scope_grants and the disclosed S11/S12/S16/S30 hr and S31 automation exceptions',
         );
     }
 

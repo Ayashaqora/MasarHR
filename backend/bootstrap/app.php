@@ -44,6 +44,7 @@ use App\Modules\HumanResources\Domain\Exceptions\PersonQualificationIdentityMiss
 use App\Modules\HumanResources\Domain\Exceptions\PersonStaleVersionException;
 use App\Modules\HumanResources\Domain\Exceptions\UnresolvedEmploymentStatusBehaviorException;
 use App\Modules\HumanResources\Domain\Exceptions\WorkScheduleChangeInvalidatesPartialSecondmentException;
+use App\Modules\HumanResources\Presentation\Console\ScanMovementExpiryFollowUpsCommand;
 use App\Modules\Organization\Domain\Exceptions\StaleVersionException as OrganizationStaleVersionException;
 use App\Modules\Organization\Domain\Exceptions\WouldCreateCycleException;
 use App\Modules\Platform\Presentation\Http\Middleware\ResolveCommandContext;
@@ -79,6 +80,7 @@ return Application::configure(basePath: dirname(__DIR__))
     )
     ->withCommands([
         BootstrapAdminCommand::class,
+        ScanMovementExpiryFollowUpsCommand::class,
     ])
     ->withMiddleware(function (Middleware $middleware): void {
         // The backend is API-only (see routes/api.php); there is no 'login' web route to redirect
