@@ -6,6 +6,7 @@ use App\Modules\HumanResources\Domain\ActualWorkplaceAsOf;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRelationship;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\FullSecondmentPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\OrganizationalPlacementPeriod;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\PartialSecondmentPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\WorkplaceAssignmentPeriod;
 use Illuminate\Database\Eloquent\Model;
 use Illuminate\Support\Carbon;
@@ -21,9 +22,12 @@ use Illuminate\Support\Carbon;
  * after it); then the placement and every implemented temporary movement (full secondment,
  * workplace assignment) effective on the date are resolved independently and passed to the single
  * ActualWorkplaceAsOf::fromEffectiveFacts() decision table — one movement wins over placement;
- * two competing movements are AMBIGUOUS_MOVEMENT_STATE, never a chosen winner. Partial secondment
- * is not implemented and is therefore not considered; a future stage adds its stream as another
- * independent input without changing this contract.
+ * two competing movements are AMBIGUOUS_MOVEMENT_STATE, never a chosen winner.
+ *
+ * S30 (docs/partial-secondment-foundation-specification.md §S30.18, ADR-S30-012): every Partial
+ * Secondment effective on the date is the fourth independent input, exactly as §S27.8 planned.
+ * Its presence yields PARTIAL_ALLOCATION (no scalar unit — the workplace depends on the weekday;
+ * see ResolveWeekdayActualWorkplaceAsOf), never an arbitrarily chosen destination.
  */
 final class ResolveActualWorkplaceForRelationshipAsOf
 {
@@ -43,7 +47,30 @@ final class ResolveActualWorkplaceForRelationshipAsOf
             $this->effective(OrganizationalPlacementPeriod::class, $relationship, $date),
             $this->effective(FullSecondmentPeriod::class, $relationship, $date),
             $this->effective(WorkplaceAssignmentPeriod::class, $relationship, $date),
+            $this->effectivePartials($relationship, $date),
         );
+    }
+
+    /** @return list<array{id: string, organizational_unit_id: string, effective_from: string, effective_to: ?string, weekdays: list<string>}> */
+    private function effectivePartials(EmploymentRelationship $relationship, string $date): array
+    {
+        return PartialSecondmentPeriod::query()
+            ->with('weekdays')
+            ->where('employment_relationship_id', $relationship->getKey())
+            ->where('effective_from', '<=', $date)
+            ->where(fn ($q) => $q->whereNull('effective_to')->orWhere('effective_to', '>', $date))
+            ->orderBy('effective_from')
+            ->orderBy('id')
+            ->get()
+            ->map(fn (PartialSecondmentPeriod $period) => [
+                'id' => $period->getKey(),
+                'organizational_unit_id' => $period->organizational_unit_id,
+                'effective_from' => $period->effective_from->toDateString(),
+                'effective_to' => $period->effective_to?->toDateString(),
+                'weekdays' => $period->weekdayCodes(),
+            ])
+            ->values()
+            ->all();
     }
 
     /**

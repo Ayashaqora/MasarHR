@@ -3,11 +3,13 @@
 namespace App\Modules\HumanResources\Application\Commands;
 
 use App\Modules\HumanResources\Domain\Exceptions\ActiveFullSecondmentAlreadyExistsException;
+use App\Modules\HumanResources\Domain\Exceptions\ActivePartialSecondmentExistsException;
 use App\Modules\HumanResources\Domain\Exceptions\ActiveWorkplaceAssignmentAlreadyExistsException;
 use App\Modules\HumanResources\Domain\Exceptions\EmploymentRelationshipAlreadyEndedException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidFullSecondmentStartDateException;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRelationship;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\FullSecondmentPeriod;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\PartialSecondmentPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\WorkplaceAssignmentPeriod;
 use App\Modules\Organization\Infrastructure\Persistence\Eloquent\OrganizationalUnit;
 use App\Modules\Platform\Infrastructure\Persistence\Postgres\PostgresErrorClassifier as Errors;
@@ -39,12 +41,18 @@ use Illuminate\Support\Facades\DB;
  * created, atomically. The check is interval-aware, never "open row". It still rejects (409,
  * ActiveWorkplaceAssignmentAlreadyExistsException) rather than rewriting history when an
  * assignment starts on or after the new date. The same-stream rule is unchanged (S12 §8.1).
+ *
+ * S30 (docs/partial-secondment-foundation-specification.md §S30.11, ADR-S30-006) — the minimum
+ * integration: a Full Secondment consumes the whole workplace allocation, so it is rejected (409,
+ * ActivePartialSecondmentExistsException) when ANY Partial Secondment overlaps [effective_from, ∞)
+ * — one in force at the date or one starting later. Never superseded (S28 supersession is
+ * deliberately not extended to Full ↔ Partial).
  */
 final class StartFullSecondment
 {
     /**
      * @throws EmploymentRelationshipAlreadyEndedException|ActiveFullSecondmentAlreadyExistsException|InvalidFullSecondmentStartDateException
-     * @throws ActiveWorkplaceAssignmentAlreadyExistsException
+     * @throws ActiveWorkplaceAssignmentAlreadyExistsException|ActivePartialSecondmentExistsException
      */
     public function __construct(private readonly SupersedeTemporaryWorkplaceMovement $supersession) {}
 
@@ -91,6 +99,16 @@ final class StartFullSecondment
         // constraint (spec §8.3, disclosed there).
         if ($newFrom->lte($freshRelationship->effective_from)) {
             throw new InvalidFullSecondmentStartDateException;
+        }
+
+        // ADR-S30-006: checked before any mutation below.
+        $overlapsPartial = PartialSecondmentPeriod::query()
+            ->where('employment_relationship_id', $freshRelationship->getKey())
+            ->where(fn ($q) => $q->whereNull('effective_to')->orWhere('effective_to', '>', $newFrom->toDateString()))
+            ->exists();
+
+        if ($overlapsPartial) {
+            throw new ActivePartialSecondmentExistsException('A partial secondment of this employment relationship overlaps this date; a full secondment cannot overlap a partial secondment.');
         }
 
         // ADR-S28-001: a Workplace Assignment effective at the new date is superseded (truncated

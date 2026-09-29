@@ -26,6 +26,13 @@ use InvalidArgumentException;
  * can match and relationships are never multiplied. S06 mappings (specialty→cadre,
  * job title→administrator, contract type→population) and status behaviors are resolved on the
  * same date; unmapped → null. Actual workplace goes through the shared CA-S27-02 decision table.
+ *
+ * S30 (docs/partial-secondment-foundation-specification.md §S30.18): Partial Secondments are the one
+ * stream that may legitimately have several rows effective per relationship (disjoint weekdays),
+ * so a plain join would multiply rows. They are aggregated per relationship by a LEFT JOIN LATERAL
+ * json_agg inside the same single statement (one row per relationship, still one query) and passed
+ * to the same decision table, which reports PARTIAL_ALLOCATION instead of a scalar workplace. No
+ * report total or inclusion rule changes.
  */
 final class ListReportingPopulationAsOf
 {
@@ -66,7 +73,8 @@ final class ListReportingPopulationAsOf
                 wa.id AS assignment_id, wa.organizational_unit_id AS assignment_unit_id, wa.effective_from AS assignment_from,
                 cat.employment_category_id, con.id AS contract_period_id, con.contract_type_id,
                 jt.job_title_id, spc.specialty_id,
-                cm.cadre_category_id, ja.is_administrator, pm.population_category_id
+                cm.cadre_category_id, ja.is_administrator, pm.population_category_id,
+                psa.partial_secondments
             FROM hr.employment_relationships r
             CROSS JOIN p
             JOIN hr.persons per ON per.id = r.person_id
@@ -96,6 +104,19 @@ final class ListReportingPopulationAsOf
                 AND ja.effective_from <= p.d AND (ja.effective_to IS NULL OR p.d < ja.effective_to)
             LEFT JOIN ref.contract_type_population_mappings pm ON pm.contract_type_id = con.contract_type_id
                 AND pm.effective_from <= p.d AND (pm.effective_to IS NULL OR p.d < pm.effective_to)
+            LEFT JOIN LATERAL (
+                SELECT json_agg(json_build_object(
+                    'id', ps.id, 'organizational_unit_id', ps.organizational_unit_id,
+                    'effective_from', ps.effective_from, 'effective_to', ps.effective_to,
+                    'weekdays', (SELECT json_agg(w.code ORDER BY w.iso_day_number)
+                                 FROM hr.partial_secondment_period_weekdays pw
+                                 JOIN ref.weekdays w ON w.id = pw.weekday_id
+                                 WHERE pw.partial_secondment_period_id = ps.id)
+                ) ORDER BY ps.effective_from, ps.id) AS partial_secondments
+                FROM hr.partial_secondment_periods ps
+                WHERE ps.employment_relationship_id = r.id
+                  AND ps.effective_from <= p.d AND (ps.effective_to IS NULL OR p.d < ps.effective_to)
+            ) psa ON true
             WHERE r.effective_from <= p.d
               AND NOT (r.end_knowledge_state = 'KNOWN' AND r.effective_to <= p.d){$restriction}
             ORDER BY r.person_id, r.effective_from, r.id
@@ -135,6 +156,7 @@ final class ListReportingPopulationAsOf
                 $fact($r->placement_id, $r->placement_unit_id, $r->placement_from),
                 $fact($r->secondment_id, $r->secondment_unit_id, $r->secondment_from),
                 $fact($r->assignment_id, $r->assignment_unit_id, $r->assignment_from),
+                $r->partial_secondments === null ? [] : json_decode($r->partial_secondments, true),
             ),
             employmentCategoryId: $r->employment_category_id,
             contractPeriodId: $r->contract_period_id,

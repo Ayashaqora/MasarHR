@@ -17,8 +17,9 @@ use Illuminate\Support\Facades\Route;
  * docs/employment-job-title-history-foundation-specification.md §S22.6, and
  * docs/person-qualification-foundation-specification.md §S23.6, and
  * docs/employee-specialty-history-foundation-specification.md §S26.6, and
- * docs/work-schedule-foundation-specification.md §S29.6): the hr schema contains
- * exactly the thirteen S09/S10/S11/S12/S16/S20/S21/S22/S23/S26/S29-authorized tables and nothing else — S14 adds none
+ * docs/work-schedule-foundation-specification.md §S29.6, and
+ * docs/partial-secondment-foundation-specification.md §S30.6): the hr schema contains
+ * exactly the fifteen S09/S10/S11/S12/S16/S20/S21/S22/S23/S26/S29/S30-authorized tables and nothing else — S14 adds none
  * (persistence-design Option B, ADR-S14-001 §16); no table carries a speculative column
  * (organizational-unit on the S09/S10 tables, name/demographic on persons, a client-versioned or
  * mutable-current-workplace column on placement periods, a decision-type or destination-scheme
@@ -57,13 +58,13 @@ class ScopeBoundaryTest extends HumanResourcesTestCase
         'ProfessionalHistory', 'JobHistory',
     ];
 
-    public function test_hr_schema_contains_exactly_the_thirteen_authorized_tables(): void
+    public function test_hr_schema_contains_exactly_the_fifteen_authorized_tables(): void
     {
         $tables = DB::table('information_schema.tables')->where('table_schema', 'hr')->pluck('table_name')->all();
         sort($tables);
 
         $this->assertSame(
-            ['employment_category_periods', 'employment_contract_periods', 'employment_job_title_periods', 'employment_relationships', 'employment_specialty_periods', 'employment_status_periods', 'full_secondment_periods', 'organizational_placement_periods', 'person_qualifications', 'persons', 'work_schedule_period_weekdays', 'work_schedule_periods', 'workplace_assignment_periods'],
+            ['employment_category_periods', 'employment_contract_periods', 'employment_job_title_periods', 'employment_relationships', 'employment_specialty_periods', 'employment_status_periods', 'full_secondment_periods', 'organizational_placement_periods', 'partial_secondment_period_weekdays', 'partial_secondment_periods', 'person_qualifications', 'persons', 'work_schedule_period_weekdays', 'work_schedule_periods', 'workplace_assignment_periods'],
             $tables,
         );
     }

@@ -67,6 +67,9 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
             $schedulePeriodIds = DB::table('hr.work_schedule_periods')->whereIn('employment_relationship_id', $relationshipIds)->pluck('id');
             DB::table('hr.work_schedule_period_weekdays')->whereIn('work_schedule_period_id', $schedulePeriodIds)->delete();
             DB::table('hr.work_schedule_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
+            // partial_secondment_period_weekdays → partial_secondment_periods (S30): same shape.
+            DB::table('hr.partial_secondment_period_weekdays')->whereIn('employment_relationship_id', $relationshipIds)->delete();
+            DB::table('hr.partial_secondment_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
             DB::table('hr.full_secondment_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
             DB::table('hr.workplace_assignment_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
             DB::table('hr.organizational_placement_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
@@ -1752,5 +1755,126 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
         }
 
         $this->assertSame(0, (int) $this->scalar('select count(*) from hr.work_schedule_periods where employment_relationship_id = ?', [$relationshipId]));
+    }
+
+    /** Inserts a partial secondment period and its weekday membership on the given session (uncommitted unless the caller commits). */
+    private function insertPartialOn(Connection $connection, string $relationshipId, string $unitId, string $from, array $codes): string
+    {
+        $id = (string) Str::uuid7();
+        $connection->insert(
+            'insert into hr.partial_secondment_periods (id, employment_relationship_id, organizational_unit_id, effective_from, created_at) values (?, ?, ?, ?, now())',
+            [$id, $relationshipId, $unitId, $from],
+        );
+        foreach ($codes as $code) {
+            $connection->insert(
+                'insert into hr.partial_secondment_period_weekdays (partial_secondment_period_id, weekday_id, employment_relationship_id, period)
+                 select p.id, w.id, p.employment_relationship_id, p.period from hr.partial_secondment_periods p, ref.weekdays w where p.id = ? and w.code = ?',
+                [$id, $code],
+            );
+        }
+
+        return $id;
+    }
+
+    /**
+     * S30 AJ (docs/partial-secondment-foundation-specification.md §S30.22): the database backstop
+     * for weekday allocation — two real, independent sessions racing overlapping Partial
+     * Secondments that SHARE a weekday cannot both commit; the weekday-level EXCLUDE makes the
+     * second wait, then rejects it once the first commits.
+     */
+    public function test_concurrent_partial_secondments_sharing_a_weekday_are_serialised_by_the_exclusion_constraint(): void
+    {
+        $personId = $this->person();
+        $relationshipId = (string) Str::uuid7();
+        $this->pg()->insert($this->insertSql(), [$relationshipId, $personId, $this->permanentEmploymentTypeId(), 'PN-S30-RACE-'.Str::random(6), 'PERMANENT', '2026-01-01']);
+        $unitA = $this->organizationalUnitId();
+        $unitB = $this->organizationalUnitId();
+
+        $first = $this->pg();
+        $second = $this->second();
+
+        $first->beginTransaction();
+        $this->insertPartialOn($first, $relationshipId, $unitA, '2026-03-01', ['SUNDAY', 'MONDAY']); // not committed yet
+
+        $second->statement("set lock_timeout = '300ms'");
+        $blocked = $this->databaseError(fn () => $second->transaction(fn () => $this->insertPartialOn($second, $relationshipId, $unitB, '2026-04-01', ['MONDAY', 'TUESDAY'])));
+        $this->assertTrue(Errors::isLockNotAvailable($blocked), 'the second session waits on the first (lock_timeout fired)');
+
+        $first->commit();
+
+        $rejected = $this->databaseError(fn () => $second->transaction(fn () => $this->insertPartialOn($second, $relationshipId, $unitB, '2026-04-01', ['MONDAY', 'TUESDAY'])));
+        $this->assertTrue(Errors::isExclusionViolation($rejected), 'once committed, the shared MONDAY is rejected by PostgreSQL itself');
+
+        $this->assertSame(1, (int) $this->scalar('select count(*) from hr.partial_secondment_periods where employment_relationship_id = ?', [$relationshipId]));
+    }
+
+    /**
+     * S30 AK: disjoint weekdays are valid allocation, so two concurrent sessions allocating
+     * disjoint weekdays on overlapping dates both commit — the exclusion constraint never blocks
+     * them against each other.
+     */
+    public function test_concurrent_partial_secondments_on_disjoint_weekdays_both_commit(): void
+    {
+        $personId = $this->person();
+        $relationshipId = (string) Str::uuid7();
+        $this->pg()->insert($this->insertSql(), [$relationshipId, $personId, $this->permanentEmploymentTypeId(), 'PN-S30-DISJ-'.Str::random(6), 'PERMANENT', '2026-01-01']);
+        $unitA = $this->organizationalUnitId();
+        $unitB = $this->organizationalUnitId();
+
+        $first = $this->pg();
+        $second = $this->second();
+
+        $first->beginTransaction();
+        $this->insertPartialOn($first, $relationshipId, $unitA, '2026-03-01', ['SUNDAY', 'MONDAY']); // not committed yet
+
+        $second->statement("set lock_timeout = '300ms'");
+        $second->transaction(fn () => $this->insertPartialOn($second, $relationshipId, $unitB, '2026-03-01', ['TUESDAY', 'WEDNESDAY']));
+
+        $first->commit();
+
+        $this->assertSame(2, (int) $this->scalar('select count(*) from hr.partial_secondment_periods where employment_relationship_id = ?', [$relationshipId]));
+    }
+
+    /**
+     * S30 ADR-S30-007 #9: Assignment ↔ Partial starts are serialised by the EmploymentRelationship
+     * row lock (the S28 discipline — the two streams live in two tables, so no single EXCLUDE can
+     * span them). A second session holding the lock with an uncommitted Partial Secondment makes
+     * StartWorkplaceAssignment wait; once committed, the assignment sees it and SUPERSEDES it
+     * (truncation at D) — the two never remain effective together.
+     */
+    public function test_concurrent_assignment_and_partial_starts_are_serialised_and_never_overlap(): void
+    {
+        $personId = $this->person();
+        $relationshipId = (string) Str::uuid7();
+        $this->pg()->insert($this->insertSql(), [$relationshipId, $personId, $this->permanentEmploymentTypeId(), 'PN-S30-ASG-'.Str::random(6), 'PERMANENT', '2026-01-01']);
+        $partialUnit = $this->organizationalUnitId();
+        $relationship = EmploymentRelationship::query()->findOrFail($relationshipId);
+        $unit = OrganizationalUnit::query()->findOrFail($this->organizationalUnitId());
+        $assignmentType = DecisionType::query()->where('code', 'ASSIGNMENT')->firstOrFail();
+
+        $second = $this->second();
+        $second->beginTransaction();
+        $second->select('select id from hr.employment_relationships where id = ? for update', [$relationshipId]);
+        $partialId = $this->insertPartialOn($second, $relationshipId, $partialUnit, '2026-02-01', ['MONDAY']); // an in-flight RecordPartialSecondmentPeriod
+
+        DB::statement("set lock_timeout = '300ms'");
+        try {
+            $blocked = $this->databaseError(fn () => app(StartWorkplaceAssignment::class)->handle($relationship, $unit, '2026-03-01', $assignmentType));
+            $this->assertTrue(Errors::isLockNotAvailable($blocked), 'the assignment waits on the in-flight partial secondment');
+        } finally {
+            DB::statement('set lock_timeout = 0');
+        }
+
+        $second->commit();
+
+        app(StartWorkplaceAssignment::class)->handle($relationship->refresh(), $unit, '2026-03-01', $assignmentType);
+
+        $this->assertSame('2026-03-01', (string) $this->scalar('select effective_to from hr.partial_secondment_periods where id = ?', [$partialId]), 'superseded, not overlapped');
+        $this->assertSame('[2026-02-01,2026-03-01)', (string) $this->scalar('select period from hr.partial_secondment_period_weekdays where partial_secondment_period_id = ?', [$partialId]));
+        $this->assertSame(0, (int) $this->scalar(
+            "select count(*) from hr.partial_secondment_periods p join hr.workplace_assignment_periods a on a.employment_relationship_id = p.employment_relationship_id
+             where p.employment_relationship_id = ? and daterange(p.effective_from, p.effective_to, '[)') && daterange(a.effective_from, a.effective_to, '[)')",
+            [$relationshipId],
+        ), 'no effective overlap between assignment and partial secondment');
     }
 }

@@ -14,6 +14,7 @@ use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRel
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentSpecialtyPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentStatusPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\FullSecondmentPeriod;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\PartialSecondmentPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\Person;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\WorkplaceAssignmentPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\WorkSchedulePeriod;
@@ -182,6 +183,14 @@ class EmploymentRelationshipController
                 ->whereNull('effective_to')
                 ->exists();
 
+            // S30 (docs/partial-secondment-foundation-specification.md §S30.16): partial secondments
+            // still in force at the end date, snapshotted under the same lock.
+            $partialsBeyondEnd = PartialSecondmentPeriod::query()
+                ->where('employment_relationship_id', $employmentRelationship->getKey())
+                ->where(fn ($q) => $q->whereNull('effective_to')->orWhere('effective_to', '>', $data['effective_to']))
+                ->pluck('id')
+                ->all();
+
             $spec = new AuditSpec(
                 action: 'hr.employment_relationship.end',
                 targetType: 'hr_employment_relationship',
@@ -192,7 +201,7 @@ class EmploymentRelationshipController
                 ],
                 metadata: function () use (
                     $employmentRelationship, $hadOpenSecondment, $hadOpenStatusPeriod, $hadOpenAssignment, $hadOpenCategoryPeriod,
-                    $hadContractBeyondEnd, $data, $hadOpenJobTitlePeriod, $hadOpenSpecialtyPeriod, $hadOpenWorkSchedulePeriod,
+                    $hadContractBeyondEnd, $data, $hadOpenJobTitlePeriod, $hadOpenSpecialtyPeriod, $hadOpenWorkSchedulePeriod, $partialsBeyondEnd,
                 ) {
                     $metadata = [];
 
@@ -266,6 +275,18 @@ class EmploymentRelationshipController
 
                     if ($hadOpenWorkSchedulePeriod && ! $stillOpenWorkSchedulePeriod) {
                         $metadata['work_schedule_period_closed_as_consequence'] = true;
+                    }
+
+                    $closedPartials = $partialsBeyondEnd === [] ? [] : PartialSecondmentPeriod::query()
+                        ->whereIn('id', $partialsBeyondEnd)
+                        ->where('effective_to', $data['effective_to'])
+                        ->orderBy('id')
+                        ->pluck('id')
+                        ->all();
+
+                    if ($closedPartials !== []) {
+                        $metadata['partial_secondment_closed_as_consequence'] = true;
+                        $metadata['closed_partial_secondment_period_ids'] = $closedPartials;
                     }
 
                     return $metadata;

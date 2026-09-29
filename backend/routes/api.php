@@ -9,6 +9,7 @@ use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentSpecialty
 use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentStatusPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\FullSecondmentPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\OrganizationalPlacementPeriodController;
+use App\Modules\HumanResources\Presentation\Http\Controllers\PartialSecondmentPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\PersonController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\PersonQualificationController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\TransferController;
@@ -389,5 +390,15 @@ Route::middleware('web')->group(function (): void {
                 ->middleware('permission:'.HrPerm::WORK_SCHEDULE_PERIODS_VIEW)->name('persons.employment-relationships.work-schedule-periods.index');
             Route::post('/persons/{person}/employment-relationships/{employmentRelationship}/work-schedule-periods', [WorkSchedulePeriodController::class, 'store'])
                 ->middleware('permission:'.HrPerm::WORK_SCHEDULE_PERIODS_RECORD)->name('persons.employment-relationships.work-schedule-periods.store');
+
+            // S30: Partial Secondment periods, nested under the same {person}/{employmentRelationship}
+            // (docs/partial-secondment-foundation-specification.md §S30.19, ADR-S30-001). RBAC via
+            // permission: middleware plus the S08 organizational scope checks in the controller,
+            // exactly like S12/S16. Explicit record action only — no PATCH, no PUT, no DELETE, no
+            // end or correction route.
+            Route::get('/persons/{person}/employment-relationships/{employmentRelationship}/partial-secondment-periods', [PartialSecondmentPeriodController::class, 'index'])
+                ->middleware('permission:'.HrPerm::PARTIAL_SECONDMENT_PERIODS_VIEW)->name('persons.employment-relationships.partial-secondment-periods.index');
+            Route::post('/persons/{person}/employment-relationships/{employmentRelationship}/partial-secondment-periods', [PartialSecondmentPeriodController::class, 'store'])
+                ->middleware('permission:'.HrPerm::PARTIAL_SECONDMENT_PERIODS_RECORD)->name('persons.employment-relationships.partial-secondment-periods.store');
         });
 });

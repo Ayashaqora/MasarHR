@@ -1,6 +1,7 @@
 <?php
 
 use App\Modules\HumanResources\Domain\Exceptions\ActiveFullSecondmentAlreadyExistsException;
+use App\Modules\HumanResources\Domain\Exceptions\ActivePartialSecondmentExistsException;
 use App\Modules\HumanResources\Domain\Exceptions\ActiveWorkplaceAssignmentAlreadyExistsException;
 use App\Modules\HumanResources\Domain\Exceptions\DuplicateNationalIdException;
 use App\Modules\HumanResources\Domain\Exceptions\DuplicatePermanentEmployeeNumberException;
@@ -19,6 +20,9 @@ use App\Modules\HumanResources\Domain\Exceptions\InvalidEmploymentSpecialtyPerio
 use App\Modules\HumanResources\Domain\Exceptions\InvalidEndDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidFullSecondmentEndDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidFullSecondmentStartDateException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidPartialSecondmentEndDateException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidPartialSecondmentPeriodDateException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidPartialSecondmentWeekdaysException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidPersonProfileException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidPersonQualificationAcademicDegreeException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidPersonQualificationTypeException;
@@ -33,10 +37,13 @@ use App\Modules\HumanResources\Domain\Exceptions\InvalidWorkScheduleWeekdaysExce
 use App\Modules\HumanResources\Domain\Exceptions\NoActiveFullSecondmentException;
 use App\Modules\HumanResources\Domain\Exceptions\NoActiveWorkplaceAssignmentException;
 use App\Modules\HumanResources\Domain\Exceptions\OverlappingEmploymentRelationshipException;
+use App\Modules\HumanResources\Domain\Exceptions\PartialSecondmentOutsideWorkScheduleException;
+use App\Modules\HumanResources\Domain\Exceptions\PartialSecondmentWeekdayConflictException;
 use App\Modules\HumanResources\Domain\Exceptions\PersonIsTerminalException;
 use App\Modules\HumanResources\Domain\Exceptions\PersonQualificationIdentityMissingException;
 use App\Modules\HumanResources\Domain\Exceptions\PersonStaleVersionException;
 use App\Modules\HumanResources\Domain\Exceptions\UnresolvedEmploymentStatusBehaviorException;
+use App\Modules\HumanResources\Domain\Exceptions\WorkScheduleChangeInvalidatesPartialSecondmentException;
 use App\Modules\Organization\Domain\Exceptions\StaleVersionException as OrganizationStaleVersionException;
 use App\Modules\Organization\Domain\Exceptions\WouldCreateCycleException;
 use App\Modules\Platform\Presentation\Http\Middleware\ResolveCommandContext;
@@ -144,6 +151,13 @@ return Application::configure(basePath: dirname(__DIR__))
             InvalidEmploymentSpecialtyPeriodDateException::class,
             InvalidWorkScheduleWeekdaysException::class,
             InvalidWorkSchedulePeriodDateException::class,
+            ActivePartialSecondmentExistsException::class,
+            InvalidPartialSecondmentEndDateException::class,
+            InvalidPartialSecondmentPeriodDateException::class,
+            InvalidPartialSecondmentWeekdaysException::class,
+            PartialSecondmentOutsideWorkScheduleException::class,
+            PartialSecondmentWeekdayConflictException::class,
+            WorkScheduleChangeInvalidatesPartialSecondmentException::class,
             DuplicatePersonQualificationException::class,
             InvalidPersonQualificationAcademicDegreeException::class,
             InvalidPersonQualificationTypeException::class,
@@ -329,6 +343,31 @@ return Application::configure(basePath: dirname(__DIR__))
             'message' => $e->getMessage(),
             'errors' => ['effective_from' => [$e->getMessage()]],
         ], 422));
+
+        // S30 HumanResources-module domain failures
+        // (docs/partial-secondment-foundation-specification.md §S30.20) — same shapes as S12/S16/S29.
+        $exceptions->render(fn (InvalidPartialSecondmentWeekdaysException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['weekdays' => [$e->getMessage()]],
+        ], 422));
+        $exceptions->render(fn (PartialSecondmentOutsideWorkScheduleException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['weekdays' => [$e->getMessage()]],
+        ], 422));
+        $exceptions->render(fn (WorkScheduleChangeInvalidatesPartialSecondmentException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['weekdays' => [$e->getMessage()]],
+        ], 422));
+        $exceptions->render(fn (InvalidPartialSecondmentPeriodDateException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => [$e->field => [$e->getMessage()]],
+        ], 422));
+        $exceptions->render(fn (InvalidPartialSecondmentEndDateException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['effective_to' => [$e->getMessage()]],
+        ], 422));
+        $exceptions->render(fn (PartialSecondmentWeekdayConflictException $e) => response()->json(['message' => $e->getMessage()], 409));
+        $exceptions->render(fn (ActivePartialSecondmentExistsException $e) => response()->json(['message' => $e->getMessage()], 409));
 
         // S24 HumanResources-module domain failures
         // (docs/person-profile-foundation-specification.md §S24.15).

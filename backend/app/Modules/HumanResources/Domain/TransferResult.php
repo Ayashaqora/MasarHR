@@ -4,6 +4,7 @@ namespace App\Modules\HumanResources\Domain;
 
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\FullSecondmentPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\OrganizationalPlacementPeriod;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\PartialSecondmentPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\WorkplaceAssignmentPeriod;
 
 /**
@@ -27,6 +28,8 @@ final class TransferResult
         private readonly OrganizationalPlacementPeriod $placement,
         private readonly ?FullSecondmentPeriod $closedSecondment,
         private readonly ?WorkplaceAssignmentPeriod $closedAssignment = null,
+        /** @var list<PartialSecondmentPeriod> */
+        private readonly array $closedPartialSecondments = [],
     ) {}
 
     public function placement(): OrganizationalPlacementPeriod
@@ -44,5 +47,16 @@ final class TransferResult
     public function closedAssignment(): ?WorkplaceAssignmentPeriod
     {
         return $this->closedAssignment;
+    }
+
+    /**
+     * S30 (docs/partial-secondment-foundation-specification.md §S30.13): every Partial Secondment
+     * truncated at the transfer date — empty when none was effective.
+     *
+     * @return list<PartialSecondmentPeriod>
+     */
+    public function closedPartialSecondments(): array
+    {
+        return $this->closedPartialSecondments;
     }
 }

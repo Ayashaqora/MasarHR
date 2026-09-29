@@ -11,6 +11,7 @@ use App\Modules\HumanResources\Infrastructure\Authorization\HumanResourcesPermis
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRelationship;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\FullSecondmentPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\OrganizationalPlacementPeriod;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\PartialSecondmentPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\Person;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\WorkplaceAssignmentPeriod;
 use App\Modules\HumanResources\Presentation\Http\Resources\TransferResource;
@@ -114,6 +115,17 @@ class TransferController
                 return $this->forbidden();
             }
 
+            // S30 (docs/partial-secondment-foundation-specification.md §S30.13): every partial
+            // secondment effective at the transfer date is closed by it, so each unit is checked.
+            $partials = app(SupersedeTemporaryWorkplaceMovement::class)
+                ->effectiveAllAt(PartialSecondmentPeriod::class, $employmentRelationship->getKey(), Carbon::parse($data['effective_from'])->toDateString());
+
+            foreach ($partials as $partial) {
+                if (! $scopeChecker->authorize($principal, Perm::EMPLOYMENT_RELATIONSHIPS_TRANSFER, $partial->organizationalUnit)) {
+                    return $this->forbidden();
+                }
+            }
+
             $context = ResolveCommandContext::from($request);
 
             $spec = new AuditSpec(
@@ -132,6 +144,8 @@ class TransferController
                     // S16: same discipline for the workplace-assignment consequence — null when
                     // no assignment was active, never simply omitted.
                     'closed_workplace_assignment_period_id' => $result->closedAssignment()?->getKey(),
+                    // S30: every partial secondment closed by the transfer — [] when none, never omitted.
+                    'closed_partial_secondment_period_ids' => array_map(fn ($period) => $period->getKey(), $result->closedPartialSecondments()),
                 ],
                 metadata: fn () => [],
             );

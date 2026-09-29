@@ -13,6 +13,7 @@ use App\Modules\HumanResources\Infrastructure\Authorization\HumanResourcesPermis
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRelationship;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\FullSecondmentPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\OrganizationalPlacementPeriod;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\PartialSecondmentPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\Person;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\WorkplaceAssignmentPeriod;
 use App\Modules\HumanResources\Presentation\Http\Resources\WorkplaceAssignmentPeriodResource;
@@ -125,6 +126,16 @@ class WorkplaceAssignmentPeriodController
                 return $this->forbidden();
             }
 
+            // S30 ADR-S30-007 rule 1: every partial secondment effective at the start date is
+            // superseded too, each unit scope-checked with the same permission.
+            $supersededPartials = $supersession->effectiveAllAt(PartialSecondmentPeriod::class, $employmentRelationship->getKey(), $date);
+
+            foreach ($supersededPartials as $partial) {
+                if (! $scopeChecker->authorize($principal, Perm::WORKPLACE_ASSIGNMENT_PERIODS_START, $partial->organizationalUnit)) {
+                    return $this->forbidden();
+                }
+            }
+
             $context = ResolveCommandContext::from($request);
 
             $spec = new AuditSpec(
@@ -140,6 +151,7 @@ class WorkplaceAssignmentPeriodController
                 metadata: fn () => FullSecondmentPeriodController::supersessionMetadata([
                     ['full_secondment', FullSecondmentPeriod::class, $supersededSecondment],
                     ['workplace_assignment', WorkplaceAssignmentPeriod::class, $previousAssignment],
+                    ...array_map(fn ($partial) => ['partial_secondment', PartialSecondmentPeriod::class, $partial], $supersededPartials),
                 ], $date),
             );
 

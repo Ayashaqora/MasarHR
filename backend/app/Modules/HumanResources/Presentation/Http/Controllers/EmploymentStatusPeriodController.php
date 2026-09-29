@@ -13,6 +13,7 @@ use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRel
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentSpecialtyPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentStatusPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\FullSecondmentPeriod;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\PartialSecondmentPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\Person;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\WorkSchedulePeriod;
 use App\Modules\HumanResources\Presentation\Http\Resources\EmploymentStatusPeriodResource;
@@ -140,6 +141,14 @@ class EmploymentStatusPeriodController
                 ->whereNull('effective_to')
                 ->exists();
 
+            // S30 (docs/partial-secondment-foundation-specification.md §S30.16): partial secondments
+            // still in force at the end date, snapshotted under the same lock.
+            $partialsBeyondEnd = PartialSecondmentPeriod::query()
+                ->where('employment_relationship_id', $employmentRelationship->getKey())
+                ->where(fn ($q) => $q->whereNull('effective_to')->orWhere('effective_to', '>', $data['effective_from']))
+                ->pluck('id')
+                ->all();
+
             $spec = new AuditSpec(
                 action: 'hr.employment_status_period.record',
                 targetType: 'hr_employment_status_period',
@@ -149,7 +158,7 @@ class EmploymentStatusPeriodController
                     'status_detail_id' => $period->status_detail_id,
                     'effective_from' => $period->effective_from?->toDateString(),
                 ],
-                metadata: function () use ($statusDetail, $employmentRelationship, $wasAlreadyEnded, $hadOpenSecondment, $hadOpenCategoryPeriod, $hadContractBeyondEnd, $data, $hadOpenJobTitlePeriod, $hadOpenSpecialtyPeriod, $hadOpenWorkSchedulePeriod) {
+                metadata: function () use ($statusDetail, $employmentRelationship, $wasAlreadyEnded, $hadOpenSecondment, $hadOpenCategoryPeriod, $hadContractBeyondEnd, $data, $hadOpenJobTitlePeriod, $hadOpenSpecialtyPeriod, $hadOpenWorkSchedulePeriod, $partialsBeyondEnd) {
                     $metadata = ['status_detail_code' => $statusDetail->code];
 
                     $freshRelationship = EmploymentRelationship::query()
@@ -218,6 +227,18 @@ class EmploymentStatusPeriodController
 
                         if ($hadOpenWorkSchedulePeriod && ! $stillOpenWorkSchedulePeriod) {
                             $metadata['work_schedule_period_closed_as_consequence'] = true;
+                        }
+
+                        $closedPartials = $partialsBeyondEnd === [] ? [] : PartialSecondmentPeriod::query()
+                            ->whereIn('id', $partialsBeyondEnd)
+                            ->where('effective_to', $data['effective_from'])
+                            ->orderBy('id')
+                            ->pluck('id')
+                            ->all();
+
+                        if ($closedPartials !== []) {
+                            $metadata['partial_secondment_closed_as_consequence'] = true;
+                            $metadata['closed_partial_secondment_period_ids'] = $closedPartials;
                         }
                     }
 

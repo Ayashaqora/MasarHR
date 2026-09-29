@@ -581,7 +581,10 @@ class WorkScheduleFoundationTest extends HumanResourcesTestCase
 
     public function test_s29_introduces_no_attendance_shift_hours_partial_secondment_or_default_concept(): void
     {
-        foreach (['attendance', 'shift', 'working_hour', 'partial_secondment', 'allocation', 'holiday', 'calendar', 'overtime', 'roster'] as $forbidden) {
+        // 'partial_secondment' / 'PartialSecondment' / 'Allocation' were removed in S30 — Partial
+        // Secondment Foundation (docs/partial-secondment-foundation-specification.md) is now an
+        // authorized domain itself; S29 still adds none of them.
+        foreach (['attendance', 'shift', 'working_hour', 'allocation', 'holiday', 'calendar', 'overtime', 'roster'] as $forbidden) {
             $this->assertSame(0, DB::table('information_schema.tables')->whereNotIn('table_schema', ['pg_catalog', 'information_schema'])
                 ->where('table_name', 'like', "%{$forbidden}%")->count(), "no {$forbidden} table");
         }
@@ -590,7 +593,7 @@ class WorkScheduleFoundationTest extends HumanResourcesTestCase
             ->get(['table_schema', 'table_name'])->map(fn ($t) => "{$t->table_schema}.{$t->table_name}")->sort()->values()->all();
         $this->assertSame(['hr.work_schedule_period_weekdays', 'hr.work_schedule_periods'], $scheduleTables, 'no organizational or default schedule table');
 
-        foreach (['Attendance', 'Shift', 'PartialSecondment', 'Allocation', 'DefaultWorkSchedule', 'Holiday'] as $forbidden) {
+        foreach (['Attendance', 'Shift', 'DefaultWorkSchedule', 'Holiday'] as $forbidden) {
             $this->assertSame([], glob(base_path("app/Modules/*/*/*{$forbidden}*.php")), "no {$forbidden} class");
             $this->assertSame([], glob(base_path("app/Modules/*/*/*/*{$forbidden}*.php")), "no {$forbidden} class");
         }

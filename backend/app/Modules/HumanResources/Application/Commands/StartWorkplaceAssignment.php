@@ -3,11 +3,13 @@
 namespace App\Modules\HumanResources\Application\Commands;
 
 use App\Modules\HumanResources\Domain\Exceptions\ActiveFullSecondmentAlreadyExistsException;
+use App\Modules\HumanResources\Domain\Exceptions\ActivePartialSecondmentExistsException;
 use App\Modules\HumanResources\Domain\Exceptions\EmploymentRelationshipAlreadyEndedException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidWorkplaceAssignmentDecisionTypeException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidWorkplaceAssignmentStartDateException;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRelationship;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\FullSecondmentPeriod;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\PartialSecondmentPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\WorkplaceAssignmentPeriod;
 use App\Modules\Organization\Infrastructure\Persistence\Eloquent\OrganizationalUnit;
 use App\Modules\Platform\Infrastructure\Persistence\Postgres\PostgresErrorClassifier as Errors;
@@ -36,6 +38,13 @@ use Illuminate\Support\Facades\DB;
  * an assignment starting on or after it → 422 (InvalidWorkplaceAssignmentStartDateException, the
  * unchanged S16 same-stream rejection).
  *
+ * S30 (docs/partial-secondment-foundation-specification.md §S30.12, ADR-S30-007 rule 1): Partial
+ * Secondment is a temporary workplace movement for this interaction — EVERY Partial Secondment
+ * effective at the new effective_from (several may be, with disjoint weekdays) is truncated at it,
+ * atomically, before the assignment is created; a Partial Secondment starting on or after the date
+ * rejects (409, ActivePartialSecondmentExistsException) instead of being rewritten (rule 4).
+ * Assignment and Partial Secondment never remain effective together.
+ *
  * The EmploymentRelationship is re-fetched fresh with lockForUpdate() as the first statement here
  * — never trusted from whatever the caller passed in — exactly mirroring
  * RecordOrganizationalPlacementPeriod's/StartFullSecondment's own established discipline. This
@@ -57,7 +66,7 @@ final class StartWorkplaceAssignment
 {
     /**
      * @throws EmploymentRelationshipAlreadyEndedException|InvalidWorkplaceAssignmentDecisionTypeException
-     * @throws ActiveFullSecondmentAlreadyExistsException|InvalidWorkplaceAssignmentStartDateException
+     * @throws ActiveFullSecondmentAlreadyExistsException|InvalidWorkplaceAssignmentStartDateException|ActivePartialSecondmentExistsException
      */
     public function __construct(private readonly SupersedeTemporaryWorkplaceMovement $supersession) {}
 
@@ -109,13 +118,16 @@ final class StartWorkplaceAssignment
         $relationshipId = $freshRelationship->getKey();
         $crossStreamConflict = fn () => new ActiveFullSecondmentAlreadyExistsException;
         $sameStreamConflict = fn () => new InvalidWorkplaceAssignmentStartDateException;
+        $partialConflict = fn () => new ActivePartialSecondmentExistsException;
 
         // ADR-S28-001: validate both streams before mutating either, then truncate whatever is
         // effective at the new date (a secondment — cross-stream; a previous assignment — the
         // unchanged S16 close-previous rule, now interval-aware).
         $this->supersession->assertSupersedable(FullSecondmentPeriod::class, $relationshipId, $date, $crossStreamConflict);
         $this->supersession->assertSupersedable(WorkplaceAssignmentPeriod::class, $relationshipId, $date, $sameStreamConflict);
+        $this->supersession->assertSupersedable(PartialSecondmentPeriod::class, $relationshipId, $date, $partialConflict);
         $this->supersession->supersedeAt(FullSecondmentPeriod::class, $relationshipId, $date, $crossStreamConflict);
+        $this->supersession->supersedeAllAt(PartialSecondmentPeriod::class, $relationshipId, $date, $partialConflict);
         $this->supersession->supersedeAt(WorkplaceAssignmentPeriod::class, $relationshipId, $date, $sameStreamConflict);
 
         $period = new WorkplaceAssignmentPeriod([

@@ -541,8 +541,9 @@ class ReportingAsOfFoundationTest extends HumanResourcesTestCase
         $this->assertSame(0, DB::table('information_schema.tables')->where('table_schema', 'reporting')->count(), 'no reporting tables / snapshots');
         // 'weekday'/'work_schedule'/'schedule' were removed in S29 — Work Schedule Foundation
         // (docs/work-schedule-foundation-specification.md) is now an authorized domain itself, the
-        // same precedent as earlier stages; S27 still adds none of them.
-        foreach (['partial', 'allocation', 'snapshot', 'report'] as $forbidden) {
+        // same precedent as earlier stages; 'partial' / 'PartialSecondment' likewise in S30
+        // (docs/partial-secondment-foundation-specification.md). S27 still adds none of them.
+        foreach (['allocation', 'snapshot', 'report'] as $forbidden) {
             $this->assertSame(0, DB::table('information_schema.tables')->whereIn('table_schema', ['hr', 'ref', 'reporting', 'org'])->where('table_name', 'like', "%{$forbidden}%")->count(), "no {$forbidden} table");
         }
         $s29Migrations = [
@@ -555,7 +556,7 @@ class ReportingAsOfFoundationTest extends HumanResourcesTestCase
         foreach (Route::getRoutes() as $route) {
             $this->assertDoesNotMatchRegularExpression('/report|export|dashboard|as-of|pdf|xlsx|csv/i', $route->uri(), 'S27 exposes no endpoint or output');
         }
-        foreach (['Pdf', 'Xlsx', 'Csv', 'Export', 'Dashboard', 'Chart', 'PartialSecondment'] as $forbidden) {
+        foreach (['Pdf', 'Xlsx', 'Csv', 'Export', 'Dashboard', 'Chart'] as $forbidden) {
             $this->assertSame([], glob(base_path("app/Modules/*/*/*{$forbidden}*.php")), "no {$forbidden} class");
             $this->assertSame([], glob(base_path("app/Modules/*/*/*/*{$forbidden}*.php")), "no {$forbidden} class");
             $this->assertSame([], glob(base_path("app/Modules/*/*/*/*/*{$forbidden}*.php")), "no {$forbidden} class");

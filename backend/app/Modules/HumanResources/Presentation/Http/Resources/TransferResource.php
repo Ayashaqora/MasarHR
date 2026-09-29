@@ -35,6 +35,11 @@ class TransferResource extends JsonResource
             'closed_workplace_assignment_period' => $this->result->closedAssignment() !== null
                 ? (new WorkplaceAssignmentPeriodResource($this->result->closedAssignment()))->toArray($request)
                 : null,
+            // S30: every partial secondment closed at the transfer date — [] when none.
+            'closed_partial_secondment_periods' => array_map(
+                fn ($period) => (new PartialSecondmentPeriodResource($period->load('weekdays')))->toArray($request),
+                $this->result->closedPartialSecondments(),
+            ),
         ];
     }
 }

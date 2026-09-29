@@ -67,6 +67,12 @@ class ScopeBoundaryTest extends OrganizationTestCase
         // as the S11/S12 exceptions — ordinary domain data (the assignment's destination unit),
         // not a new authorization-scope grant, even though S08's ScopedAuthorizationChecker is
         // called (up to twice per target unit) to enforce scope over it.
+        //
+        // S30 ("Partial Secondment Foundation") adds a fifth, identically-shaped disclosed
+        // exception: hr.partial_secondment_periods.organizational_unit_id
+        // (docs/partial-secondment-foundation-specification.md §S30.6/§S30.21) — the partial
+        // secondment's destination unit, ordinary domain data scope-checked by the unmodified
+        // ScopedAuthorizationChecker, not an authorization-scope grant.
         $offendingTables = DB::table('information_schema.columns')
             ->whereIn('column_name', ['organizational_unit_id', 'organization_scope', 'org_unit_id', 'branch_id'])
             ->where(function ($query): void {
@@ -82,6 +88,9 @@ class ScopeBoundaryTest extends OrganizationTestCase
                 })->where(function ($inner): void {
                     $inner->where('table_schema', '!=', 'hr')
                         ->orWhere('table_name', '!=', 'workplace_assignment_periods');
+                })->where(function ($inner): void {
+                    $inner->where('table_schema', '!=', 'hr')
+                        ->orWhere('table_name', '!=', 'partial_secondment_periods');
                 });
             })
             ->pluck('table_name')->all();
@@ -89,7 +98,7 @@ class ScopeBoundaryTest extends OrganizationTestCase
         $this->assertSame(
             [],
             $offendingTables,
-            'no organizational-scope column may exist outside security.organizational_scope_grants and the disclosed S11/S12/S16 hr exceptions',
+            'no organizational-scope column may exist outside security.organizational_scope_grants and the disclosed S11/S12/S16/S30 hr exceptions',
         );
     }
 

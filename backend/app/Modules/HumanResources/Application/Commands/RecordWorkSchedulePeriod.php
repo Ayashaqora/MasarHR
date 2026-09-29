@@ -5,6 +5,7 @@ namespace App\Modules\HumanResources\Application\Commands;
 use App\Modules\HumanResources\Domain\Exceptions\EmploymentRelationshipAlreadyEndedException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidWorkSchedulePeriodDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidWorkScheduleWeekdaysException;
+use App\Modules\HumanResources\Domain\Exceptions\WorkScheduleChangeInvalidatesPartialSecondmentException;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRelationship;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\WorkSchedulePeriod;
 use App\Modules\Platform\Infrastructure\Persistence\Postgres\PostgresErrorClassifier as Errors;
@@ -31,10 +32,13 @@ use Illuminate\Support\Facades\DB;
  */
 final class RecordWorkSchedulePeriod
 {
+    public function __construct(private readonly PartialSecondmentAllocationRules $allocationRules) {}
+
     /**
      * @param  list<string>  $weekdayCodes
      *
      * @throws EmploymentRelationshipAlreadyEndedException|InvalidWorkSchedulePeriodDateException|InvalidWorkScheduleWeekdaysException
+     * @throws WorkScheduleChangeInvalidatesPartialSecondmentException
      */
     public function handle(EmploymentRelationship $relationship, string $effectiveFrom, array $weekdayCodes): WorkSchedulePeriod
     {
@@ -74,8 +78,12 @@ final class RecordWorkSchedulePeriod
             throw new InvalidWorkSchedulePeriodDateException;
         }
 
-        // ADR-S29-005: a future Partial Secondment allocation revalidation runs here — after every
-        // S29 validation, before the first write below.
+        // ADR-S29-005 extension point, connected by S30 (ADR-S30-010,
+        // docs/partial-secondment-foundation-specification.md §S30.14): every Partial Secondment
+        // effective on or after the new start must keep all its weekdays in the new schedule —
+        // after every S29 validation, before the first write below. Rejects atomically; nothing
+        // is repaired.
+        $this->allocationRules->assertScheduleChangeKeepsAllocations($freshRelationship->getKey(), $newFrom->toDateString(), array_values($weekdayCodes));
 
         if ($latestPeriod !== null && $latestPeriod->effective_to === null) {
             try {

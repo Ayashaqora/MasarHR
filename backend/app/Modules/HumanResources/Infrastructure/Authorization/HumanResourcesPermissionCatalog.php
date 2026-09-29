@@ -130,6 +130,11 @@ final class HumanResourcesPermissionCatalog
 
     public const WORK_SCHEDULE_PERIODS_RECORD = 'hr.work_schedule_periods.record';
 
+    /** S30 (docs/partial-secondment-foundation-specification.md §S30.15). */
+    public const PARTIAL_SECONDMENT_PERIODS_VIEW = 'hr.partial_secondment_periods.view';
+
+    public const PARTIAL_SECONDMENT_PERIODS_RECORD = 'hr.partial_secondment_periods.record';
+
     public const ALL = [
         self::PERSONS_VIEW,
         self::PERSONS_CREATE,
@@ -160,5 +165,7 @@ final class HumanResourcesPermissionCatalog
         self::EMPLOYMENT_SPECIALTY_PERIODS_RECORD,
         self::WORK_SCHEDULE_PERIODS_VIEW,
         self::WORK_SCHEDULE_PERIODS_RECORD,
+        self::PARTIAL_SECONDMENT_PERIODS_VIEW,
+        self::PARTIAL_SECONDMENT_PERIODS_RECORD,
     ];
 }

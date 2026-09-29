@@ -4,11 +4,13 @@ namespace App\Modules\HumanResources\Application\Commands;
 
 use App\Modules\HumanResources\Domain\Exceptions\EmploymentRelationshipAlreadyEndedException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidFullSecondmentEndDateException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidPartialSecondmentEndDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidTransferDecisionTypeException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidWorkplaceAssignmentEndDateException;
 use App\Modules\HumanResources\Domain\TransferResult;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRelationship;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\FullSecondmentPeriod;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\PartialSecondmentPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\WorkplaceAssignmentPeriod;
 use App\Modules\Organization\Infrastructure\Persistence\Eloquent\OrganizationalUnit;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\DecisionType;
@@ -123,10 +125,17 @@ final class TransferEmployee
 
         $this->supersession->assertSupersedable(FullSecondmentPeriod::class, $freshRelationship->getKey(), $date, $secondmentConflict);
         $this->supersession->assertSupersedable(WorkplaceAssignmentPeriod::class, $freshRelationship->getKey(), $date, $assignmentConflict);
+        // S30 (docs/partial-secondment-foundation-specification.md §S30.13, ADR-S30-008): the same
+        // S14/S16/S28 consequence for Partial Secondments — every one effective at D is truncated at
+        // D (the partial override of the old workplace ends with it); one starting on or after D
+        // rejects the transfer atomically instead of being rewritten.
+        $partialConflict = fn () => new InvalidPartialSecondmentEndDateException;
+        $this->supersession->assertSupersedable(PartialSecondmentPeriod::class, $freshRelationship->getKey(), $date, $partialConflict);
 
         $closedSecondment = $this->supersession->supersedeAt(FullSecondmentPeriod::class, $freshRelationship->getKey(), $date, $secondmentConflict);
         $closedAssignment = $this->supersession->supersedeAt(WorkplaceAssignmentPeriod::class, $freshRelationship->getKey(), $date, $assignmentConflict);
+        $closedPartials = $this->supersession->supersedeAllAt(PartialSecondmentPeriod::class, $freshRelationship->getKey(), $date, $partialConflict);
 
-        return new TransferResult($placement, $closedSecondment, $closedAssignment);
+        return new TransferResult($placement, $closedSecondment, $closedAssignment, $closedPartials);
     }
 }

@@ -12,6 +12,7 @@ use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRel
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentSpecialtyPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentStatusPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\FullSecondmentPeriod;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\PartialSecondmentPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\Person;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\WorkplaceAssignmentPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\WorkSchedulePeriod;
@@ -75,6 +76,10 @@ use Illuminate\Support\Carbon;
  *
  * S29 (docs/work-schedule-foundation-specification.md §S29.10, ADR-S29-004): the open S29 Work
  * Schedule period is closed in the same place with exactly the S20/S22/S26 rule.
+ *
+ * S30 (docs/partial-secondment-foundation-specification.md §S30.16, ADR-S30-009): every Partial
+ * Secondment still effective at the end date (open, or recorded with a later planned end) is
+ * closed there; one starting on or after the end date rejects the end atomically.
  *
  * No explicit lockForUpdate() is added here for the S15/S16 writes — the existing scoped UPDATE
  * above already acquires an implicit row-level lock on this relationship for the rest of the
@@ -142,6 +147,7 @@ final class EndEmploymentRelationship
         $this->closeOpenEmploymentJobTitlePeriodIfAny($relationship, $effectiveTo);
         $this->closeOpenEmploymentSpecialtyPeriodIfAny($relationship, $effectiveTo);
         $this->closeOpenWorkSchedulePeriodIfAny($relationship, $effectiveTo);
+        $this->closeEffectivePartialSecondmentsAtEnd($relationship, $effectiveTo);
 
         return $relationship->refresh();
     }
@@ -437,6 +443,44 @@ final class EndEmploymentRelationship
             }
 
             throw $e;
+        }
+    }
+
+    /**
+     * S30 spec §S30.16 / ADR-S30-009. Validated before anything is written: a Partial Secondment
+     * starting on or after effectiveTo would lie entirely outside the relationship, so the end is
+     * rejected with S09's InvalidEndDateException rather than deleting or rewriting it. Otherwise
+     * every Partial Secondment whose period is still open or extends past effectiveTo (several may,
+     * with disjoint weekdays) has its effective_to moved to exactly effectiveTo — the weekday
+     * membership rows are re-copied by PartialSecondmentPeriod (deferred FK). A period that already ended on or
+     * before effectiveTo is left exactly as it is — never extended.
+     */
+    private function closeEffectivePartialSecondmentsAtEnd(EmploymentRelationship $relationship, string $effectiveTo): void
+    {
+        $startsOnOrAfterEnd = PartialSecondmentPeriod::query()
+            ->where('employment_relationship_id', $relationship->getKey())
+            ->where('effective_from', '>=', $effectiveTo)
+            ->exists();
+
+        if ($startsOnOrAfterEnd) {
+            throw new InvalidEndDateException;
+        }
+
+        $extending = PartialSecondmentPeriod::query()
+            ->where('employment_relationship_id', $relationship->getKey())
+            ->where(fn ($q) => $q->whereNull('effective_to')->orWhere('effective_to', '>', $effectiveTo))
+            ->get();
+
+        foreach ($extending as $period) {
+            try {
+                $period->update(['effective_to' => $effectiveTo]);
+            } catch (QueryException $e) {
+                if (Errors::isCheckViolation($e)) {
+                    throw new InvalidEndDateException;
+                }
+
+                throw $e;
+            }
         }
     }
 }
