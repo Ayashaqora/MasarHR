@@ -28,6 +28,7 @@ use App\Modules\HumanResources\Domain\Exceptions\InvalidPersonQualificationAcade
 use App\Modules\HumanResources\Domain\Exceptions\InvalidPersonQualificationTypeException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidPlacementPeriodDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidStatusPeriodDateException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidStatusPeriodEndException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidTransferDecisionTypeException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidWorkplaceAssignmentDecisionTypeException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidWorkplaceAssignmentEndDateException;
@@ -129,6 +130,7 @@ return Application::configure(basePath: dirname(__DIR__))
             EmploymentRelationshipAlreadyEndedException::class,
             InvalidEndDateException::class,
             InvalidStatusPeriodDateException::class,
+            InvalidStatusPeriodEndException::class,
             UnresolvedEmploymentStatusBehaviorException::class,
             InvalidPlacementPeriodDateException::class,
             ActiveFullSecondmentAlreadyExistsException::class,
@@ -213,6 +215,10 @@ return Application::configure(basePath: dirname(__DIR__))
         $exceptions->render(fn (InvalidStatusPeriodDateException $e) => response()->json([
             'message' => $e->getMessage(),
             'errors' => ['effective_from' => [$e->getMessage()]],
+        ], 422));
+        $exceptions->render(fn (InvalidStatusPeriodEndException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['effective_to' => [$e->getMessage()]],
         ], 422));
         $exceptions->render(fn (UnresolvedEmploymentStatusBehaviorException $e) => response()->json([
             'message' => $e->getMessage(),

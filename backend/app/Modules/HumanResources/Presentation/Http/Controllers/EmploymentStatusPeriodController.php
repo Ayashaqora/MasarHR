@@ -6,6 +6,7 @@ use App\Modules\Audit\Application\AuditedCommandExecutor;
 use App\Modules\Audit\Domain\AuditSpec;
 use App\Modules\HumanResources\Application\Commands\RecordEmploymentStatusPeriod;
 use App\Modules\HumanResources\Application\Queries\ListEmploymentStatusPeriodsForRelationship;
+use App\Modules\HumanResources\Application\Queries\ResolveEffectiveEmploymentStatusAsOf;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentCategoryPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentContractPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentJobTitlePeriod;
@@ -16,6 +17,7 @@ use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\FullSecondmen
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\PartialSecondmentPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\Person;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\WorkSchedulePeriod;
+use App\Modules\HumanResources\Presentation\Http\Resources\EffectiveEmploymentStatusResource;
 use App\Modules\HumanResources\Presentation\Http\Resources\EmploymentStatusPeriodResource;
 use App\Modules\Platform\Presentation\Http\Middleware\ResolveCommandContext;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\EmploymentStatusDetail;
@@ -45,6 +47,22 @@ class EmploymentStatusPeriodController
         return EmploymentStatusPeriodResource::collection($query($employmentRelationship))->response();
     }
 
+    /** S32 (§S32.4/§S32.7): effective status on a date, persisted vs derived explicit. */
+    public function effective(
+        Request $request,
+        Person $person,
+        EmploymentRelationship $employmentRelationship,
+        ResolveEffectiveEmploymentStatusAsOf $resolver,
+    ): JsonResponse {
+        if ($employmentRelationship->person_id !== $person->getKey()) {
+            throw new NotFoundHttpException('Employment relationship not found for this person.');
+        }
+
+        $data = $request->validate(['as_of' => ['required', 'date_format:Y-m-d']]);
+
+        return response()->json(EffectiveEmploymentStatusResource::toArray($data['as_of'], $resolver($employmentRelationship, $data['as_of'])));
+    }
+
     public function store(
         Request $request,
         Person $person,
@@ -59,6 +77,16 @@ class EmploymentStatusPeriodController
         $data = $request->validate([
             'status_detail_code' => ['required', 'string', 'max:64'],
             'effective_from' => ['required', 'date'],
+            // S32 (§S32.7): explicit, never silently ignored; DATE-only.
+            'effective_to' => ['nullable', 'date_format:Y-m-d', 'after:effective_from'],
+            'end_date' => ['prohibited'],
+            'effective_until' => ['prohibited'],
+            'duration_days' => ['prohibited'],
+            'duration' => ['prohibited'],
+            'is_temporary' => ['prohibited'],
+            'return_date' => ['prohibited'],
+            'expected_return_date' => ['prohibited'],
+            'auto_return' => ['prohibited'],
         ]);
 
         $statusDetail = EmploymentStatusDetail::query()->where('code', $data['status_detail_code'])->first();
@@ -157,6 +185,7 @@ class EmploymentStatusPeriodController
                     'employment_relationship_id' => $period->employment_relationship_id,
                     'status_detail_id' => $period->status_detail_id,
                     'effective_from' => $period->effective_from?->toDateString(),
+                    'effective_to' => $period->effective_to?->toDateString(),
                 ],
                 metadata: function () use ($statusDetail, $employmentRelationship, $wasAlreadyEnded, $hadOpenSecondment, $hadOpenCategoryPeriod, $hadContractBeyondEnd, $data, $hadOpenJobTitlePeriod, $hadOpenSpecialtyPeriod, $hadOpenWorkSchedulePeriod, $partialsBeyondEnd) {
                     $metadata = ['status_detail_code' => $statusDetail->code];
@@ -254,6 +283,7 @@ class EmploymentStatusPeriodController
                     $employmentRelationship,
                     $statusDetail,
                     $data['effective_from'],
+                    $data['effective_to'] ?? null,
                 ),
             );
 

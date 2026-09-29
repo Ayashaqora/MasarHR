@@ -61,7 +61,7 @@ class EmploymentStatusHistoryTest extends HumanResourcesTestCase
         $person = $this->createPersonRecord();
         $relationship = $this->createEmploymentRelationship($person);
 
-        app(RecordEmploymentStatusPeriod::class)->handle($person, $relationship, $this->statusDetail('unpaid_leave'), '2026-09-27');
+        app(RecordEmploymentStatusPeriod::class)->handle($person, $relationship, $this->statusDetail('unpaid_leave'), '2026-09-27', '2026-12-01');
 
         $relationship->refresh();
         $this->assertSame('NOT_APPLICABLE', $relationship->end_knowledge_state);
@@ -394,7 +394,7 @@ class EmploymentStatusHistoryTest extends HumanResourcesTestCase
         $this->recordPlacement($relationship, $placementUnit, '2026-01-15');
         app(StartFullSecondment::class)->handle($relationship, $secondmentUnit, '2026-02-01');
 
-        app(RecordEmploymentStatusPeriod::class)->handle($person, $relationship, $this->statusDetail('unpaid_leave'), '2026-09-27');
+        app(RecordEmploymentStatusPeriod::class)->handle($person, $relationship, $this->statusDetail('unpaid_leave'), '2026-09-27', '2026-12-01');
 
         $secondment = FullSecondmentPeriod::query()->where('employment_relationship_id', $relationship->getKey())->firstOrFail();
         $placement = OrganizationalPlacementPeriod::query()->where('employment_relationship_id', $relationship->getKey())->firstOrFail();
@@ -494,11 +494,13 @@ class EmploymentStatusHistoryTest extends HumanResourcesTestCase
             $relationship = $this->createEmploymentRelationship($person);
 
             $temporaryPeriod = app(RecordEmploymentStatusPeriod::class)->handle(
-                $person, $relationship, $this->statusDetail($code), '2026-09-27',
+                $person, $relationship, $this->statusDetail($code), '2026-09-27', $code === 'external_sick_leave' ? '2026-12-01' : null,
             );
 
             $this->assertSame($this->statusDetail($code)->id, $temporaryPeriod->status_detail_id, "[$code] period records the correct status detail");
-            $this->assertNull($temporaryPeriod->refresh()->effective_to, "[$code] period is left open");
+            if ($code !== 'external_sick_leave') {
+                $this->assertNull($temporaryPeriod->refresh()->effective_to, "[$code] period is left open");
+            }
             $this->assertSame('NOT_APPLICABLE', $relationship->refresh()->end_knowledge_state, "[$code] is non_active and must never end the relationship");
 
             // Leaving the state: recording the next transition closes it cleanly, exactly like
@@ -529,7 +531,7 @@ class EmploymentStatusHistoryTest extends HumanResourcesTestCase
 
             $this->postJson(
                 "/api/v1/hr/persons/{$person->id}/employment-relationships/{$relationship->id}/status-periods",
-                ['status_detail_code' => $code, 'effective_from' => '2026-09-27'],
+                ['status_detail_code' => $code, 'effective_from' => '2026-09-27'] + ($code === 'external_sick_leave' ? ['effective_to' => '2026-12-01'] : []),
             )->assertStatus(201)->assertJsonPath('status_detail_id', $this->statusDetail($code)->id);
         }
     }
@@ -586,7 +588,7 @@ class EmploymentStatusHistoryTest extends HumanResourcesTestCase
             $this->actingAsHrAdministrator();
             $person = $this->createPersonRecord();
             $relationship = $this->createEmploymentRelationship($person);
-            $period = app(RecordEmploymentStatusPeriod::class)->handle($person, $relationship, $this->statusDetail($code), '2026-09-27');
+            $period = app(RecordEmploymentStatusPeriod::class)->handle($person, $relationship, $this->statusDetail($code), '2026-09-27', '2026-12-01');
 
             $this->postJson(
                 "/api/v1/hr/persons/{$person->id}/employment-relationships/{$relationship->id}/end",

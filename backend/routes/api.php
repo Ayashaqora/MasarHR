@@ -289,6 +289,8 @@ Route::middleware('web')->group(function (): void {
             // S10: Employment Status History, nested under the same {person}/{employmentRelationship}.
             Route::get('/persons/{person}/employment-relationships/{employmentRelationship}/status-periods', [EmploymentStatusPeriodController::class, 'index'])
                 ->middleware('permission:'.HrPerm::EMPLOYMENT_STATUS_PERIODS_VIEW)->name('persons.employment-relationships.status-periods.index');
+            Route::get('/persons/{person}/employment-relationships/{employmentRelationship}/effective-status', [EmploymentStatusPeriodController::class, 'effective'])
+                ->middleware('permission:'.HrPerm::EMPLOYMENT_STATUS_PERIODS_VIEW)->name('persons.employment-relationships.effective-status');
             Route::post('/persons/{person}/employment-relationships/{employmentRelationship}/status-periods', [EmploymentStatusPeriodController::class, 'store'])
                 ->middleware('permission:'.HrPerm::EMPLOYMENT_STATUS_PERIODS_RECORD)->name('persons.employment-relationships.status-periods.store');
 

@@ -2,15 +2,19 @@
 
 namespace Tests\Feature\HumanResources;
 
+use App\Modules\HumanResources\Application\Commands\EndEmploymentRelationship;
+use App\Modules\HumanResources\Application\Commands\RecordEmploymentStatusPeriod;
 use App\Modules\HumanResources\Application\Commands\RecordWorkSchedulePeriod;
 use App\Modules\HumanResources\Application\Commands\ScanMovementExpiryFollowUps;
 use App\Modules\HumanResources\Application\Commands\StartWorkplaceAssignment;
 use App\Modules\HumanResources\Domain\Exceptions\EmploymentRelationshipAlreadyEndedException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidEndDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidWorkSchedulePeriodDateException;
 use App\Modules\HumanResources\Domain\ExpiryFollowUpEmission;
 use App\Modules\HumanResources\Domain\FollowUpSuppressionReason;
 use App\Modules\HumanResources\Domain\TemporaryMovementType;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRelationship;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\Person;
 use App\Modules\Organization\Infrastructure\Persistence\Eloquent\OrganizationalUnit;
 use App\Modules\Platform\Application\Execution\CommandContext;
 use App\Modules\Platform\Domain\Actor;
@@ -18,6 +22,7 @@ use App\Modules\Platform\Domain\CorrelationId;
 use App\Modules\Platform\Domain\Source;
 use App\Modules\Platform\Infrastructure\Persistence\Postgres\PostgresErrorClassifier as Errors;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\DecisionType;
+use App\Modules\Reference\Infrastructure\Persistence\Eloquent\EmploymentStatusDetail;
 use Illuminate\Database\Connection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -2001,5 +2006,249 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
         $this->assertSame(ExpiryFollowUpEmission::STALE, $emission->outcome);
         $this->assertSame(FollowUpSuppressionReason::TruncatedEarlier, $emission->reason);
         $this->assertSame(0, (int) $this->scalar('select count(*) from automation.movement_expiry_followups where employment_relationship_id = ?', [$relationshipId]), 'nothing was emitted for the stale expected end');
+    }
+
+    /**
+     * S32 (ADR-S32-016): bounded status periods use the same PostgreSQL EXCLUDE as open-ended ones,
+     * so two concurrent bounded periods overlapping for one relationship are serialised and the
+     * loser is rejected by the database itself, not merely delayed.
+     */
+    public function test_concurrent_overlapping_bounded_status_periods_are_serialised_by_the_exclusion_constraint(): void
+    {
+        $personId = $this->person();
+        $relationshipId = (string) Str::uuid7();
+        $this->pg()->insert($this->insertSql(), [$relationshipId, $personId, $this->permanentEmploymentTypeId(), 'PN-S32-BOUNDED-RACE', 'PERMANENT', '2026-01-01']);
+
+        $leaveId = $this->statusDetailId('unpaid_leave');
+        $sickId = $this->statusDetailId('external_sick_leave');
+        $sql = <<<'SQL'
+            insert into hr.employment_status_periods
+                (id, employment_relationship_id, status_detail_id, effective_from, effective_to, created_at)
+            values (?, ?, ?, ?, ?, now())
+            SQL;
+
+        $first = $this->pg();
+        $second = $this->second();
+
+        $first->beginTransaction();
+        $first->insert($sql, [(string) Str::uuid7(), $relationshipId, $leaveId, '2026-10-01', '2026-11-01']);
+
+        $second->statement("set lock_timeout = '300ms'");
+        $blocked = $this->databaseError(fn () => $second->transaction(fn () => $second->insert($sql, [
+            (string) Str::uuid7(), $relationshipId, $sickId, '2026-10-15', '2026-11-15',
+        ])));
+        $this->assertTrue(Errors::isLockNotAvailable($blocked), 'the second bounded insert waits on the first');
+
+        $first->commit();
+
+        $rejected = $this->databaseError(fn () => $second->transaction(fn () => $second->insert($sql, [
+            (string) Str::uuid7(), $relationshipId, $sickId, '2026-10-15', '2026-11-15',
+        ])));
+        $this->assertTrue(Errors::isExclusionViolation($rejected));
+
+        // Adjacent half-open periods do not overlap: [11-01, 12-01) is accepted after [10-01, 11-01).
+        $second->transaction(fn () => $second->insert($sql, [(string) Str::uuid7(), $relationshipId, $sickId, '2026-11-01', '2026-12-01']));
+
+        $this->assertSame(2, (int) $this->scalar('select count(*) from hr.employment_status_periods where employment_relationship_id = ?', [$relationshipId]));
+    }
+
+    /** Runs $work with the given connection as the application's default (so real Eloquent commands use that session). */
+    private function asSession(string $connectionName, callable $work): mixed
+    {
+        $original = config('database.default');
+        DB::setDefaultConnection($connectionName);
+        try {
+            return $work();
+        } finally {
+            DB::setDefaultConnection($original);
+        }
+    }
+
+    private function s32Relationship(): array
+    {
+        $personId = $this->person();
+        $relationshipId = (string) Str::uuid7();
+        $this->pg()->insert($this->insertSql(), [$relationshipId, $personId, $this->permanentEmploymentTypeId(), 'PN-S32-RACE-'.Str::random(6), 'PERMANENT', '2026-01-01']);
+
+        return [$personId, $relationshipId];
+    }
+
+    private function recordBounded(string $personId, string $relationshipId, string $code, string $from, ?string $to): mixed
+    {
+        return DB::transaction(fn () => app(RecordEmploymentStatusPeriod::class)->handle(
+            Person::query()->findOrFail($personId),
+            EmploymentRelationship::query()->findOrFail($relationshipId),
+            EmploymentStatusDetail::query()->where('code', $code)->firstOrFail(),
+            $from,
+            $to,
+        ));
+    }
+
+    private function endRelationship(string $personId, string $relationshipId, string $to): mixed
+    {
+        // Same transaction ownership as the production controller: the caller wraps the command.
+        return DB::transaction(function () use ($personId, $relationshipId, $to) {
+            $relationship = EmploymentRelationship::query()->findOrFail($relationshipId);
+
+            return app(EndEmploymentRelationship::class)->handle(Person::query()->findOrFail($personId), $relationship, $relationship->version, $to, false);
+        });
+    }
+
+    /** S32 invariant: no committed status period violates the final known relationship bounds, and none overlap. */
+    private function assertNoStatusPeriodViolatesRelationshipBounds(string $relationshipId): void
+    {
+        $violations = (int) $this->scalar(<<<'SQL'
+            select count(*) from hr.employment_status_periods p
+            join hr.employment_relationships r on r.id = p.employment_relationship_id
+            where r.id = ? and r.end_knowledge_state = 'KNOWN' and (
+                (p.effective_from >= r.effective_to and not (p.effective_to is null and p.effective_from = r.effective_to))
+                or (p.effective_from < r.effective_to and (p.effective_to is null or p.effective_to > r.effective_to))
+            )
+            SQL, [$relationshipId]);
+        $this->assertSame(0, $violations, 'a committed status period extends beyond the relationship end');
+
+        $overlaps = (int) $this->scalar(<<<'SQL'
+            select count(*) from hr.employment_status_periods a
+            join hr.employment_status_periods b on a.employment_relationship_id = b.employment_relationship_id and a.id < b.id
+            where a.employment_relationship_id = ?
+              and daterange(a.effective_from, a.effective_to, '[)') && daterange(b.effective_from, b.effective_to, '[)')
+            SQL, [$relationshipId]);
+        $this->assertSame(0, $overlaps);
+    }
+
+    /**
+     * S32 gate (real production paths, real two sessions): RecordEmploymentStatusPeriod (session A,
+     * bounded status, in flight and uncommitted inside its own DB::transaction) races
+     * EndEmploymentRelationship (session B, its own DB::transaction as the controller does). The end
+     * blocks on the relationship row lock (lock_timeout fires deterministically, no sleeps), then after
+     * A commits it re-validates against the committed bounded period and truncates it at the end date.
+     */
+    public function test_s32_status_first_then_relationship_end_revalidates_and_truncates_the_committed_bounded_status(): void
+    {
+        [$personId, $relationshipId] = $this->s32Relationship();
+        $this->second(); // register the second session's config
+        $original = config('database.default');
+
+        // Session A: the real command runs to completion inside an open transaction that we hold.
+        DB::beginTransaction();
+        $period = $this->recordBounded($personId, $relationshipId, 'unpaid_leave', '2026-10-01', '2026-12-01');
+        $this->assertNotNull($period->id);
+
+        // Session B: the real end command must wait behind A's relationship row lock.
+        $blocked = $this->asSession(self::SECOND, function () use ($personId, $relationshipId) {
+            DB::statement("set lock_timeout = '300ms'");
+            try {
+                return $this->databaseError(fn () => $this->endRelationship($personId, $relationshipId, '2026-11-01'));
+            } finally {
+                DB::statement('set lock_timeout = 0');
+            }
+        });
+        $this->assertTrue(Errors::isLockNotAvailable($blocked), 'EndEmploymentRelationship waits on the in-flight bounded-status command');
+        $this->assertSame($original, config('database.default'));
+
+        DB::commit();
+
+        $this->asSession(self::SECOND, fn () => $this->endRelationship($personId, $relationshipId, '2026-11-01'));
+
+        $this->assertSame('2026-11-01', (string) $this->scalar('select effective_to from hr.employment_status_periods where id = ?', [$period->id]), 'truncated at the end date');
+        $this->assertSame('KNOWN', (string) $this->scalar('select end_knowledge_state from hr.employment_relationships where id = ?', [$relationshipId]));
+        $this->assertNoStatusPeriodViolatesRelationshipBounds($relationshipId);
+    }
+
+    /** Same race, but the committed bounded status starts on/after the requested end: the end is rejected atomically. */
+    public function test_s32_status_first_then_a_relationship_end_before_the_status_start_is_rejected_atomically(): void
+    {
+        [$personId, $relationshipId] = $this->s32Relationship();
+        $this->second();
+
+        DB::beginTransaction();
+        $period = $this->recordBounded($personId, $relationshipId, 'external_sick_leave', '2026-12-01', '2027-01-01');
+
+        $blocked = $this->asSession(self::SECOND, function () use ($personId, $relationshipId) {
+            DB::statement("set lock_timeout = '300ms'");
+            try {
+                return $this->databaseError(fn () => $this->endRelationship($personId, $relationshipId, '2026-11-01'));
+            } finally {
+                DB::statement('set lock_timeout = 0');
+            }
+        });
+        $this->assertTrue(Errors::isLockNotAvailable($blocked));
+
+        DB::commit();
+
+        $rejected = $this->asSession(self::SECOND, fn () => $this->databaseError(fn () => $this->endRelationship($personId, $relationshipId, '2026-11-01')));
+        $this->assertInstanceOf(InvalidEndDateException::class, $rejected);
+
+        $this->assertSame('NOT_APPLICABLE', (string) $this->scalar('select end_knowledge_state from hr.employment_relationships where id = ?', [$relationshipId]), 'no partial relationship-end mutation');
+        $this->assertNull($this->scalar('select effective_to from hr.employment_relationships where id = ?', [$relationshipId]));
+        $this->assertSame('2027-01-01', (string) $this->scalar('select effective_to from hr.employment_status_periods where id = ?', [$period->id]), 'status untouched');
+        $this->assertNoStatusPeriodViolatesRelationshipBounds($relationshipId);
+    }
+
+    /**
+     * Inverse ordering: the real end command (session B) is in flight and uncommitted; the real
+     * bounded-status command (session A) blocks, then re-reads the committed KNOWN end and is rejected
+     * (409) without writing anything.
+     */
+    public function test_s32_end_first_then_bounded_status_is_rejected_after_the_committed_end(): void
+    {
+        [$personId, $relationshipId] = $this->s32Relationship();
+        $this->second();
+        $original = config('database.default');
+
+        $this->asSession(self::SECOND, function () use ($personId, $relationshipId) {
+            DB::beginTransaction();
+            $this->endRelationship($personId, $relationshipId, '2026-11-01'); // nested savepoint: still uncommitted
+            $this->assertSame(1, DB::transactionLevel());
+        });
+
+        $blocked = $this->databaseError(function () use ($personId, $relationshipId) {
+            DB::statement("set lock_timeout = '300ms'");
+            try {
+                $this->recordBounded($personId, $relationshipId, 'unpaid_leave', '2026-10-01', '2026-12-01');
+            } finally {
+                DB::statement('set lock_timeout = 0');
+            }
+        });
+        $this->assertTrue(Errors::isLockNotAvailable($blocked), 'the bounded-status command waits on the in-flight end');
+
+        $this->asSession(self::SECOND, fn () => DB::commit());
+        $this->assertSame($original, config('database.default'));
+
+        $rejected = $this->databaseError(fn () => $this->recordBounded($personId, $relationshipId, 'unpaid_leave', '2026-10-01', '2026-12-01'));
+        $this->assertInstanceOf(EmploymentRelationshipAlreadyEndedException::class, $rejected);
+
+        $this->assertSame(0, (int) $this->scalar('select count(*) from hr.employment_status_periods where employment_relationship_id = ?', [$relationshipId]));
+        $this->assertSame('KNOWN', (string) $this->scalar('select end_knowledge_state from hr.employment_relationships where id = ?', [$relationshipId]));
+        $this->assertNoStatusPeriodViolatesRelationshipBounds($relationshipId);
+    }
+
+    /** Inverse ordering where the end is in flight and the (still-valid-looking) bounded status fully precedes it. */
+    public function test_s32_end_first_then_bounded_status_ending_before_the_end_date_is_still_rejected_because_the_relationship_is_ended(): void
+    {
+        [$personId, $relationshipId] = $this->s32Relationship();
+        $this->second();
+
+        $this->asSession(self::SECOND, function () use ($personId, $relationshipId) {
+            DB::beginTransaction();
+            $this->endRelationship($personId, $relationshipId, '2026-12-01');
+        });
+
+        $blocked = $this->databaseError(function () use ($personId, $relationshipId) {
+            DB::statement("set lock_timeout = '300ms'");
+            try {
+                $this->recordBounded($personId, $relationshipId, 'traveling', '2026-10-01', '2026-11-01');
+            } finally {
+                DB::statement('set lock_timeout = 0');
+            }
+        });
+        $this->assertTrue(Errors::isLockNotAvailable($blocked));
+
+        $this->asSession(self::SECOND, fn () => DB::commit());
+
+        $rejected = $this->databaseError(fn () => $this->recordBounded($personId, $relationshipId, 'traveling', '2026-10-01', '2026-11-01'));
+        $this->assertInstanceOf(EmploymentRelationshipAlreadyEndedException::class, $rejected);
+        $this->assertSame(0, (int) $this->scalar('select count(*) from hr.employment_status_periods where employment_relationship_id = ?', [$relationshipId]));
+        $this->assertNoStatusPeriodViolatesRelationshipBounds($relationshipId);
     }
 }

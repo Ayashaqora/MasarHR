@@ -2,8 +2,10 @@
 
 namespace App\Modules\HumanResources\Application\Commands;
 
+use App\Modules\HumanResources\Domain\BoundedEmploymentStatusPolicy;
 use App\Modules\HumanResources\Domain\Exceptions\EmploymentRelationshipAlreadyEndedException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidStatusPeriodDateException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidStatusPeriodEndException;
 use App\Modules\HumanResources\Domain\Exceptions\UnresolvedEmploymentStatusBehaviorException;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRelationship;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentStatusPeriod;
@@ -32,7 +34,10 @@ use Illuminate\Support\Carbon;
 final class RecordEmploymentStatusPeriod
 {
     /**
-     * @throws EmploymentRelationshipAlreadyEndedException|InvalidStatusPeriodDateException
+     * S32 (docs/bounded-temporary-employment-status-lifecycle-specification.md §S32.3): the optional
+     * $effectiveTo bounds allow-listed temporary codes only; validation order is documented there.
+     *
+     * @throws EmploymentRelationshipAlreadyEndedException|InvalidStatusPeriodDateException|InvalidStatusPeriodEndException
      * @throws UnresolvedEmploymentStatusBehaviorException
      */
     public function handle(
@@ -40,6 +45,7 @@ final class RecordEmploymentStatusPeriod
         EmploymentRelationship $relationship,
         EmploymentStatusDetail $statusDetail,
         string $effectiveFrom,
+        ?string $effectiveTo = null,
     ): EmploymentStatusPeriod {
         $freshRelationship = EmploymentRelationship::query()
             ->where('id', $relationship->getKey())
@@ -54,7 +60,21 @@ final class RecordEmploymentStatusPeriod
             ->where('id', $statusDetail->getKey())
             ->firstOrFail();
 
+        $code = (string) $freshStatusDetail->code;
+
+        if ($effectiveTo !== null && ! BoundedEmploymentStatusPolicy::supportsEnd($code)) {
+            throw new InvalidStatusPeriodEndException("effective_to is not supported for status '{$code}'.");
+        }
+
+        if ($effectiveTo === null && BoundedEmploymentStatusPolicy::requiresEnd($code)) {
+            throw new InvalidStatusPeriodEndException("effective_to is required for status '{$code}'.");
+        }
+
         $newFrom = Carbon::parse($effectiveFrom);
+
+        if ($effectiveTo !== null && ! Carbon::parse($effectiveTo)->gt($newFrom)) {
+            throw new InvalidStatusPeriodEndException('effective_to must be strictly after effective_from.');
+        }
 
         // effective_from is set exactly once, at CreateEmploymentRelationship, and is never
         // mutated afterward by any command in this codebase — comparing against it here carries
@@ -64,13 +84,29 @@ final class RecordEmploymentStatusPeriod
             throw new InvalidStatusPeriodDateException;
         }
 
-        $openPeriod = EmploymentStatusPeriod::query()
+        // S32 R2: recorded status history starting on/after the new start is never silently
+        // rewritten — reject atomically.
+        $hasLaterOrEqual = EmploymentStatusPeriod::query()
             ->where('employment_relationship_id', $freshRelationship->getKey())
-            ->whereNull('effective_to')
+            ->where('effective_from', '>=', $effectiveFrom)
+            ->exists();
+
+        if ($hasLaterOrEqual) {
+            throw new InvalidStatusPeriodDateException;
+        }
+
+        // R3: the period (open or bounded) covering the new start is truncated at it. Because R2
+        // holds, that period is the latest one. A bounded new period strictly inside a bounded
+        // covering one would need a split (a rewrite) — rejected.
+        $coveringPeriod = EmploymentStatusPeriod::query()
+            ->where('employment_relationship_id', $freshRelationship->getKey())
+            ->where('effective_from', '<', $effectiveFrom)
+            ->where(fn ($q) => $q->whereNull('effective_to')->orWhere('effective_to', '>', $effectiveFrom))
             ->first();
 
-        if ($openPeriod !== null && $newFrom->lte($openPeriod->effective_from)) {
-            throw new InvalidStatusPeriodDateException;
+        if ($coveringPeriod !== null && $coveringPeriod->effective_to !== null && $effectiveTo !== null
+            && Carbon::parse($effectiveTo)->lt($coveringPeriod->effective_to)) {
+            throw new InvalidStatusPeriodEndException('effective_to would end inside an already recorded bounded status period; recorded history is not rewritten.');
         }
 
         // Resolved and validated before any write, so an unresolved behavior never leaves a
@@ -81,9 +117,9 @@ final class RecordEmploymentStatusPeriod
             throw new UnresolvedEmploymentStatusBehaviorException;
         }
 
-        if ($openPeriod !== null) {
+        if ($coveringPeriod !== null) {
             try {
-                $openPeriod->update(['effective_to' => $effectiveFrom]);
+                $coveringPeriod->update(['effective_to' => $effectiveFrom]);
             } catch (QueryException $e) {
                 if (Errors::isCheckViolation($e)) {
                     throw new InvalidStatusPeriodDateException;
@@ -97,7 +133,7 @@ final class RecordEmploymentStatusPeriod
             'employment_relationship_id' => $freshRelationship->getKey(),
             'status_detail_id' => $freshStatusDetail->getKey(),
             'effective_from' => $effectiveFrom,
-            'effective_to' => null,
+            'effective_to' => $effectiveTo,
         ]);
 
         try {

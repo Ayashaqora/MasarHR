@@ -55,5 +55,8 @@ final class ReportingPopulationRow
         public readonly ?string $cadreCategoryId,
         public readonly ?bool $isAdministrator,
         public readonly ?string $populationCategoryId,
+        /** S32: true when the status is the read-time DERIVED on_duty after an expired bounded status (no persisted row). */
+        public readonly bool $statusDerived = false,
+        public readonly ?string $derivedFromStatusPeriodId = null,
     ) {}
 }

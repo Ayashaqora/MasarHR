@@ -203,37 +203,37 @@ final class EndEmploymentRelationship
      */
     private function closeOpenStatusPeriodIfAny(EmploymentRelationship $relationship, string $effectiveTo): void
     {
-        $openPeriod = EmploymentStatusPeriod::query()
-            ->where('employment_relationship_id', $relationship->getKey())
-            ->whereNull('effective_to')
-            ->first();
-
-        if ($openPeriod === null) {
-            return;
-        }
-
         $newTo = Carbon::parse($effectiveTo);
 
-        if ($newTo->equalTo($openPeriod->effective_from)) {
-            return;
-        }
+        // S32 (§S32.6): bounded periods generalise the S10 rule — every period still in force
+        // past the end date (open or bounded) is affected, not only the open one.
+        $affected = EmploymentStatusPeriod::query()
+            ->where('employment_relationship_id', $relationship->getKey())
+            ->where(fn ($q) => $q->whereNull('effective_to')->orWhere('effective_to', '>', $effectiveTo))
+            ->orderBy('effective_from')
+            ->get();
 
-        // Reuses S09's own InvalidEndDateException (spec §14.1) — not a new exception class —
-        // because this is fundamentally the same "is this end date valid for this relationship's
-        // own child state" question S09 already asks, mirroring RecordEmploymentStatusPeriod's
-        // own identical pre-check.
-        if ($newTo->lt($openPeriod->effective_from)) {
-            throw new InvalidEndDateException;
-        }
+        foreach ($affected as $period) {
+            // The ending status itself (open, starting exactly on the end date) is left as recorded.
+            if ($period->effective_to === null && $newTo->equalTo($period->effective_from)) {
+                continue;
+            }
 
-        try {
-            $openPeriod->update(['effective_to' => $effectiveTo]);
-        } catch (QueryException $e) {
-            if (Errors::isCheckViolation($e)) {
+            // Reuses S09's own InvalidEndDateException (spec §14.1): a period starting on/after the
+            // end date would lie outside the relationship; rejected atomically, never rewritten.
+            if ($newTo->lte($period->effective_from)) {
                 throw new InvalidEndDateException;
             }
 
-            throw $e;
+            try {
+                $period->update(['effective_to' => $effectiveTo]);
+            } catch (QueryException $e) {
+                if (Errors::isCheckViolation($e)) {
+                    throw new InvalidEndDateException;
+                }
+
+                throw $e;
+            }
         }
     }
 

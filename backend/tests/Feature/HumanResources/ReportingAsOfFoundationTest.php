@@ -59,7 +59,7 @@ class ReportingAsOfFoundationTest extends HumanResourcesTestCase
     {
         [$person, $rel] = $this->personAndRelationship();
         $this->recordStatus($person, $rel, 'on_duty', '2026-09-27');
-        $this->recordStatus($person, $rel, 'unpaid_leave', '2026-11-01');
+        $this->recordStatus($person, $rel, 'unpaid_leave', '2026-11-01', '2027-01-01');
 
         $this->assertNull($this->statusAsOf($rel, '2026-09-26'), 'no status recorded yet → UNRESOLVED');
         $this->assertSame('on_duty', $this->statusCodeAsOf($rel, '2026-10-31'));
@@ -451,7 +451,7 @@ class ReportingAsOfFoundationTest extends HumanResourcesTestCase
         $home = $this->createUnit();
         $this->recordPlacement($rel, $home, '2026-01-15');
         $this->recordStatus($person, $rel, 'on_duty', '2026-09-27');
-        $this->recordStatus($person, $rel, 'external_sick_leave', '2026-10-01');
+        $this->recordStatus($person, $rel, 'external_sick_leave', '2026-10-01', '2026-11-01');
 
         $row = $this->populationRow($rel, '2026-10-15');
         $this->assertSame('external_sick_leave', $row->statusDetailCode, 'the status detail itself is the reason — no new reason mapping');
@@ -585,9 +585,9 @@ class ReportingAsOfFoundationTest extends HumanResourcesTestCase
         return [$rel->refresh(), $home];
     }
 
-    private function recordStatus(Person $person, EmploymentRelationship $rel, string $code, string $from): void
+    private function recordStatus(Person $person, EmploymentRelationship $rel, string $code, string $from, ?string $to = null): void
     {
-        app(RecordEmploymentStatusPeriod::class)->handle($person, $rel->refresh(), $this->statusDetail($code), $from);
+        app(RecordEmploymentStatusPeriod::class)->handle($person, $rel->refresh(), $this->statusDetail($code), $from, $to);
     }
 
     private function end(Person $person, EmploymentRelationship $rel, string $to): void

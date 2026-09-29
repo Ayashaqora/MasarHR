@@ -3,6 +3,7 @@
 namespace App\Modules\HumanResources\Application\Queries\Reporting;
 
 use App\Modules\HumanResources\Domain\ActualWorkplaceAsOf;
+use App\Modules\HumanResources\Domain\BoundedEmploymentStatusPolicy;
 use Illuminate\Support\Carbon;
 use Illuminate\Support\Facades\DB;
 use InvalidArgumentException;
@@ -58,6 +59,9 @@ final class ListReportingPopulationAsOf
             array_push($bindings, ...array_values($employmentRelationshipIds));
         }
 
+        $derivedCode = BoundedEmploymentStatusPolicy::DERIVED_RETURN_CODE;
+        $boundedList = implode(',', array_map(fn (string $c) => "'{$c}'", BoundedEmploymentStatusPolicy::boundedCodes()));
+
         $rows = DB::select(<<<SQL
             WITH p AS (SELECT CAST(? AS date) AS d)
             SELECT
@@ -65,7 +69,8 @@ final class ListReportingPopulationAsOf
                 r.employee_number_scheme, r.effective_from AS relationship_effective_from,
                 r.effective_to AS relationship_effective_to, r.end_knowledge_state AS relationship_end_knowledge_state,
                 per.gender_id,
-                sp.id AS status_period_id, sp.status_detail_id, sd.code AS status_detail_code,
+                sp.id AS status_period_id, sd.id AS status_detail_id, sd.code AS status_detail_code,
+                dv.derived_from_period_id,
                 b.participates_in_active_workforce, b.is_ongoing_relationship, b.is_relationship_ending,
                 b.is_terminal, b.allows_reappointment, b.counts_in_monthly_reporting,
                 pl.id AS placement_id, pl.organizational_unit_id AS placement_unit_id, pl.effective_from AS placement_from,
@@ -81,8 +86,21 @@ final class ListReportingPopulationAsOf
             JOIN ref.employment_types et ON et.id = r.employment_type_id
             LEFT JOIN hr.employment_status_periods sp ON sp.employment_relationship_id = r.id
                 AND sp.effective_from <= p.d AND (sp.effective_to IS NULL OR p.d < sp.effective_to)
-            LEFT JOIN ref.employment_status_details sd ON sd.id = sp.status_detail_id
-            LEFT JOIN ref.employment_status_detail_behaviors b ON b.status_detail_id = sp.status_detail_id
+            LEFT JOIN LATERAL (
+                -- S32 (ADR-S32-003): derived on_duty after an expired allow-listed bounded period, read-time only.
+                SELECT lp.id AS derived_from_period_id, od.id AS derived_status_detail_id
+                FROM hr.employment_status_periods lp
+                JOIN ref.employment_status_details lsd ON lsd.id = lp.status_detail_id
+                JOIN ref.employment_status_details od ON od.code = '{$derivedCode}'
+                WHERE sp.id IS NULL AND lp.employment_relationship_id = r.id
+                  AND lp.effective_from <= p.d AND lp.effective_to IS NOT NULL AND lp.effective_to <= p.d
+                  AND lsd.code IN ({$boundedList})
+                  AND NOT EXISTS (SELECT 1 FROM hr.employment_status_periods lp2
+                                  WHERE lp2.employment_relationship_id = r.id
+                                    AND lp2.effective_from > lp.effective_from AND lp2.effective_from <= p.d)
+            ) dv ON true
+            LEFT JOIN ref.employment_status_details sd ON sd.id = COALESCE(sp.status_detail_id, dv.derived_status_detail_id)
+            LEFT JOIN ref.employment_status_detail_behaviors b ON b.status_detail_id = sd.id
                 AND b.effective_from <= p.d AND (b.effective_to IS NULL OR p.d < b.effective_to)
             LEFT JOIN hr.organizational_placement_periods pl ON pl.employment_relationship_id = r.id
                 AND pl.effective_from <= p.d AND (pl.effective_to IS NULL OR p.d < pl.effective_to)
@@ -145,6 +163,8 @@ final class ListReportingPopulationAsOf
             statusPeriodId: $r->status_period_id,
             statusDetailId: $r->status_detail_id,
             statusDetailCode: $r->status_detail_code,
+            statusDerived: $r->derived_from_period_id !== null,
+            derivedFromStatusPeriodId: $r->derived_from_period_id,
             participatesInActiveWorkforce: $bool($r->participates_in_active_workforce),
             isOngoingRelationship: $bool($r->is_ongoing_relationship),
             isRelationshipEnding: $bool($r->is_relationship_ending),
