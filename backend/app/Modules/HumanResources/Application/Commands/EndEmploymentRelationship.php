@@ -14,6 +14,7 @@ use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentSta
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\FullSecondmentPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\PartialSecondmentPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\Person;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\ReturnIntentionPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\WorkplaceAssignmentPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\WorkSchedulePeriod;
 use App\Modules\Platform\Infrastructure\Persistence\Postgres\PostgresErrorClassifier as Errors;
@@ -148,8 +149,40 @@ final class EndEmploymentRelationship
         $this->closeOpenEmploymentSpecialtyPeriodIfAny($relationship, $effectiveTo);
         $this->closeOpenWorkSchedulePeriodIfAny($relationship, $effectiveTo);
         $this->closeEffectivePartialSecondmentsAtEnd($relationship, $effectiveTo);
+        $this->closeReturnIntentionPeriodsAtEnd($relationship, $effectiveTo);
 
         return $relationship->refresh();
+    }
+
+    /**
+     * S34: Return Intention history never extends beyond its relationship. A period in force past the
+     * end date (open or bounded) is truncated to it; one starting on or after the end date would lie
+     * outside the relationship and rejects the end atomically (S09's InvalidEndDateException). Periods
+     * that already ended on/before the end date, and all history, stay as recorded.
+     */
+    private function closeReturnIntentionPeriodsAtEnd(EmploymentRelationship $relationship, string $effectiveTo): void
+    {
+        $affected = ReturnIntentionPeriod::query()
+            ->where('employment_relationship_id', $relationship->getKey())
+            ->where(fn ($q) => $q->whereNull('effective_to')->orWhere('effective_to', '>', $effectiveTo))
+            ->orderBy('effective_from')
+            ->get();
+
+        foreach ($affected as $period) {
+            if (Carbon::parse($effectiveTo)->lte($period->effective_from)) {
+                throw new InvalidEndDateException;
+            }
+
+            try {
+                $period->update(['effective_to' => $effectiveTo]);
+            } catch (QueryException $e) {
+                if (Errors::isCheckViolation($e)) {
+                    throw new InvalidEndDateException;
+                }
+
+                throw $e;
+            }
+        }
     }
 
     /** S15 spec §8.1. Reuses EndFullSecondment verbatim; never called when nothing is open. */

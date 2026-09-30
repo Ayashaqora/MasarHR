@@ -201,5 +201,12 @@ export const en: Messages = {
     noQualifications: 'No qualifications recorded.',
     academicDegree: 'Academic degree',
     qualificationType: 'Qualification type',
+    returnIntention: 'Return intention',
+    returnIntentionHistory: 'Return intention history',
+    noReturnIntentionHistory: 'No return intention history.',
+    returnIntentionNotRecorded: 'Not recorded',
+    wantsToReturn: 'Wants to return',
+    doesNotWantToReturn: 'Does not want to return',
+    returnIntentionHistoryNote: 'Return intention is independent of employment status; this history contains no employment status.',
   },
 }

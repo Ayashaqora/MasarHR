@@ -13,6 +13,7 @@ use App\Modules\HumanResources\Presentation\Http\Controllers\OrganizationalPlace
 use App\Modules\HumanResources\Presentation\Http\Controllers\PartialSecondmentPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\PersonController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\PersonQualificationController;
+use App\Modules\HumanResources\Presentation\Http\Controllers\ReturnIntentionPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\TransferController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\WorkplaceAssignmentPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\WorkSchedulePeriodController;
@@ -293,6 +294,15 @@ Route::middleware('web')->group(function (): void {
                 ->middleware('permission:'.HrPerm::EMPLOYMENT_STATUS_PERIODS_VIEW)->name('persons.employment-relationships.effective-status');
             Route::post('/persons/{person}/employment-relationships/{employmentRelationship}/status-periods', [EmploymentStatusPeriodController::class, 'store'])
                 ->middleware('permission:'.HrPerm::EMPLOYMENT_STATUS_PERIODS_RECORD)->name('persons.employment-relationships.status-periods.store');
+
+            // S34: Return Intention (independent of employment status), nested under the same
+            // {person}/{employmentRelationship}. Explicit record + history + effective as-of; no PATCH/DELETE.
+            Route::get('/persons/{person}/employment-relationships/{employmentRelationship}/return-intention-periods', [ReturnIntentionPeriodController::class, 'index'])
+                ->middleware('permission:'.HrPerm::RETURN_INTENTION_PERIODS_VIEW)->name('persons.employment-relationships.return-intention-periods.index');
+            Route::get('/persons/{person}/employment-relationships/{employmentRelationship}/return-intention', [ReturnIntentionPeriodController::class, 'effective'])
+                ->middleware('permission:'.HrPerm::RETURN_INTENTION_PERIODS_VIEW)->name('persons.employment-relationships.return-intention');
+            Route::post('/persons/{person}/employment-relationships/{employmentRelationship}/return-intention-periods', [ReturnIntentionPeriodController::class, 'store'])
+                ->middleware('permission:'.HrPerm::RETURN_INTENTION_PERIODS_RECORD)->name('persons.employment-relationships.return-intention-periods.store');
 
             // S11: Organizational Placement, nested under the same {person}/{employmentRelationship}.
             // The permission: middleware is the coarse RBAC (WHAT) gate only — the controller

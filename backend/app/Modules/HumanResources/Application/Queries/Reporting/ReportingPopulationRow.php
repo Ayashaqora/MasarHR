@@ -58,5 +58,8 @@ final class ReportingPopulationRow
         /** S32: true when the status is the read-time DERIVED on_duty after an expired bounded status (no persisted row). */
         public readonly bool $statusDerived = false,
         public readonly ?string $derivedFromStatusPeriodId = null,
+        /** S34: independent Return Intention as of the date (WANTS_TO_RETURN / DOES_NOT_WANT_TO_RETURN); null = NOT RECORDED. Never a status. */
+        public readonly ?string $returnIntentionPeriodId = null,
+        public readonly ?string $returnIntention = null,
     ) {}
 }

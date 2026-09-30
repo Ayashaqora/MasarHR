@@ -2,8 +2,9 @@ import { useI18n } from '../../i18n/context'
 import { describeApiError } from '../../shared/api/errorMessage'
 import type { ApiResourceState } from '../../shared/hooks/useApiResource'
 import { StatePanel } from '../../shared/ui/StatePanel'
-import type { ActualWorkplace, EffectiveEmploymentStatus, EmploymentStatusDetail, OrganizationalUnitPeriod } from './api'
+import type { ActualWorkplace, EffectiveEmploymentStatus, EffectiveReturnIntention, EmploymentStatusDetail, OrganizationalUnitPeriod } from './api'
 import { EffectiveStatusText } from './EffectiveStatusText'
+import { ReturnIntentionText } from './Employee360ReturnIntention'
 
 const SOURCE_LABEL_KEY = {
   secondment: 'sourceSecondment',
@@ -28,12 +29,14 @@ const UNKNOWN_DATE_SORTS_LAST = '9999-99-99'
  */
 export function Employee360Overview({
   effectiveStatus,
+  effectiveIntention,
   statusCatalog,
   actualWorkplace,
   placementPeriods,
   unitNames,
 }: {
   effectiveStatus: ApiResourceState<EffectiveEmploymentStatus>
+  effectiveIntention: ApiResourceState<EffectiveReturnIntention>
   statusCatalog: ApiResourceState<EmploymentStatusDetail[]>
   actualWorkplace: ApiResourceState<ActualWorkplace>
   placementPeriods: ApiResourceState<OrganizationalUnitPeriod[]>
@@ -78,6 +81,32 @@ export function Employee360Overview({
               {messages.employee360.asOf} {effectiveStatus.data.as_of}
             </p>
           </>
+        )}
+      </section>
+
+      <section className="card" aria-labelledby="overview-return-intention-heading">
+        <h3 id="overview-return-intention-heading" className="card__title">
+          {messages.employee360.returnIntention}
+        </h3>
+        {effectiveIntention.status === 'loading' ? (
+          <StatePanel tone="loading" title={messages.employee360.loading} />
+        ) : effectiveIntention.status === 'error' ? (
+          <StatePanel
+            tone="error"
+            title={
+              effectiveIntention.error.status === 403
+                ? messages.securityShared.unauthorizedTitle
+                : messages.employee360.loadFailed
+            }
+          >
+            {effectiveIntention.error.status === 403
+              ? messages.securityShared.unauthorizedDescription
+              : describeApiError(effectiveIntention.error, messages)}
+          </StatePanel>
+        ) : (
+          <p>
+            <ReturnIntentionText effectiveIntention={effectiveIntention} />
+          </p>
         )}
       </section>
 

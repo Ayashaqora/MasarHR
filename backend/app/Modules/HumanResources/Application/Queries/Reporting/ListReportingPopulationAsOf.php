@@ -71,6 +71,7 @@ final class ListReportingPopulationAsOf
                 per.gender_id,
                 sp.id AS status_period_id, sd.id AS status_detail_id, sd.code AS status_detail_code,
                 dv.derived_from_period_id,
+                ri.id AS return_intention_period_id, ri.intention AS return_intention,
                 b.participates_in_active_workforce, b.is_ongoing_relationship, b.is_relationship_ending,
                 b.is_terminal, b.allows_reappointment, b.counts_in_monthly_reporting,
                 pl.id AS placement_id, pl.organizational_unit_id AS placement_unit_id, pl.effective_from AS placement_from,
@@ -102,6 +103,8 @@ final class ListReportingPopulationAsOf
             LEFT JOIN ref.employment_status_details sd ON sd.id = COALESCE(sp.status_detail_id, dv.derived_status_detail_id)
             LEFT JOIN ref.employment_status_detail_behaviors b ON b.status_detail_id = sd.id
                 AND b.effective_from <= p.d AND (b.effective_to IS NULL OR p.d < b.effective_to)
+            LEFT JOIN hr.return_intention_periods ri ON ri.employment_relationship_id = r.id
+                AND ri.effective_from <= p.d AND (ri.effective_to IS NULL OR p.d < ri.effective_to)
             LEFT JOIN hr.organizational_placement_periods pl ON pl.employment_relationship_id = r.id
                 AND pl.effective_from <= p.d AND (pl.effective_to IS NULL OR p.d < pl.effective_to)
             LEFT JOIN hr.full_secondment_periods fs ON fs.employment_relationship_id = r.id
@@ -165,6 +168,8 @@ final class ListReportingPopulationAsOf
             statusDetailCode: $r->status_detail_code,
             statusDerived: $r->derived_from_period_id !== null,
             derivedFromStatusPeriodId: $r->derived_from_period_id,
+            returnIntentionPeriodId: $r->return_intention_period_id,
+            returnIntention: $r->return_intention,
             participatesInActiveWorkforce: $bool($r->participates_in_active_workforce),
             isOngoingRelationship: $bool($r->is_ongoing_relationship),
             isRelationshipEnding: $bool($r->is_relationship_ending),

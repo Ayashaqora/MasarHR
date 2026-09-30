@@ -3,11 +3,13 @@ import type { ApiResourceState } from '../../shared/hooks/useApiResource'
 import type {
   ActualWorkplace,
   EffectiveEmploymentStatus,
+  EffectiveReturnIntention,
   EmploymentRelationship,
   EmploymentStatusDetail,
   Person,
 } from './api'
 import { EffectiveStatusText } from './EffectiveStatusText'
+import { ReturnIntentionText } from './Employee360ReturnIntention'
 
 /**
  * Compact identity/employment header (spec §S18 §11), always visible above the tabs. Only fields
@@ -24,6 +26,7 @@ export function Employee360Header({
   person,
   relationship,
   effectiveStatus,
+  effectiveIntention,
   actualWorkplace,
   statusCatalog,
   unitNames,
@@ -31,6 +34,7 @@ export function Employee360Header({
   person: Person
   relationship: EmploymentRelationship
   effectiveStatus: ApiResourceState<EffectiveEmploymentStatus>
+  effectiveIntention: ApiResourceState<EffectiveReturnIntention>
   actualWorkplace: ApiResourceState<ActualWorkplace>
   statusCatalog: ApiResourceState<EmploymentStatusDetail[]>
   unitNames: { status: 'loading' | 'ready'; names: Record<string, string> }
@@ -85,6 +89,18 @@ export function Employee360Header({
               messages.employee360.loadFailed
             ) : (
               <EffectiveStatusText effectiveStatus={effectiveStatus} statusCatalog={statusCatalog} />
+            )}
+          </dd>
+        </div>
+        <div className="description-list__row">
+          <dt>{messages.employee360.returnIntention}</dt>
+          <dd>
+            {effectiveIntention.status === 'loading' ? (
+              messages.employee360.loading
+            ) : effectiveIntention.status === 'error' ? (
+              messages.employee360.loadFailed
+            ) : (
+              <ReturnIntentionText effectiveIntention={effectiveIntention} />
             )}
           </dd>
         </div>

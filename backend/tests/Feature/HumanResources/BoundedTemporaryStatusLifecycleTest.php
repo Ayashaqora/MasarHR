@@ -90,7 +90,7 @@ class BoundedTemporaryStatusLifecycleTest extends HumanResourcesTestCase
 
     public function test_captive_and_every_other_code_reject_effective_to(): void
     {
-        foreach (['captive', 'on_duty', 'wants_to_return', 'does_not_want_to_return', 'retired', 'resigned', 'contract_ended', 'martyred', 'deceased'] as $code) {
+        foreach (['captive', 'on_duty', 'retired', 'resigned', 'contract_ended', 'martyred', 'deceased'] as $code) {
             [$person, $rel] = $this->emp();
             try {
                 $this->rec($person, $rel, $code, '2026-10-01', '2026-11-01');

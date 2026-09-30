@@ -162,6 +162,24 @@ export type ReferenceSegment =
   | 'academic-degrees'
   | 'qualification-types'
 
+export type ReturnIntentionValue = 'WANTS_TO_RETURN' | 'DOES_NOT_WANT_TO_RETURN'
+
+/** Mirrors ReturnIntentionPeriodResource (S34): an independent concept, NOT an employment status. */
+export interface ReturnIntentionPeriod extends RelationshipPeriodBase {
+  intention: ReturnIntentionValue
+}
+
+/** Mirrors the S34 effective Return Intention read: `return_intention: null` means NOT RECORDED. */
+export interface EffectiveReturnIntention {
+  as_of: string
+  return_intention: {
+    period_id: string
+    intention: ReturnIntentionValue
+    effective_from: string | null
+    effective_to: string | null
+  } | null
+}
+
 interface PaginatedResponse<T> {
   data: T[]
 }
@@ -299,4 +317,27 @@ export function fetchPersonQualifications(personId: string, signal?: AbortSignal
 
 export function fetchReferenceValue(segment: ReferenceSegment, id: string, signal?: AbortSignal): Promise<ReferenceValue> {
   return apiRequest<ReferenceValue>(`/reference/${segment}/${id}`, signal ? { signal } : {})
+}
+
+/** S34: effective Return Intention for today's business date (the backend applies its own clock). */
+export function fetchEffectiveReturnIntention(
+  personId: string,
+  relationshipId: string,
+  signal?: AbortSignal,
+): Promise<EffectiveReturnIntention> {
+  return apiRequest<EffectiveReturnIntention>(
+    `/hr/persons/${personId}/employment-relationships/${relationshipId}/return-intention`,
+    signal ? { signal } : {},
+  )
+}
+
+export function fetchReturnIntentionPeriods(
+  personId: string,
+  relationshipId: string,
+  signal?: AbortSignal,
+): Promise<ReturnIntentionPeriod[]> {
+  return apiRequest<ReturnIntentionPeriod[]>(
+    `/hr/persons/${personId}/employment-relationships/${relationshipId}/return-intention-periods`,
+    signal ? { signal } : {},
+  )
 }

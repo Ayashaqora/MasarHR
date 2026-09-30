@@ -21,6 +21,7 @@ const AUTHENTICATED_HR_VIEWER: CurrentPrincipal = {
     'hr.employment_job_title_periods.view',
     'hr.employment_specialty_periods.view',
     'hr.person_qualifications.view',
+    'hr.return_intention_periods.view',
   ],
 }
 
@@ -108,8 +109,12 @@ const REFERENCE_VALUES: Record<string, { name_ar: string; name_en: string }> = {
   '/reference/qualification-types/qt-1': { name_ar: 'نوع مؤهل اختبار', name_en: 'Test qualification type' },
 }
 
+const NO_INTENTION = { as_of: '2026-10-15', return_intention: null }
+
 function defaultRoute(url: string): Response | undefined {
   if (url.includes('/auth/me')) return jsonResponse(AUTHENTICATED_HR_VIEWER)
+  if (url.includes('/return-intention-periods')) return jsonResponse([])
+  if (url.includes('/return-intention')) return jsonResponse(NO_INTENTION)
   if (url.includes('/effective-status')) return jsonResponse(EFFECTIVE_ON_DUTY)
   for (const [suffix, rows] of Object.entries(RELATIONSHIP_STREAMS)) {
     if (url.includes(`/employment-relationships/rel-1${suffix}`)) return jsonResponse(rows)
@@ -404,6 +409,107 @@ describe('Employee360Page', () => {
       await screen.findByRole('heading', { level: 1, name: 'الملف الشامل للموظف' })
       await user.click(screen.getByRole('tab', { name: 'المسار الوظيفي والمؤهلات' }))
       expect(await within(await screen.findByRole('tabpanel')).findByText('jt-a')).toBeInTheDocument()
+    })
+  })
+
+  describe('S34 return intention (independent of employment status)', () => {
+    const CURRENT = {
+      as_of: '2026-10-15',
+      return_intention: { period_id: 'ri-1', intention: 'WANTS_TO_RETURN', effective_from: '2026-10-05', effective_to: null },
+    }
+    const HISTORY = [
+      { id: 'ri-0', employment_relationship_id: 'rel-1', intention: 'DOES_NOT_WANT_TO_RETURN', effective_from: '2026-08-01', effective_to: '2026-10-05' },
+      { id: 'ri-1', employment_relationship_id: 'rel-1', intention: 'WANTS_TO_RETURN', effective_from: '2026-10-05', effective_to: null },
+    ]
+
+    function withIntention(current: unknown, history: unknown = HISTORY) {
+      return (url: string) =>
+        url.includes('/return-intention-periods')
+          ? jsonResponse(history)
+          : url.includes('/return-intention')
+            ? jsonResponse(current)
+            : undefined
+    }
+
+    it('shows the current return intention separately from the effective status, alongside a temporary status', async () => {
+      stub360App((url) =>
+        withIntention(CURRENT)(url) ??
+        (url.includes('/effective-status')
+          ? jsonResponse(effective({ status_detail_id: 'sd-3', status_detail_code: 'traveling', derived: false, period_id: 'sp-3', derived_from_period_id: null, effective_from: '2026-10-01', effective_to: null }))
+          : undefined),
+      )
+      renderApp(ROUTE)
+
+      const headerSection = (await screen.findByRole('heading', { level: 2 })).closest('section')
+      if (!headerSection) throw new Error('header expected')
+      const header = within(headerSection)
+      expect(await header.findByText('مسافر')).toBeInTheDocument()
+      const rows = header.getAllByRole('term').map((term) => term.textContent)
+      expect(rows).toContain('الرغبة في العودة')
+      expect(await header.findByText(/يرغب في العودة — منذ 2026-10-05/)).toBeInTheDocument()
+      // The status text never carries the intention and vice versa.
+      expect(header.queryByText(/مسافر.*يرغب/)).not.toBeInTheDocument()
+    })
+
+    it('shows "not recorded" when no intention exists, never either intention', async () => {
+      stub360App()
+      renderApp(ROUTE)
+
+      const headerSection = (await screen.findByRole('heading', { level: 2 })).closest('section')
+      if (!headerSection) throw new Error('header expected')
+      expect(await within(headerSection).findByText('غير مسجَّلة')).toBeInTheDocument()
+      expect(within(headerSection).queryByText(/^(يرغب|لا يرغب) في العودة/)).not.toBeInTheDocument()
+    })
+
+    it('shows the return intention history as its own section, separate from the status history table', async () => {
+      stub360App(withIntention(CURRENT))
+      const user = userEvent.setup()
+      renderApp(ROUTE)
+      await screen.findByRole('heading', { level: 1, name: 'الملف الشامل للموظف' })
+      await user.click(screen.getByRole('tab', { name: 'سجل الحالات الوظيفية' }))
+
+      const panel = await screen.findByRole('tabpanel')
+      const intentionSection = (await within(panel).findByRole('heading', { name: 'سجل الرغبة في العودة' })).closest('section')
+      if (!intentionSection) throw new Error('intention history section expected')
+      const intention = within(intentionSection)
+      expect(await intention.findByText('لا يرغب في العودة')).toBeInTheDocument()
+      expect(intention.getAllByText('2026-10-05', { selector: 'td' })).toHaveLength(2)
+      // The status-history table (first table) contains no return-intention row and the section states independence.
+      const statusTable = within(panel).getAllByRole('table')[0]!
+      expect(within(statusTable).queryByText(/يرغب في العودة/)).not.toBeInTheDocument()
+      expect(intention.getByText(/مستقل عن الحالة الوظيفية/)).toBeInTheDocument()
+    })
+
+    it('shows an empty state for the return intention history', async () => {
+      stub360App()
+      const user = userEvent.setup()
+      renderApp(ROUTE)
+      await screen.findByRole('heading', { level: 1, name: 'الملف الشامل للموظف' })
+      await user.click(screen.getByRole('tab', { name: 'سجل الحالات الوظيفية' }))
+      expect(await within(await screen.findByRole('tabpanel')).findByText('لا يوجد سجل رغبة في العودة.')).toBeInTheDocument()
+    })
+
+    it('shows an unauthorized state for the intention without blanking the status or the rest of the page', async () => {
+      stub360App((url) => (url.includes('/return-intention') ? jsonResponse({ message: 'This action is unauthorized.' }, 403) : undefined))
+      const user = userEvent.setup()
+      renderApp(ROUTE)
+
+      const headerSection = (await screen.findByRole('heading', { level: 2 })).closest('section')
+      if (!headerSection) throw new Error('header expected')
+      expect(await within(headerSection).findByText('على رأس العمل')).toBeInTheDocument()
+
+      await user.click(screen.getByRole('tab', { name: 'سجل الحالات الوظيفية' }))
+      const panel = await screen.findByRole('tabpanel')
+      expect(await within(panel).findByText('حسابك لا يملك الصلاحية اللازمة لعرض هذا القسم.')).toBeInTheDocument()
+      expect(within(panel).getByRole('table')).toBeInTheDocument() // the persisted status history still renders
+    })
+
+    it('renders the intention in English (locale-aware)', async () => {
+      stub360App(withIntention(CURRENT))
+      renderApp(ROUTE, 'en')
+      const headerSection = (await screen.findByRole('heading', { level: 2 })).closest('section')
+      if (!headerSection) throw new Error('header expected')
+      expect(await within(headerSection).findByText(/Wants to return — since 2026-10-05/)).toBeInTheDocument()
     })
   })
 })

@@ -6,7 +6,9 @@ use App\Modules\HumanResources\Domain\BoundedEmploymentStatusPolicy;
 use App\Modules\HumanResources\Domain\Exceptions\EmploymentRelationshipAlreadyEndedException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidStatusPeriodDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidStatusPeriodEndException;
+use App\Modules\HumanResources\Domain\Exceptions\RetiredEmploymentStatusCodeException;
 use App\Modules\HumanResources\Domain\Exceptions\UnresolvedEmploymentStatusBehaviorException;
+use App\Modules\HumanResources\Domain\RetiredEmploymentStatusCodes;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRelationship;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentStatusPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\Person;
@@ -38,6 +40,7 @@ final class RecordEmploymentStatusPeriod
      * $effectiveTo bounds allow-listed temporary codes only; validation order is documented there.
      *
      * @throws EmploymentRelationshipAlreadyEndedException|InvalidStatusPeriodDateException|InvalidStatusPeriodEndException
+     * @throws RetiredEmploymentStatusCodeException
      * @throws UnresolvedEmploymentStatusBehaviorException
      */
     public function handle(
@@ -61,6 +64,12 @@ final class RecordEmploymentStatusPeriod
             ->firstOrFail();
 
         $code = (string) $freshStatusDetail->code;
+
+        // S34: the two legacy Return Intention codes are no longer employment statuses. This code-level
+        // guard is authoritative — reactivating the catalog row does not bypass it.
+        if (RetiredEmploymentStatusCodes::isRetired($code)) {
+            throw new RetiredEmploymentStatusCodeException($code);
+        }
 
         if ($effectiveTo !== null && ! BoundedEmploymentStatusPolicy::supportsEnd($code)) {
             throw new InvalidStatusPeriodEndException("effective_to is not supported for status '{$code}'.");

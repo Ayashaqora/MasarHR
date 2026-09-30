@@ -2,7 +2,9 @@ import { useCallback, useMemo, useState } from 'react'
 import { useApiResource, type ApiResourceState } from '../../shared/hooks/useApiResource'
 import {
   fetchActualWorkplace,
+  fetchEffectiveReturnIntention,
   fetchEffectiveStatus,
+  fetchReturnIntentionPeriods,
   fetchPersonQualifications,
   fetchReferenceValue,
   fetchRelationshipPeriods,
@@ -17,6 +19,8 @@ import {
   lookupPersonByNationalId,
   type ActualWorkplace,
   type EffectiveEmploymentStatus,
+  type EffectiveReturnIntention,
+  type ReturnIntentionPeriod,
   type EmploymentCategoryPeriod,
   type EmploymentContractPeriod,
   type EmploymentJobTitlePeriod,
@@ -253,4 +257,19 @@ export function useReferenceValues(segment: ReferenceSegment, ids: readonly stri
     return state.status === 'error' ? { status: 'ready', values: {} } : { status: 'loading', values: {} }
   }
   return { status: 'ready', values: Object.fromEntries(state.data.map((value) => [value.id, value])) }
+}
+
+/** S34: the effective Return Intention (independent of employment status). */
+export function useEffectiveReturnIntention(
+  personId: string,
+  relationshipId: string,
+): ApiResourceState<EffectiveReturnIntention> & { retry: () => void } {
+  return useApiResource((signal) => fetchEffectiveReturnIntention(personId, relationshipId, signal), [personId, relationshipId])
+}
+
+export function useReturnIntentionPeriods(
+  personId: string,
+  relationshipId: string,
+): ApiResourceState<ReturnIntentionPeriod[]> & { retry: () => void } {
+  return useApiResource((signal) => fetchReturnIntentionPeriods(personId, relationshipId, signal), [personId, relationshipId])
 }

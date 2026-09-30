@@ -199,5 +199,12 @@ export const ar = {
     noQualifications: 'لا توجد مؤهلات مسجَّلة.',
     academicDegree: 'الدرجة العلمية',
     qualificationType: 'نوع المؤهل',
+    returnIntention: 'الرغبة في العودة',
+    returnIntentionHistory: 'سجل الرغبة في العودة',
+    noReturnIntentionHistory: 'لا يوجد سجل رغبة في العودة.',
+    returnIntentionNotRecorded: 'غير مسجَّلة',
+    wantsToReturn: 'يرغب في العودة',
+    doesNotWantToReturn: 'لا يرغب في العودة',
+    returnIntentionHistoryNote: 'الرغبة في العودة مفهوم مستقل عن الحالة الوظيفية؛ وهذا السجل لا يتضمن أي حالة وظيفية.',
   },
 } as const

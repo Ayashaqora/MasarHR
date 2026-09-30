@@ -27,6 +27,9 @@ use App\Modules\HumanResources\Domain\Exceptions\InvalidPersonProfileException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidPersonQualificationAcademicDegreeException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidPersonQualificationTypeException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidPlacementPeriodDateException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidReturnIntentionPeriodDateException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidReturnIntentionPeriodEndException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidReturnIntentionValueException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidStatusPeriodDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidStatusPeriodEndException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidTransferDecisionTypeException;
@@ -43,6 +46,7 @@ use App\Modules\HumanResources\Domain\Exceptions\PartialSecondmentWeekdayConflic
 use App\Modules\HumanResources\Domain\Exceptions\PersonIsTerminalException;
 use App\Modules\HumanResources\Domain\Exceptions\PersonQualificationIdentityMissingException;
 use App\Modules\HumanResources\Domain\Exceptions\PersonStaleVersionException;
+use App\Modules\HumanResources\Domain\Exceptions\RetiredEmploymentStatusCodeException;
 use App\Modules\HumanResources\Domain\Exceptions\UnresolvedEmploymentStatusBehaviorException;
 use App\Modules\HumanResources\Domain\Exceptions\WorkScheduleChangeInvalidatesPartialSecondmentException;
 use App\Modules\HumanResources\Presentation\Console\ScanMovementExpiryFollowUpsCommand;
@@ -131,6 +135,10 @@ return Application::configure(basePath: dirname(__DIR__))
             InvalidEndDateException::class,
             InvalidStatusPeriodDateException::class,
             InvalidStatusPeriodEndException::class,
+            InvalidReturnIntentionPeriodDateException::class,
+            InvalidReturnIntentionPeriodEndException::class,
+            InvalidReturnIntentionValueException::class,
+            RetiredEmploymentStatusCodeException::class,
             UnresolvedEmploymentStatusBehaviorException::class,
             InvalidPlacementPeriodDateException::class,
             ActiveFullSecondmentAlreadyExistsException::class,
@@ -219,6 +227,23 @@ return Application::configure(basePath: dirname(__DIR__))
         $exceptions->render(fn (InvalidStatusPeriodEndException $e) => response()->json([
             'message' => $e->getMessage(),
             'errors' => ['effective_to' => [$e->getMessage()]],
+        ], 422));
+        // S34 Return Intention (independent of employment status).
+        $exceptions->render(fn (InvalidReturnIntentionPeriodDateException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['effective_from' => [$e->getMessage()]],
+        ], 422));
+        $exceptions->render(fn (InvalidReturnIntentionPeriodEndException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['effective_to' => [$e->getMessage()]],
+        ], 422));
+        $exceptions->render(fn (InvalidReturnIntentionValueException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['intention' => [$e->getMessage()]],
+        ], 422));
+        $exceptions->render(fn (RetiredEmploymentStatusCodeException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['status_detail_code' => [$e->getMessage()]],
         ], 422));
         $exceptions->render(fn (UnresolvedEmploymentStatusBehaviorException $e) => response()->json([
             'message' => $e->getMessage(),

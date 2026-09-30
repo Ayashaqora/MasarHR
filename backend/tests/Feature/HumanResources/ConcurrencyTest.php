@@ -4,11 +4,13 @@ namespace Tests\Feature\HumanResources;
 
 use App\Modules\HumanResources\Application\Commands\EndEmploymentRelationship;
 use App\Modules\HumanResources\Application\Commands\RecordEmploymentStatusPeriod;
+use App\Modules\HumanResources\Application\Commands\RecordReturnIntention;
 use App\Modules\HumanResources\Application\Commands\RecordWorkSchedulePeriod;
 use App\Modules\HumanResources\Application\Commands\ScanMovementExpiryFollowUps;
 use App\Modules\HumanResources\Application\Commands\StartWorkplaceAssignment;
 use App\Modules\HumanResources\Domain\Exceptions\EmploymentRelationshipAlreadyEndedException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidEndDateException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidReturnIntentionPeriodDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidWorkSchedulePeriodDateException;
 use App\Modules\HumanResources\Domain\ExpiryFollowUpEmission;
 use App\Modules\HumanResources\Domain\FollowUpSuppressionReason;
@@ -89,6 +91,7 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
             DB::table('hr.full_secondment_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
             DB::table('hr.workplace_assignment_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
             DB::table('hr.organizational_placement_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
+            DB::table('hr.return_intention_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
             DB::table('hr.employment_status_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
             DB::table('hr.employment_relationships')->whereIn('person_id', $this->personIds)->delete();
             // person_qualifications (S23) carries a RESTRICT FK to hr.persons.
@@ -2250,5 +2253,113 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
         $this->assertInstanceOf(EmploymentRelationshipAlreadyEndedException::class, $rejected);
         $this->assertSame(0, (int) $this->scalar('select count(*) from hr.employment_status_periods where employment_relationship_id = ?', [$relationshipId]));
         $this->assertNoStatusPeriodViolatesRelationshipBounds($relationshipId);
+    }
+
+    private function recordIntention(string $relationshipId, string $intention, string $from, ?string $to = null): mixed
+    {
+        return DB::transaction(fn () => app(RecordReturnIntention::class)->handle(
+            EmploymentRelationship::query()->findOrFail($relationshipId), $intention, $from, $to,
+        ));
+    }
+
+    private function blockedWithinLockTimeout(callable $work): \Throwable
+    {
+        DB::statement("set lock_timeout = '300ms'");
+        try {
+            return $this->databaseError($work);
+        } finally {
+            DB::statement('set lock_timeout = 0');
+        }
+    }
+
+    /**
+     * S34: two real RecordReturnIntention commands on two sessions. The second blocks behind the first's
+     * relationship row lock (deterministic lock_timeout, no sleeps); once the first commits, the second
+     * re-reads committed state: a same-start write is rejected (never a silent rewrite) and a later start
+     * truncates the committed period. The PostgreSQL EXCLUDE is the backstop for raw overlapping inserts.
+     */
+    public function test_s34_concurrent_return_intention_writes_are_serialised_and_never_overlap(): void
+    {
+        [$personId, $relationshipId] = $this->s32Relationship();
+        $this->second();
+
+        DB::beginTransaction();
+        $this->recordIntention($relationshipId, 'WANTS_TO_RETURN', '2026-10-01');
+
+        $blocked = $this->asSession(self::SECOND, fn () => $this->blockedWithinLockTimeout(fn () => $this->recordIntention($relationshipId, 'DOES_NOT_WANT_TO_RETURN', '2026-10-01')));
+        $this->assertTrue(Errors::isLockNotAvailable($blocked), 'the second intention writer waits on the first');
+
+        DB::commit();
+
+        $rejected = $this->asSession(self::SECOND, fn () => $this->databaseError(fn () => $this->recordIntention($relationshipId, 'DOES_NOT_WANT_TO_RETURN', '2026-10-01')));
+        $this->assertInstanceOf(InvalidReturnIntentionPeriodDateException::class, $rejected);
+
+        $this->asSession(self::SECOND, fn () => $this->recordIntention($relationshipId, 'DOES_NOT_WANT_TO_RETURN', '2026-11-01'));
+        $rows = DB::table('hr.return_intention_periods')->where('employment_relationship_id', $relationshipId)->orderBy('effective_from')->get(['intention', 'effective_from', 'effective_to']);
+        $this->assertSame(['WANTS_TO_RETURN', '2026-10-01', '2026-11-01'], [$rows[0]->intention, $rows[0]->effective_from, $rows[0]->effective_to]);
+        $this->assertSame(['DOES_NOT_WANT_TO_RETURN', '2026-11-01', null], [$rows[1]->intention, $rows[1]->effective_from, $rows[1]->effective_to]);
+
+        $overlap = $this->databaseError(fn () => DB::transaction(fn () => DB::table('hr.return_intention_periods')->insert([
+            'id' => (string) Str::uuid7(), 'employment_relationship_id' => $relationshipId, 'intention' => 'WANTS_TO_RETURN',
+            'effective_from' => '2026-10-15', 'effective_to' => '2026-11-15', 'created_at' => now(),
+        ])));
+        $this->assertTrue(Errors::isExclusionViolation($overlap));
+    }
+
+    /**
+     * S34: relationship end vs intention, real commands, both orders. Intention first: the end waits, then
+     * truncates the committed period. End first: the intention waits, then is rejected on the ended
+     * relationship (409) and writes nothing. In both orders no period extends beyond the final end.
+     */
+    public function test_s34_relationship_end_and_return_intention_are_serialised_in_both_orders(): void
+    {
+        // Order 1: intention in flight, end second.
+        [$personId, $relationshipId] = $this->s32Relationship();
+        $this->second();
+        DB::beginTransaction();
+        $this->recordIntention($relationshipId, 'WANTS_TO_RETURN', '2026-10-01', '2026-12-01');
+        $blocked = $this->asSession(self::SECOND, fn () => $this->blockedWithinLockTimeout(fn () => $this->endRelationship($personId, $relationshipId, '2026-11-01')));
+        $this->assertTrue(Errors::isLockNotAvailable($blocked), 'end waits on the in-flight intention write');
+        DB::commit();
+        $this->asSession(self::SECOND, fn () => $this->endRelationship($personId, $relationshipId, '2026-11-01'));
+        $this->assertSame('2026-11-01', (string) $this->scalar('select effective_to from hr.return_intention_periods where employment_relationship_id = ?', [$relationshipId]));
+        $this->assertSame(0, (int) $this->scalar('select count(*) from hr.return_intention_periods i join hr.employment_relationships r on r.id = i.employment_relationship_id where r.id = ? and (i.effective_to is null or i.effective_to > r.effective_to)', [$relationshipId]));
+
+        // Order 2: end in flight, intention second.
+        [$personId2, $relationshipId2] = $this->s32Relationship();
+        $this->asSession(self::SECOND, function () use ($personId2, $relationshipId2) {
+            DB::beginTransaction();
+            $this->endRelationship($personId2, $relationshipId2, '2026-11-01');
+        });
+        $blocked = $this->blockedWithinLockTimeout(fn () => $this->recordIntention($relationshipId2, 'WANTS_TO_RETURN', '2026-10-01'));
+        $this->assertTrue(Errors::isLockNotAvailable($blocked), 'intention waits on the in-flight end');
+        $this->asSession(self::SECOND, fn () => DB::commit());
+        $rejected = $this->databaseError(fn () => $this->recordIntention($relationshipId2, 'WANTS_TO_RETURN', '2026-10-01'));
+        $this->assertInstanceOf(EmploymentRelationshipAlreadyEndedException::class, $rejected);
+        $this->assertSame(0, (int) $this->scalar('select count(*) from hr.return_intention_periods where employment_relationship_id = ?', [$relationshipId2]));
+    }
+
+    /**
+     * S34: status vs intention. The streams are logically independent and share no constraint; the only
+     * coupling is the relationship row lock every temporal writer takes (needed for end-of-relationship
+     * integrity). An in-flight status write makes the intention writer wait; once committed, both
+     * commit and neither disturbs the other's rows.
+     */
+    public function test_s34_status_and_return_intention_writers_are_independent_but_share_the_relationship_lock(): void
+    {
+        [$personId, $relationshipId] = $this->s32Relationship();
+        $this->second();
+
+        DB::beginTransaction();
+        $this->recordBounded($personId, $relationshipId, 'unpaid_leave', '2026-10-01', '2026-12-01');
+        $blocked = $this->asSession(self::SECOND, fn () => $this->blockedWithinLockTimeout(fn () => $this->recordIntention($relationshipId, 'WANTS_TO_RETURN', '2026-10-05')));
+        $this->assertTrue(Errors::isLockNotAvailable($blocked), 'intention waits on the in-flight status write (relationship integrity lock)');
+        DB::commit();
+
+        $this->asSession(self::SECOND, fn () => $this->recordIntention($relationshipId, 'WANTS_TO_RETURN', '2026-10-05'));
+
+        $this->assertSame(1, (int) $this->scalar('select count(*) from hr.employment_status_periods where employment_relationship_id = ?', [$relationshipId]));
+        $this->assertSame('2026-12-01', (string) $this->scalar('select effective_to from hr.employment_status_periods where employment_relationship_id = ?', [$relationshipId]), 'status untouched by the intention');
+        $this->assertSame(1, (int) $this->scalar('select count(*) from hr.return_intention_periods where employment_relationship_id = ?', [$relationshipId]));
     }
 }

@@ -6,11 +6,13 @@ import { Employee360Employment } from '../features/employees/Employee360Employme
 import { Employee360Header } from '../features/employees/Employee360Header'
 import { Employee360MovementTimeline } from '../features/employees/Employee360MovementTimeline'
 import { Employee360Overview } from '../features/employees/Employee360Overview'
+import { Employee360ReturnIntentionHistory } from '../features/employees/Employee360ReturnIntention'
 import { Employee360StatusHistory } from '../features/employees/Employee360StatusHistory'
 import { Employee360WorkArrangements } from '../features/employees/Employee360WorkArrangements'
 import { Employee360Workplace } from '../features/employees/Employee360Workplace'
 import {
   useActualWorkplace,
+  useEffectiveReturnIntention,
   useEffectiveStatus,
   useEmploymentCategoryPeriods,
   useEmploymentContractPeriods,
@@ -25,6 +27,7 @@ import {
   usePersonQualifications,
   usePlacementPeriods,
   useReferenceValues,
+  useReturnIntentionPeriods,
   useStatusPeriods,
   useWorkSchedulePeriods,
   useWorkplaceAssignmentPeriods,
@@ -98,6 +101,9 @@ export function Employee360Page() {
   const statusCatalog = useEmploymentStatusDetailCatalog()
   // S33: the current status is the backend's effective status (S32), not derived from statusPeriods.
   const effectiveStatus = useEffectiveStatus(personId, relationshipId)
+  // S34: Return Intention is an independent concept — read from its own endpoints, never from status rows.
+  const effectiveIntention = useEffectiveReturnIntention(personId, relationshipId)
+  const returnIntentionPeriods = useReturnIntentionPeriods(personId, relationshipId)
   const partialSecondments = usePartialSecondmentPeriods(personId, relationshipId)
   const workSchedules = useWorkSchedulePeriods(personId, relationshipId)
   const categoryPeriods = useEmploymentCategoryPeriods(personId, relationshipId)
@@ -216,6 +222,7 @@ export function Employee360Page() {
         person={person.data}
         relationship={relationship}
         effectiveStatus={effectiveStatus}
+        effectiveIntention={effectiveIntention}
         actualWorkplace={actualWorkplace}
         statusCatalog={statusCatalog}
         unitNames={unitNames}
@@ -254,6 +261,7 @@ export function Employee360Page() {
       >
         <Employee360Overview
           effectiveStatus={effectiveStatus}
+          effectiveIntention={effectiveIntention}
           statusCatalog={statusCatalog}
           actualWorkplace={actualWorkplace}
           placementPeriods={placementPeriods}
@@ -287,6 +295,7 @@ export function Employee360Page() {
         hidden={tab !== 'status-history'}
       >
         <Employee360StatusHistory statusPeriods={statusPeriods} statusCatalog={statusCatalog} />
+        <Employee360ReturnIntentionHistory returnIntentionPeriods={returnIntentionPeriods} />
       </div>
       <div
         role="tabpanel"

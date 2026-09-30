@@ -58,13 +58,13 @@ class ScopeBoundaryTest extends HumanResourcesTestCase
         'ProfessionalHistory', 'JobHistory',
     ];
 
-    public function test_hr_schema_contains_exactly_the_fifteen_authorized_tables(): void
+    public function test_hr_schema_contains_exactly_the_sixteen_authorized_tables(): void
     {
         $tables = DB::table('information_schema.tables')->where('table_schema', 'hr')->pluck('table_name')->all();
         sort($tables);
 
         $this->assertSame(
-            ['employment_category_periods', 'employment_contract_periods', 'employment_job_title_periods', 'employment_relationships', 'employment_specialty_periods', 'employment_status_periods', 'full_secondment_periods', 'organizational_placement_periods', 'partial_secondment_period_weekdays', 'partial_secondment_periods', 'person_qualifications', 'persons', 'work_schedule_period_weekdays', 'work_schedule_periods', 'workplace_assignment_periods'],
+            ['employment_category_periods', 'employment_contract_periods', 'employment_job_title_periods', 'employment_relationships', 'employment_specialty_periods', 'employment_status_periods', 'full_secondment_periods', 'organizational_placement_periods', 'partial_secondment_period_weekdays', 'partial_secondment_periods', 'person_qualifications', 'persons', 'return_intention_periods', 'work_schedule_period_weekdays', 'work_schedule_periods', 'workplace_assignment_periods'],
             $tables,
         );
     }
