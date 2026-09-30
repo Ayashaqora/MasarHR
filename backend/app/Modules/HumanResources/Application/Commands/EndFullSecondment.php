@@ -2,6 +2,7 @@
 
 namespace App\Modules\HumanResources\Application\Commands;
 
+use App\Modules\HumanResources\Domain\Exceptions\EmploymentRelationshipAlreadyEndedException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidFullSecondmentEndDateException;
 use App\Modules\HumanResources\Domain\Exceptions\NoActiveFullSecondmentException;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRelationship;
@@ -27,15 +28,24 @@ use Illuminate\Support\Carbon;
  */
 final class EndFullSecondment
 {
-    /** @throws NoActiveFullSecondmentException|InvalidFullSecondmentEndDateException */
+    /** @throws EmploymentRelationshipAlreadyEndedException|NoActiveFullSecondmentException|InvalidFullSecondmentEndDateException */
     public function handle(
         EmploymentRelationship $relationship,
         string $effectiveTo,
     ): FullSecondmentPeriod {
-        EmploymentRelationship::query()
+        $freshRelationship = EmploymentRelationship::query()
             ->where('id', $relationship->getKey())
             ->lockForUpdate()
             ->firstOrFail();
+
+        // S35: once the owning relationship has ended on/before the requested end date, no user command
+        // may mutate a surviving movement (e.g. a Case 3 future row kept as recorded). The relationship
+        // end itself no longer goes through this command (RelationshipEndMovementConsequences).
+        if ($freshRelationship->end_knowledge_state === 'KNOWN'
+            && $freshRelationship->effective_to !== null
+            && Carbon::parse($effectiveTo)->gte($freshRelationship->effective_to)) {
+            throw new EmploymentRelationshipAlreadyEndedException;
+        }
 
         $openPeriod = FullSecondmentPeriod::query()
             ->where('employment_relationship_id', $relationship->getKey())

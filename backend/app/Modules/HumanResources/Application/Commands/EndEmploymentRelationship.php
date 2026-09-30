@@ -11,11 +11,9 @@ use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentJob
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRelationship;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentSpecialtyPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentStatusPeriod;
-use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\FullSecondmentPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\PartialSecondmentPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\Person;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\ReturnIntentionPeriod;
-use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\WorkplaceAssignmentPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\WorkSchedulePeriod;
 use App\Modules\Platform\Infrastructure\Persistence\Postgres\PostgresErrorClassifier as Errors;
 use Illuminate\Database\QueryException;
@@ -82,13 +80,17 @@ use Illuminate\Support\Carbon;
  * Secondment still effective at the end date (open, or recorded with a later planned end) is
  * closed there; one starting on or after the end date rejects the end atomically.
  *
- * No explicit lockForUpdate() is added here for the S15/S16 writes — the existing scoped UPDATE
- * above already acquires an implicit row-level lock on this relationship for the rest of the
- * transaction under standard PostgreSQL semantics, and EndFullSecondment's/
- * EndWorkplaceAssignment's own lockForUpdate() re-acquisition inside
- * closeOpenFullSecondmentIfAny()/closeOpenWorkplaceAssignmentIfAny() is reentrant within the same
- * transaction (identical, already-established argument used by TransferController's own reuse of
- * EndFullSecondment/EndWorkplaceAssignment).
+ * S35 (Employment Relationship End Movement Integrity): the S15/S16 handling above is REPLACED for
+ * Full Secondment and Workplace Assignment by RelationshipEndMovementConsequences (one shared
+ * implementation, no longer calling the user-facing End commands): a movement crossing the end date —
+ * open or bounded alike — is truncated to end exactly at it; a historical one is untouched; a future
+ * one (starting on or after the end) never blocks the end and is kept exactly as recorded, never
+ * effective because the relationship ended; ACTIONABLE S31 follow-ups of the affected movements are
+ * suppressed (RELATIONSHIP_ENDED) in the same transaction. EndFullSecondment/EndWorkplaceAssignment
+ * now reject an already-ended relationship, so a surviving future row cannot be mutated afterwards.
+ *
+ * No explicit lockForUpdate() is added here — the caller (controller) holds the relationship row
+ * lock first and the scoped UPDATE above keeps it for the rest of the transaction.
  */
 final class EndEmploymentRelationship
 {
@@ -140,8 +142,9 @@ final class EndEmploymentRelationship
             $person->forceFill(['is_terminal' => true, 'version' => $person->version + 1])->save();
         }
 
-        $this->closeOpenFullSecondmentIfAny($relationship, $effectiveTo);
-        $this->closeOpenWorkplaceAssignmentIfAny($relationship, $effectiveTo);
+        // S35: Full Secondment and Workplace Assignment (Case 1 truncate / Case 2 untouched / Case 3 kept as
+        // recorded, never effective) and their S31 follow-ups — one implementation shared by every path.
+        app(RelationshipEndMovementConsequences::class)->apply($relationship, $effectiveTo);
         $this->closeOpenStatusPeriodIfAny($relationship, $effectiveTo);
         $this->closeOpenEmploymentCategoryPeriodIfAny($relationship, $effectiveTo);
         $this->closeEmploymentContractValidityAtEndIfAny($relationship, $effectiveTo);
@@ -182,38 +185,6 @@ final class EndEmploymentRelationship
 
                 throw $e;
             }
-        }
-    }
-
-    /** S15 spec §8.1. Reuses EndFullSecondment verbatim; never called when nothing is open. */
-    private function closeOpenFullSecondmentIfAny(EmploymentRelationship $relationship, string $effectiveTo): void
-    {
-        $hasOpenSecondment = FullSecondmentPeriod::query()
-            ->where('employment_relationship_id', $relationship->getKey())
-            ->whereNull('effective_to')
-            ->exists();
-
-        if ($hasOpenSecondment) {
-            app(EndFullSecondment::class)->handle($relationship, $effectiveTo);
-        }
-    }
-
-    /**
-     * S16 spec §S16.8 ("Employment End → Assignment": ALLOW, CLOSE-PREVIOUS-AS-CONSEQUENCE)/
-     * §S16.10. Reuses EndWorkplaceAssignment verbatim, mirroring closeOpenFullSecondmentIfAny()
-     * exactly; never called when nothing is open. A relationship can never have both an open
-     * secondment and an open assignment at once (§S16.8 mutual exclusion), so at most one of
-     * this method and the one above ever actually closes a row for a given call.
-     */
-    private function closeOpenWorkplaceAssignmentIfAny(EmploymentRelationship $relationship, string $effectiveTo): void
-    {
-        $hasOpenAssignment = WorkplaceAssignmentPeriod::query()
-            ->where('employment_relationship_id', $relationship->getKey())
-            ->whereNull('effective_to')
-            ->exists();
-
-        if ($hasOpenAssignment) {
-            app(EndWorkplaceAssignment::class)->handle($relationship, $effectiveTo);
         }
     }
 

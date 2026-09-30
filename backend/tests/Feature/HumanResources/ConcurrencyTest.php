@@ -3,11 +3,16 @@
 namespace Tests\Feature\HumanResources;
 
 use App\Modules\HumanResources\Application\Commands\EndEmploymentRelationship;
+use App\Modules\HumanResources\Application\Commands\EndFullSecondment;
+use App\Modules\HumanResources\Application\Commands\EndWorkplaceAssignment;
 use App\Modules\HumanResources\Application\Commands\RecordEmploymentStatusPeriod;
 use App\Modules\HumanResources\Application\Commands\RecordReturnIntention;
 use App\Modules\HumanResources\Application\Commands\RecordWorkSchedulePeriod;
 use App\Modules\HumanResources\Application\Commands\ScanMovementExpiryFollowUps;
+use App\Modules\HumanResources\Application\Commands\StartFullSecondment;
 use App\Modules\HumanResources\Application\Commands\StartWorkplaceAssignment;
+use App\Modules\HumanResources\Application\Queries\Reporting\ListReportingPopulationAsOf;
+use App\Modules\HumanResources\Application\Queries\ResolveActualWorkplaceForRelationshipAsOf;
 use App\Modules\HumanResources\Domain\Exceptions\EmploymentRelationshipAlreadyEndedException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidEndDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidReturnIntentionPeriodDateException;
@@ -2361,5 +2366,135 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
         $this->assertSame(1, (int) $this->scalar('select count(*) from hr.employment_status_periods where employment_relationship_id = ?', [$relationshipId]));
         $this->assertSame('2026-12-01', (string) $this->scalar('select effective_to from hr.employment_status_periods where employment_relationship_id = ?', [$relationshipId]), 'status untouched by the intention');
         $this->assertSame(1, (int) $this->scalar('select count(*) from hr.return_intention_periods where employment_relationship_id = ?', [$relationshipId]));
+    }
+
+    // ---- S35: relationship end vs Full Secondment / Workplace Assignment (real commands, two sessions) ----
+
+    private const S35_TABLES = ['FULL_SECONDMENT' => 'hr.full_secondment_periods', 'WORKPLACE_ASSIGNMENT' => 'hr.workplace_assignment_periods'];
+
+    /** Starts a movement (bounded when $to is given) through the real commands inside ONE transaction. Returns its id. */
+    private function writeMovement(string $type, string $relationshipId, string $from, ?string $to): string
+    {
+        return DB::transaction(function () use ($type, $relationshipId, $from, $to): string {
+            $relationship = EmploymentRelationship::query()->findOrFail($relationshipId);
+            $unit = OrganizationalUnit::query()->findOrFail($this->organizationalUnitId());
+
+            if ($type === 'FULL_SECONDMENT') {
+                $movement = app(StartFullSecondment::class)->handle($relationship, $unit, $from);
+                $to !== null && app(EndFullSecondment::class)->handle($relationship->refresh(), $to);
+            } else {
+                $decision = DecisionType::query()->where('code', 'ASSIGNMENT')->firstOrFail();
+                $movement = app(StartWorkplaceAssignment::class)->handle($relationship, $unit, $from, $decision);
+                $to !== null && app(EndWorkplaceAssignment::class)->handle($relationship->refresh(), $to);
+            }
+
+            return $movement->getKey();
+        });
+    }
+
+    private function s35FollowUp(string $type, string $movementId, string $relationshipId, string $expectedTo): string
+    {
+        $id = (string) Str::uuid7();
+        $column = $type === 'FULL_SECONDMENT' ? 'full_secondment_period_id' : 'workplace_assignment_period_id';
+        DB::table('automation.movement_expiry_followups')->insert([
+            'id' => $id, 'followup_kind' => 'EXPIRY_WARNING_7D', 'movement_type' => $type, $column => $movementId,
+            'employment_relationship_id' => $relationshipId,
+            'organizational_unit_id' => DB::table(self::S35_TABLES[$type])->where('id', $movementId)->value('organizational_unit_id'),
+            'expected_effective_to' => $expectedTo, 'due_date' => date('Y-m-d', strtotime($expectedTo.' -7 days')),
+            'status' => 'ACTIONABLE', 'created_at' => now(),
+        ]);
+
+        return $id;
+    }
+
+    /** The invariant after both sessions resolved: a valid end, and nothing effective past E through any reader. */
+    private function assertNothingEffectiveAfterEnd(string $relationshipId, string $endDate): void
+    {
+        $this->assertSame('KNOWN', (string) $this->scalar('select end_knowledge_state from hr.employment_relationships where id = ?', [$relationshipId]));
+        $this->assertSame($endDate, (string) $this->scalar('select effective_to from hr.employment_relationships where id = ?', [$relationshipId]));
+        $relationship = EmploymentRelationship::query()->findOrFail($relationshipId);
+        foreach ([$endDate, '2026-12-15', '2027-06-01'] as $date) {
+            $this->assertFalse(app(ResolveActualWorkplaceForRelationshipAsOf::class)($relationship, $date)->isResolved(), "workplace resolved on $date");
+            $this->assertSame([], app(ListReportingPopulationAsOf::class)($date, [$relationshipId]), "S27 population on $date");
+        }
+        foreach (self::S35_TABLES as $table) {
+            $this->assertSame(0, (int) $this->scalar("select count(*) from {$table} where employment_relationship_id = ? and effective_from < ? and (effective_to is null or effective_to > ?)", [$relationshipId, $endDate, $endDate]), 'no movement crosses the end');
+        }
+        $this->assertSame(0, (int) $this->scalar("select count(*) from automation.movement_expiry_followups where employment_relationship_id = ? and status = 'ACTIONABLE'", [$relationshipId]), 'no ACTIONABLE follow-up survives');
+    }
+
+    /**
+     * Movement writer commits FIRST, end second: the end waits on the movement writer's relationship lock
+     * (lock_timeout, no sleeps), then re-reads the committed row and applies Case 1 / Case 3.
+     */
+    private function raceMovementCommitsBeforeEnd(string $type, string $from, ?string $to, array $expectedRow): void
+    {
+        [$personId, $relationshipId] = $this->s32Relationship();
+        $this->second();
+
+        DB::beginTransaction();
+        $movementId = $this->writeMovementInFlight($type, $relationshipId, $from, $to);
+        $blocked = $this->asSession(self::SECOND, fn () => $this->blockedWithinLockTimeout(fn () => $this->endRelationship($personId, $relationshipId, '2026-11-01')));
+        $this->assertTrue(Errors::isLockNotAvailable($blocked), "[$type] the end waits on the in-flight movement write");
+        DB::commit();
+
+        $followUp = $to === null ? null : $this->s35FollowUp($type, $movementId, $relationshipId, $to);
+        $this->asSession(self::SECOND, fn () => $this->endRelationship($personId, $relationshipId, '2026-11-01'));
+
+        $row = DB::table(self::S35_TABLES[$type])->where('id', $movementId)->first();
+        $this->assertSame($expectedRow, [$row->effective_from, $row->effective_to], "[$type] row after the end");
+        $this->assertNothingEffectiveAfterEnd($relationshipId, '2026-11-01');
+        $followUp !== null && $this->assertSame(['SUPPRESSED', 'RELATIONSHIP_ENDED'], [(string) $this->scalar('select status from automation.movement_expiry_followups where id = ?', [$followUp]), (string) $this->scalar('select suppression_reason from automation.movement_expiry_followups where id = ?', [$followUp])]);
+    }
+
+    /** The movement write runs inside the caller's already-open transaction (kept uncommitted). */
+    private function writeMovementInFlight(string $type, string $relationshipId, string $from, ?string $to): string
+    {
+        return $this->writeMovement($type, $relationshipId, $from, $to); // DB::transaction nests as a savepoint inside the held transaction
+    }
+
+    /** End commits FIRST, movement writer second: the writer waits, then is rejected on the ended relationship; nothing is created. */
+    private function raceEndCommitsBeforeMovement(string $type, string $from, ?string $to): void
+    {
+        [$personId, $relationshipId] = $this->s32Relationship();
+        $this->second();
+
+        $this->asSession(self::SECOND, function () use ($personId, $relationshipId) {
+            DB::beginTransaction();
+            $this->endRelationship($personId, $relationshipId, '2026-11-01');
+        });
+        $blocked = $this->blockedWithinLockTimeout(fn () => $this->writeMovement($type, $relationshipId, $from, $to));
+        $this->assertTrue(Errors::isLockNotAvailable($blocked), "[$type] the movement writer waits on the in-flight end");
+        $this->asSession(self::SECOND, fn () => DB::commit());
+
+        $rejected = $this->databaseError(fn () => $this->writeMovement($type, $relationshipId, $from, $to));
+        $this->assertInstanceOf(EmploymentRelationshipAlreadyEndedException::class, $rejected, "[$type] rejected after the committed end");
+        $this->assertSame(0, (int) $this->scalar('select count(*) from '.self::S35_TABLES[$type].' where employment_relationship_id = ?', [$relationshipId]), "[$type] nothing was created");
+        $this->assertNothingEffectiveAfterEnd($relationshipId, '2026-11-01');
+    }
+
+    public function test_s35_relationship_end_vs_bounded_full_secondment_crossing_the_end_in_both_commit_orders(): void
+    {
+        $this->raceMovementCommitsBeforeEnd('FULL_SECONDMENT', '2026-10-01', '2026-12-01', ['2026-10-01', '2026-11-01']);
+        $this->raceEndCommitsBeforeMovement('FULL_SECONDMENT', '2026-10-01', '2026-12-01');
+    }
+
+    public function test_s35_relationship_end_vs_bounded_workplace_assignment_crossing_the_end_in_both_commit_orders(): void
+    {
+        $this->raceMovementCommitsBeforeEnd('WORKPLACE_ASSIGNMENT', '2026-10-01', '2026-12-01', ['2026-10-01', '2026-11-01']);
+        $this->raceEndCommitsBeforeMovement('WORKPLACE_ASSIGNMENT', '2026-10-01', '2026-12-01');
+    }
+
+    public function test_s35_relationship_end_vs_future_full_secondment_in_both_commit_orders(): void
+    {
+        // Case 3: the committed future row keeps its recorded dates and never becomes effective.
+        $this->raceMovementCommitsBeforeEnd('FULL_SECONDMENT', '2026-12-01', null, ['2026-12-01', null]);
+        $this->raceEndCommitsBeforeMovement('FULL_SECONDMENT', '2026-12-01', null);
+    }
+
+    public function test_s35_relationship_end_vs_future_workplace_assignment_in_both_commit_orders(): void
+    {
+        $this->raceMovementCommitsBeforeEnd('WORKPLACE_ASSIGNMENT', '2026-12-01', null, ['2026-12-01', null]);
+        $this->raceEndCommitsBeforeMovement('WORKPLACE_ASSIGNMENT', '2026-12-01', null);
     }
 }

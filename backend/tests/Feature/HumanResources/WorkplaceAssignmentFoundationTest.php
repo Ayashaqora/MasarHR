@@ -128,22 +128,27 @@ class WorkplaceAssignmentFoundationTest extends HumanResourcesTestCase
         app(StartWorkplaceAssignment::class)->handle($relationship, $this->createUnit(), '2026-03-01', $this->assignmentDecisionType());
     }
 
-    public function test_ending_against_an_already_ended_relationship_is_allowed(): void
+    /**
+     * S35: the End command is now rejected once the owning relationship has ended on/before the requested
+     * end date (previously "administrative cleanup" was allowed). The relationship end itself truncates
+     * such rows, so this state is only reachable for legacy data; the row must not be mutated.
+     */
+    public function test_ending_against_an_already_ended_relationship_is_rejected_and_leaves_the_row_untouched(): void
     {
         $person = $this->createPersonRecord();
         $relationship = $this->createEmploymentRelationship($person);
         $destination = $this->createUnit();
 
-        app(StartWorkplaceAssignment::class)->handle($relationship, $destination, '2026-02-01', $this->assignmentDecisionType());
+        $period = app(StartWorkplaceAssignment::class)->handle($relationship, $destination, '2026-02-01', $this->assignmentDecisionType());
 
         $relationship->forceFill(['effective_to' => '2026-03-01', 'end_knowledge_state' => 'KNOWN'])->save();
 
-        // Spec §S16.9: ending is administrative cleanup of an existing row, not "starting
-        // something new against a dead episode" — it is not blocked the way starting is, mirroring
-        // S12's identical EndFullSecondment precedent.
-        $ended = app(EndWorkplaceAssignment::class)->handle($relationship, '2026-03-15');
-
-        $this->assertFalse($ended->isActive());
+        try {
+            app(EndWorkplaceAssignment::class)->handle($relationship, '2026-03-15');
+            $this->fail('an ended relationship must reject the end command');
+        } catch (EmploymentRelationshipAlreadyEndedException) {
+            $this->assertNull($period->refresh()->effective_to);
+        }
     }
 
     public function test_starting_with_a_backdated_effective_from_is_rejected(): void

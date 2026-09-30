@@ -412,6 +412,50 @@ describe('Employee360Page', () => {
     })
   })
 
+  describe('S35 relationship end vs movements', () => {
+    const ENDED = { ...RELATIONSHIP, effective_to: '2026-11-01', end_knowledge_state: 'KNOWN', ended_terminally: false }
+    const CASE1_FULL = { id: 'fs-1', employment_relationship_id: 'rel-1', organizational_unit_id: 'unit-1', effective_from: '2026-10-01', effective_to: '2026-11-01' }
+    const CASE3_ASSIGNMENT = { id: 'wa-1', employment_relationship_id: 'rel-1', organizational_unit_id: 'unit-1', effective_from: '2026-12-01', effective_to: null }
+
+    function endedRelationshipRoutes(url: string) {
+      if (url.includes('/employment-relationships') && !url.includes('/rel-1/')) return jsonResponse([ENDED])
+      if (url.includes('/actual-workplace')) return jsonResponse({ organizational_unit_id: null, source: null, since: null })
+      if (url.includes('/full-secondment-periods')) return jsonResponse([CASE1_FULL])
+      if (url.includes('/workplace-assignment-periods')) return jsonResponse([CASE3_ASSIGNMENT])
+      return undefined
+    }
+
+    it('shows no current workplace after the end, even though a future movement row physically survives', async () => {
+      stub360App(endedRelationshipRoutes)
+      renderApp(ROUTE)
+
+      const headerSection = (await screen.findByRole('heading', { level: 2 })).closest('section')
+      if (!headerSection) throw new Error('header expected')
+      expect(await within(headerSection).findByText('غير محدَّد')).toBeInTheDocument()
+      expect(within(headerSection).queryByText('الإدارة العامة للمستشفيات')).not.toBeInTheDocument()
+    })
+
+    it('shows the truncated Case 1 end date and the recorded Case 3 dates as history only', async () => {
+      stub360App(endedRelationshipRoutes)
+      const user = userEvent.setup()
+      renderApp(ROUTE)
+
+      await screen.findByRole('heading', { level: 1, name: 'الملف الشامل للموظف' })
+      await user.click(screen.getByRole('tab', { name: 'الخط الزمني للحركات' }))
+      const table = await screen.findByRole('table')
+
+      const rows = within(table).getAllByRole('row')
+      const full = rows.find((row) => within(row).queryByText('انتداب كلي'))
+      const assignment = rows.find((row) => within(row).queryByText('تكليف'))
+      if (!full || !assignment) throw new Error('both movement rows expected')
+      expect(within(full).getByText('2026-10-01')).toBeInTheDocument()
+      expect(within(full).getByText('2026-11-01')).toBeInTheDocument()
+      expect(within(assignment).getByText('2026-12-01')).toBeInTheDocument()
+      // The timeline is history: it is never labelled as the current/actual workplace.
+      expect(within(table).queryByText(/الحالي|الفعلي/)).not.toBeInTheDocument()
+    })
+  })
+
   describe('S34 return intention (independent of employment status)', () => {
     const CURRENT = {
       as_of: '2026-10-15',

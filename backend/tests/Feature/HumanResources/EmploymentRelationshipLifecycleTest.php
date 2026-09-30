@@ -10,7 +10,6 @@ use App\Modules\HumanResources\Application\Commands\StartWorkplaceAssignment;
 use App\Modules\HumanResources\Domain\Exceptions\DuplicatePermanentEmployeeNumberException;
 use App\Modules\HumanResources\Domain\Exceptions\EmploymentRelationshipAlreadyEndedException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidEndDateException;
-use App\Modules\HumanResources\Domain\Exceptions\InvalidFullSecondmentEndDateException;
 use App\Modules\HumanResources\Domain\Exceptions\OverlappingEmploymentRelationshipException;
 use App\Modules\HumanResources\Domain\Exceptions\PersonIsTerminalException;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRelationship;
@@ -427,15 +426,24 @@ class EmploymentRelationshipLifecycleTest extends HumanResourcesTestCase
         $this->assertSame(0, EmploymentStatusPeriod::query()->where('employment_relationship_id', $relationship->getKey())->count());
     }
 
-    public function test_ending_a_relationship_before_an_open_secondments_own_start_is_rejected(): void
+    /**
+     * S35 (supersedes the earlier S15 behavior, where such an end was rejected): a Full Secondment that
+     * starts on or after the end date never blocks the end; the row is kept exactly as recorded and
+     * is never effective (Case 3).
+     */
+    public function test_ending_a_relationship_before_a_future_secondments_start_is_allowed_and_keeps_the_row_as_recorded(): void
     {
         $person = $this->createPersonRecord();
         $relationship = $this->createEmploymentRelationship($person);
         $unit = $this->createUnit();
-        app(StartFullSecondment::class)->handle($relationship, $unit, '2026-06-01');
+        $full = app(StartFullSecondment::class)->handle($relationship, $unit, '2026-06-01');
 
-        $this->expectException(InvalidFullSecondmentEndDateException::class);
-        app(EndEmploymentRelationship::class)->handle($person, $relationship, $relationship->version, '2026-03-01', false);
+        $ended = app(EndEmploymentRelationship::class)->handle($person, $relationship, $relationship->version, '2026-03-01', false);
+
+        $this->assertSame('KNOWN', $ended->end_knowledge_state);
+        $row = FullSecondmentPeriod::query()->findOrFail($full->getKey());
+        $this->assertSame('2026-06-01', $row->effective_from->toDateString());
+        $this->assertNull($row->effective_to, 'kept exactly as recorded');
     }
 
     public function test_ending_a_relationship_before_an_open_status_periods_own_start_is_rejected(): void

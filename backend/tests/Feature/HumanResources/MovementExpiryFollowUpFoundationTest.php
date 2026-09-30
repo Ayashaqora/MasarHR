@@ -370,21 +370,21 @@ class MovementExpiryFollowUpFoundationTest extends HumanResourcesTestCase
         $this->assertSame(1, MovementExpiryFollowUp::query()->count());
     }
 
-    public function test_u_a_bounded_full_secondment_outliving_the_employment_end_is_recognised_as_outside_the_relationship(): void
+    public function test_u_a_bounded_full_secondment_crossing_the_employment_end_is_truncated_and_its_follow_up_suppressed_atomically(): void
     {
-        // S15 closes only an OPEN secondment when a relationship ends, so a bounded one can extend past
-        // the employment end (frozen S12/S15 behavior, untouched by S31). The follow-up recheck covers it.
+        // S35 supersedes the S15 gap: a bounded secondment crossing the employment end is truncated at it, and
+        // its ACTIONABLE follow-up is suppressed (RELATIONSHIP_ENDED) in the same transaction as the end.
         [$person, $rel] = $this->employee();
         $full = $this->full($rel, $this->createUnit(), '2026-03-01', '2026-06-01');
         $emitted = $this->scan('2026-05-26')->emitted[0];
 
         $this->end($person, $rel, '2026-05-30');
-        $this->assertSame('2026-06-01', $full->refresh()->effective_to->toDateString(), 'the scanner and S31 never rewrite it');
+        $this->assertSame('2026-05-30', $full->refresh()->effective_to->toDateString(), 'truncated at the employment end by the end itself');
+        $this->assertSame('RELATIONSHIP_ENDED', MovementExpiryFollowUp::query()->findOrFail($emitted)->suppression_reason, 'suppressed in the same transaction as the end');
 
         $result = $this->scan('2026-05-27');
 
-        $this->assertSame([$emitted], $result->suppressed);
-        $this->assertSame('RELATIONSHIP_ENDED', MovementExpiryFollowUp::query()->findOrFail($emitted)->suppression_reason);
+        $this->assertSame([], $result->suppressed, 'nothing left for the scanner to suppress');
         $this->assertSame([], $result->emitted);
         $this->assertSame(1, MovementExpiryFollowUp::query()->count(), 'the suppressed record is the logical follow-up for (movement, 06-01): never emitted again');
     }
@@ -412,10 +412,9 @@ class MovementExpiryFollowUpFoundationTest extends HumanResourcesTestCase
         app(RecordEmploymentStatusPeriod::class)->handle($person, $rel, $this->statusDetail('resigned'), '2026-10-28');
         $this->assertSame('KNOWN', $rel->refresh()->end_knowledge_state);
 
-        $result = $this->scan('2026-10-26');
+        $this->assertSame('RELATIONSHIP_ENDED', MovementExpiryFollowUp::query()->findOrFail($emitted)->suppression_reason, 'S35: suppressed atomically by the status-triggered end');
 
-        $this->assertSame([$emitted], $result->suppressed);
-        $this->assertSame('RELATIONSHIP_ENDED', MovementExpiryFollowUp::query()->findOrFail($emitted)->suppression_reason);
+        $this->assertSame([], $this->scan('2026-10-26')->suppressed);
     }
 
     public function test_ao_an_unknown_legacy_end_is_not_a_known_end_and_no_date_is_fabricated(): void

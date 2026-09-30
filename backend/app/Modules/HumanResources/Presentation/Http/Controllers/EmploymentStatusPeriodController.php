@@ -5,6 +5,7 @@ namespace App\Modules\HumanResources\Presentation\Http\Controllers;
 use App\Modules\Audit\Application\AuditedCommandExecutor;
 use App\Modules\Audit\Domain\AuditSpec;
 use App\Modules\HumanResources\Application\Commands\RecordEmploymentStatusPeriod;
+use App\Modules\HumanResources\Application\Commands\RelationshipEndMovementConsequences;
 use App\Modules\HumanResources\Application\Queries\ListEmploymentStatusPeriodsForRelationship;
 use App\Modules\HumanResources\Application\Queries\ResolveEffectiveEmploymentStatusAsOf;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentCategoryPeriod;
@@ -131,6 +132,10 @@ class EmploymentStatusPeriodController
             // closed as an S15 consequence of THIS call when the relationship itself is also
             // closed as a consequence this call (§8.1), so this is compared inside that same
             // branch below.
+            // S35: same movement consequence snapshot as the direct end (one shared implementation), taken
+            // under the same relationship lock; the end date of a status-triggered end is effective_from.
+            $movementSnapshot = app(RelationshipEndMovementConsequences::class)->snapshot($employmentRelationship->getKey(), $data['effective_from']);
+
             $hadOpenSecondment = FullSecondmentPeriod::query()
                 ->where('employment_relationship_id', $employmentRelationship->getKey())
                 ->whereNull('effective_to')
@@ -193,7 +198,7 @@ class EmploymentStatusPeriodController
                     'effective_from' => $period->effective_from?->toDateString(),
                     'effective_to' => $period->effective_to?->toDateString(),
                 ],
-                metadata: function () use ($statusDetail, $employmentRelationship, $wasAlreadyEnded, $hadOpenSecondment, $hadOpenCategoryPeriod, $hadContractBeyondEnd, $data, $hadOpenJobTitlePeriod, $hadOpenSpecialtyPeriod, $hadOpenWorkSchedulePeriod, $partialsBeyondEnd) {
+                metadata: function () use ($statusDetail, $employmentRelationship, $wasAlreadyEnded, $hadOpenSecondment, $hadOpenCategoryPeriod, $hadContractBeyondEnd, $data, $hadOpenJobTitlePeriod, $hadOpenSpecialtyPeriod, $hadOpenWorkSchedulePeriod, $partialsBeyondEnd, $movementSnapshot) {
                     $metadata = ['status_detail_code' => $statusDetail->code];
 
                     $freshRelationship = EmploymentRelationship::query()
@@ -275,6 +280,9 @@ class EmploymentStatusPeriodController
                             $metadata['partial_secondment_closed_as_consequence'] = true;
                             $metadata['closed_partial_secondment_period_ids'] = $closedPartials;
                         }
+
+                        // S35: identical movement consequence evidence to the direct relationship end.
+                        $metadata += app(RelationshipEndMovementConsequences::class)->metadata($employmentRelationship->getKey(), $movementSnapshot);
                     }
 
                     return $metadata;

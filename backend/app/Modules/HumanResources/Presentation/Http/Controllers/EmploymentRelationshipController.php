@@ -6,6 +6,7 @@ use App\Modules\Audit\Application\AuditedCommandExecutor;
 use App\Modules\Audit\Domain\AuditSpec;
 use App\Modules\HumanResources\Application\Commands\CreateEmploymentRelationship;
 use App\Modules\HumanResources\Application\Commands\EndEmploymentRelationship;
+use App\Modules\HumanResources\Application\Commands\RelationshipEndMovementConsequences;
 use App\Modules\HumanResources\Application\Queries\ListEmploymentRelationshipsForPerson;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentCategoryPeriod;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentContractPeriod;
@@ -127,6 +128,9 @@ class EmploymentRelationshipController
         ) {
             EmploymentRelationship::query()->where('id', $employmentRelationship->getKey())->lockForUpdate()->firstOrFail();
 
+            // S35: movement consequence snapshot (Case 1 / Case 3 + actionable S31 follow-ups), same lock.
+            $movementSnapshot = app(RelationshipEndMovementConsequences::class)->snapshot($employmentRelationship->getKey(), $data['effective_to']);
+
             $hadOpenSecondment = FullSecondmentPeriod::query()
                 ->where('employment_relationship_id', $employmentRelationship->getKey())
                 ->whereNull('effective_to')
@@ -201,7 +205,7 @@ class EmploymentRelationshipController
                 ],
                 metadata: function () use (
                     $employmentRelationship, $hadOpenSecondment, $hadOpenStatusPeriod, $hadOpenAssignment, $hadOpenCategoryPeriod,
-                    $hadContractBeyondEnd, $data, $hadOpenJobTitlePeriod, $hadOpenSpecialtyPeriod, $hadOpenWorkSchedulePeriod, $partialsBeyondEnd,
+                    $hadContractBeyondEnd, $data, $hadOpenJobTitlePeriod, $hadOpenSpecialtyPeriod, $hadOpenWorkSchedulePeriod, $partialsBeyondEnd, $movementSnapshot,
                 ) {
                     $metadata = [];
 
@@ -288,6 +292,10 @@ class EmploymentRelationshipController
                         $metadata['partial_secondment_closed_as_consequence'] = true;
                         $metadata['closed_partial_secondment_period_ids'] = $closedPartials;
                     }
+
+                    // S35: Full Secondment / Workplace Assignment consequences (open closed, bounded truncated,
+                    // future neutralized) and suppressed S31 follow-ups — ids only, shared with the status path.
+                    $metadata += app(RelationshipEndMovementConsequences::class)->metadata($employmentRelationship->getKey(), $movementSnapshot);
 
                     return $metadata;
                 },
