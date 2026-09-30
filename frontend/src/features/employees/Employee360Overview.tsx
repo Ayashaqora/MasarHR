@@ -2,7 +2,8 @@ import { useI18n } from '../../i18n/context'
 import { describeApiError } from '../../shared/api/errorMessage'
 import type { ApiResourceState } from '../../shared/hooks/useApiResource'
 import { StatePanel } from '../../shared/ui/StatePanel'
-import type { ActualWorkplace, EmploymentStatusDetail, EmploymentStatusPeriod, OrganizationalUnitPeriod } from './api'
+import type { ActualWorkplace, EffectiveEmploymentStatus, EmploymentStatusDetail, OrganizationalUnitPeriod } from './api'
+import { EffectiveStatusText } from './EffectiveStatusText'
 
 const SOURCE_LABEL_KEY = {
   secondment: 'sourceSecondment',
@@ -20,25 +21,25 @@ const SOURCE_LABEL_KEY = {
 const UNKNOWN_DATE_SORTS_LAST = '9999-99-99'
 
 /**
- * Overview tab (spec §S18 §12.A): current status and current vs. original workplace, each with
+ * Overview tab (spec §S18 §12.A; S33): the CURRENT STATE — the backend's effective status (S32) — and current and current vs. original workplace, each with
  * its effective date — the same facts the header shows at a glance, expanded with dates and the
  * resolver's own disclosed source (spec §13: actual workplace always comes from the existing
  * authoritative ResolveActualWorkplaceForRelationship result, never recomputed here).
  */
 export function Employee360Overview({
-  statusPeriods,
+  effectiveStatus,
   statusCatalog,
   actualWorkplace,
   placementPeriods,
   unitNames,
 }: {
-  statusPeriods: ApiResourceState<EmploymentStatusPeriod[]>
+  effectiveStatus: ApiResourceState<EffectiveEmploymentStatus>
   statusCatalog: ApiResourceState<EmploymentStatusDetail[]>
   actualWorkplace: ApiResourceState<ActualWorkplace>
   placementPeriods: ApiResourceState<OrganizationalUnitPeriod[]>
   unitNames: { status: 'loading' | 'ready'; names: Record<string, string> }
 }) {
-  const { messages, locale } = useI18n()
+  const { messages } = useI18n()
 
   const originalPlacement =
     placementPeriods.status === 'success' && placementPeriods.data.length > 0
@@ -53,39 +54,30 @@ export function Employee360Overview({
         <h3 id="overview-status-heading" className="card__title">
           {messages.employee360.currentStatus}
         </h3>
-        {statusPeriods.status === 'loading' || statusCatalog.status === 'loading' ? (
+        {effectiveStatus.status === 'loading' || statusCatalog.status === 'loading' ? (
           <StatePanel tone="loading" title={messages.employee360.loading} />
-        ) : statusPeriods.status === 'error' ? (
+        ) : effectiveStatus.status === 'error' ? (
           <StatePanel
             tone="error"
             title={
-              statusPeriods.error.status === 403
+              effectiveStatus.error.status === 403
                 ? messages.securityShared.unauthorizedTitle
                 : messages.employee360.loadFailed
             }
           >
-            {statusPeriods.error.status === 403
+            {effectiveStatus.error.status === 403
               ? messages.securityShared.unauthorizedDescription
-              : describeApiError(statusPeriods.error, messages)}
+              : describeApiError(effectiveStatus.error, messages)}
           </StatePanel>
         ) : (
-          (() => {
-            const open = statusPeriods.data.find((period) => period.effective_to === null)
-            if (!open) {
-              return <StatePanel tone="success" title={messages.employee360.noOpenStatusPeriod} />
-            }
-            const detail =
-              statusCatalog.status === 'success'
-                ? statusCatalog.data.find((item) => item.id === open.status_detail_id)
-                : null
-            return (
-              <p>
-                {detail ? (locale === 'ar' ? detail.name_ar : detail.name_en) : open.status_detail_id}
-                {' — '}
-                {messages.employee360.since} {open.effective_from}
-              </p>
-            )
-          })()
+          <>
+            <p>
+              <EffectiveStatusText effectiveStatus={effectiveStatus} statusCatalog={statusCatalog} withSince />
+            </p>
+            <p>
+              {messages.employee360.asOf} {effectiveStatus.data.as_of}
+            </p>
+          </>
         )}
       </section>
 

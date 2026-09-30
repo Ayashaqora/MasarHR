@@ -19,6 +19,7 @@ use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\Person;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\WorkSchedulePeriod;
 use App\Modules\HumanResources\Presentation\Http\Resources\EffectiveEmploymentStatusResource;
 use App\Modules\HumanResources\Presentation\Http\Resources\EmploymentStatusPeriodResource;
+use App\Modules\Platform\Application\Clock\BusinessDateClock;
 use App\Modules\Platform\Presentation\Http\Middleware\ResolveCommandContext;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\EmploymentStatusDetail;
 use Illuminate\Http\JsonResponse;
@@ -47,20 +48,25 @@ class EmploymentStatusPeriodController
         return EmploymentStatusPeriodResource::collection($query($employmentRelationship))->response();
     }
 
-    /** S32 (§S32.4/§S32.7): effective status on a date, persisted vs derived explicit. */
+    /** S32 (§S32.4/§S32.7): effective status on a date, persisted vs derived explicit. S33: as_of is optional (defaults to today's business date). */
     public function effective(
         Request $request,
         Person $person,
         EmploymentRelationship $employmentRelationship,
         ResolveEffectiveEmploymentStatusAsOf $resolver,
+        BusinessDateClock $clock,
     ): JsonResponse {
         if ($employmentRelationship->person_id !== $person->getKey()) {
             throw new NotFoundHttpException('Employment relationship not found for this person.');
         }
 
-        $data = $request->validate(['as_of' => ['required', 'date_format:Y-m-d']]);
+        $data = $request->validate(['as_of' => ['nullable', 'date_format:Y-m-d']]);
 
-        return response()->json(EffectiveEmploymentStatusResource::toArray($data['as_of'], $resolver($employmentRelationship, $data['as_of'])));
+        // S33: when no date is supplied the authoritative business date (the same BusinessDateClock
+        // S31 uses) is applied server-side, so Employee360 never computes "today" on its own.
+        $asOf = $data['as_of'] ?? $clock->today()->toDateString();
+
+        return response()->json(EffectiveEmploymentStatusResource::toArray($asOf, $resolver($employmentRelationship, $asOf)));
     }
 
     public function store(

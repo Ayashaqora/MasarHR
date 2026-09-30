@@ -15,7 +15,9 @@ use App\Modules\HumanResources\Domain\Exceptions\EmploymentRelationshipAlreadyEn
 use App\Modules\HumanResources\Domain\Exceptions\InvalidEndDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidStatusPeriodDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidStatusPeriodEndException;
+use App\Modules\Platform\Application\Clock\BusinessDateClock;
 use Illuminate\Support\Facades\DB;
+use Tests\Support\FixedBusinessDateClock;
 
 /**
  * S32 (docs/bounded-temporary-employment-status-lifecycle-specification.md): bounded temporary status
@@ -468,13 +470,34 @@ class BoundedTemporaryStatusLifecycleTest extends HumanResourcesTestCase
         $this->assertStringContainsString('2026-11-01', json_encode($event));
     }
 
-    public function test_api_effective_status_requires_a_valid_as_of_and_relationship_ownership(): void
+    public function test_api_effective_status_validates_as_of_and_relationship_ownership(): void
     {
         $this->actingAsHrAdministrator();
         [$person, $rel] = $this->emp();
         [$other] = $this->emp();
-        $this->getJson($this->url($person, $rel, 'effective-status'))->assertStatus(422);
         $this->getJson($this->url($person, $rel, 'effective-status').'?as_of=2026-13-45')->assertStatus(422);
         $this->getJson($this->url($other, $rel, 'effective-status').'?as_of=2026-10-01')->assertStatus(404);
+    }
+
+    public function test_api_effective_status_defaults_to_the_authoritative_business_date_and_creates_no_row(): void
+    {
+        $this->actingAsHrAdministrator();
+        $clock = new FixedBusinessDateClock('2026-10-15');
+        $this->app->instance(BusinessDateClock::class, $clock);
+        [$person, $rel] = $this->emp();
+        $this->rec($person, $rel, 'unpaid_leave', '2026-10-01', '2026-11-01');
+
+        $this->getJson($this->url($person, $rel, 'effective-status'))->assertOk()
+            ->assertJsonPath('as_of', '2026-10-15')->assertJsonPath('status.status_detail_code', 'unpaid_leave')->assertJsonPath('status.derived', false);
+
+        $clock->on('2026-11-01');
+        $this->getJson($this->url($person, $rel, 'effective-status'))->assertOk()
+            ->assertJsonPath('as_of', '2026-11-01')->assertJsonPath('status.status_detail_code', 'on_duty')->assertJsonPath('status.derived', true);
+
+        $this->rec($person, $rel, 'traveling', '2026-11-01');
+        $this->getJson($this->url($person, $rel, 'effective-status'))->assertOk()
+            ->assertJsonPath('status.status_detail_code', 'traveling')->assertJsonPath('status.derived', false);
+
+        $this->assertSame([['unpaid_leave', '2026-10-01', '2026-11-01'], ['traveling', '2026-11-01', null]], $this->rows($rel), 'reads never persist a synthetic on_duty row');
     }
 }

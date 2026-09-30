@@ -79,6 +79,89 @@ export interface EmploymentStatusDetail {
   display_order: number
 }
 
+/**
+ * Mirrors backend EffectiveEmploymentStatusResource (S32 spec §S32.4/§S32.7). `status.derived` is true
+ * for the read-time on_duty that follows an expired bounded status: it has no persisted period
+ * (period_id is null) and is never a row of the status history.
+ */
+export interface EffectiveEmploymentStatus {
+  as_of: string
+  status: {
+    status_detail_id: string
+    status_detail_code: string
+    derived: boolean
+    period_id: string | null
+    derived_from_period_id: string | null
+    effective_from: string | null
+    effective_to: string | null
+  } | null
+}
+
+interface RelationshipPeriodBase {
+  id: string
+  employment_relationship_id: string
+  effective_from: string | null
+  effective_to: string | null
+}
+
+/** Mirrors PartialSecondmentPeriodResource (S30). */
+export interface PartialSecondmentPeriod extends RelationshipPeriodBase {
+  organizational_unit_id: string
+  weekdays: string[]
+}
+
+/** Mirrors WorkSchedulePeriodResource (S29). */
+export interface WorkSchedulePeriod extends RelationshipPeriodBase {
+  weekdays: string[]
+}
+
+/** Mirrors EmploymentCategoryPeriodResource (S20). */
+export interface EmploymentCategoryPeriod extends RelationshipPeriodBase {
+  employment_category_id: string
+}
+
+/** Mirrors EmploymentContractPeriodResource (S21). */
+export interface EmploymentContractPeriod extends RelationshipPeriodBase {
+  contract_type_id: string
+  contractual_effective_to: string | null
+  contract_end_knowledge_state: 'KNOWN' | 'UNKNOWN_LEGACY'
+}
+
+/** Mirrors EmploymentJobTitlePeriodResource (S22). */
+export interface EmploymentJobTitlePeriod extends RelationshipPeriodBase {
+  job_title_id: string
+  start_knowledge_state: 'KNOWN' | 'UNKNOWN_LEGACY'
+}
+
+/** Mirrors EmploymentSpecialtyPeriodResource (S26). */
+export interface EmploymentSpecialtyPeriod extends RelationshipPeriodBase {
+  specialty_id: string
+}
+
+/** Mirrors PersonQualificationResource (S23): person-level, no temporal fields. */
+export interface PersonQualification {
+  id: string
+  person_id: string
+  academic_degree_id: string
+  qualification_type_id: string
+}
+
+/** The subset of SimpleReferenceValueResource Employee 360 needs to name a catalog value. */
+export interface ReferenceValue {
+  id: string
+  code: string
+  name_ar: string
+  name_en: string
+}
+
+export type ReferenceSegment =
+  | 'employment-categories'
+  | 'contract-types'
+  | 'job-titles'
+  | 'specialties'
+  | 'academic-degrees'
+  | 'qualification-types'
+
 interface PaginatedResponse<T> {
   data: T[]
 }
@@ -175,4 +258,45 @@ export async function fetchEmploymentStatusDetails(signal?: AbortSignal): Promis
     signal ? { signal } : {},
   )
   return page.data
+}
+
+/**
+ * S33: the authoritative effective status (S32 semantics) for today's business date. No `as_of` is
+ * sent — the backend applies its own business date, so the browser clock is never the authority.
+ */
+export function fetchEffectiveStatus(
+  personId: string,
+  relationshipId: string,
+  signal?: AbortSignal,
+): Promise<EffectiveEmploymentStatus> {
+  return apiRequest<EffectiveEmploymentStatus>(
+    `/hr/persons/${personId}/employment-relationships/${relationshipId}/effective-status`,
+    signal ? { signal } : {},
+  )
+}
+
+export function fetchRelationshipPeriods<T>(
+  personId: string,
+  relationshipId: string,
+  stream:
+    | 'partial-secondment-periods'
+    | 'work-schedule-periods'
+    | 'employment-category-periods'
+    | 'employment-contract-periods'
+    | 'employment-job-title-periods'
+    | 'employment-specialty-periods',
+  signal?: AbortSignal,
+): Promise<T[]> {
+  return apiRequest<T[]>(
+    `/hr/persons/${personId}/employment-relationships/${relationshipId}/${stream}`,
+    signal ? { signal } : {},
+  )
+}
+
+export function fetchPersonQualifications(personId: string, signal?: AbortSignal): Promise<PersonQualification[]> {
+  return apiRequest<PersonQualification[]>(`/hr/persons/${personId}/qualifications`, signal ? { signal } : {})
+}
+
+export function fetchReferenceValue(segment: ReferenceSegment, id: string, signal?: AbortSignal): Promise<ReferenceValue> {
+  return apiRequest<ReferenceValue>(`/reference/${segment}/${id}`, signal ? { signal } : {})
 }

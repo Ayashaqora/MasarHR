@@ -399,9 +399,19 @@ class SpecialtyCatalogAdministrationFoundationTest extends ReferenceTestCase
         $frontend = base_path('../frontend/src');
         if (is_dir($frontend)) {
             $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator($frontend, \FilesystemIterator::SKIP_DOTS));
+            // S33 (Employee360 Effective Status & Existing History Completion) authorizes the read-only
+            // Employee 360 specialty HISTORY display (S26 data) — exactly these files and no others;
+            // any other frontend file naming specialty remains an unauthorized surface.
+            $s33Employee360Files = [
+                'features/employees/api.ts', 'features/employees/hooks.ts', 'features/employees/Employee360CareerHistory.tsx',
+                'pages/Employee360Page.tsx', 'pages/Employee360Page.test.tsx', 'i18n/messages/ar.ts', 'i18n/messages/en.ts',
+            ];
             foreach ($iterator as $file) {
+                if (in_array(str_replace($frontend.'/', '', str_replace('\\', '/', $file->getPathname())), $s33Employee360Files, true)) {
+                    continue;
+                }
                 $this->assertStringNotContainsStringIgnoringCase('specialt', (string) file_get_contents($file->getPathname()),
-                    "{$file->getFilename()}: no Employee 360 / frontend specialty display in S25");
+                    "{$file->getFilename()}: no frontend specialty display outside the S33 Employee 360 history files");
             }
         }
     }

@@ -1,21 +1,32 @@
 import { useMemo, useState } from 'react'
 import { useParams } from 'react-router'
 import { PermissionGate } from '../features/auth/PermissionGate'
+import { Employee360CareerHistory } from '../features/employees/Employee360CareerHistory'
 import { Employee360Employment } from '../features/employees/Employee360Employment'
 import { Employee360Header } from '../features/employees/Employee360Header'
 import { Employee360MovementTimeline } from '../features/employees/Employee360MovementTimeline'
 import { Employee360Overview } from '../features/employees/Employee360Overview'
 import { Employee360StatusHistory } from '../features/employees/Employee360StatusHistory'
+import { Employee360WorkArrangements } from '../features/employees/Employee360WorkArrangements'
 import { Employee360Workplace } from '../features/employees/Employee360Workplace'
 import {
   useActualWorkplace,
+  useEffectiveStatus,
+  useEmploymentCategoryPeriods,
+  useEmploymentContractPeriods,
+  useEmploymentJobTitlePeriods,
   useEmploymentRelationships,
+  useEmploymentSpecialtyPeriods,
   useEmploymentStatusDetailCatalog,
   useFullSecondmentPeriods,
   useOrganizationalUnitNames,
+  usePartialSecondmentPeriods,
   usePerson,
+  usePersonQualifications,
   usePlacementPeriods,
+  useReferenceValues,
   useStatusPeriods,
+  useWorkSchedulePeriods,
   useWorkplaceAssignmentPeriods,
 } from '../features/employees/hooks'
 import { useI18n } from '../i18n/context'
@@ -24,16 +35,42 @@ import { HR_PERMISSIONS } from '../shared/security/permissions'
 import { PageHeader } from '../shared/ui/PageHeader'
 import { StatePanel } from '../shared/ui/StatePanel'
 
-type TabKey = 'overview' | 'employment' | 'workplace' | 'status-history' | 'movement-timeline'
+type TabKey =
+  | 'overview'
+  | 'employment'
+  | 'workplace'
+  | 'status-history'
+  | 'movement-timeline'
+  | 'work-arrangements'
+  | 'career-history'
 
-const TAB_ORDER: readonly TabKey[] = ['overview', 'employment', 'workplace', 'status-history', 'movement-timeline']
+const TAB_ORDER: readonly TabKey[] = [
+  'overview',
+  'employment',
+  'workplace',
+  'status-history',
+  'movement-timeline',
+  'work-arrangements',
+  'career-history',
+]
 
-const TAB_LABEL_KEY: Record<TabKey, 'tabOverview' | 'tabEmployment' | 'tabWorkplace' | 'tabStatusHistory' | 'tabMovementTimeline'> = {
+const TAB_LABEL_KEY: Record<
+  TabKey,
+  | 'tabOverview'
+  | 'tabEmployment'
+  | 'tabWorkplace'
+  | 'tabStatusHistory'
+  | 'tabMovementTimeline'
+  | 'tabWorkArrangements'
+  | 'tabCareerHistory'
+> = {
   overview: 'tabOverview',
   employment: 'tabEmployment',
   workplace: 'tabWorkplace',
   'status-history': 'tabStatusHistory',
   'movement-timeline': 'tabMovementTimeline',
+  'work-arrangements': 'tabWorkArrangements',
+  'career-history': 'tabCareerHistory',
 }
 
 /**
@@ -59,6 +96,30 @@ export function Employee360Page() {
   const assignmentPeriods = useWorkplaceAssignmentPeriods(personId, relationshipId)
   const actualWorkplace = useActualWorkplace(personId, relationshipId)
   const statusCatalog = useEmploymentStatusDetailCatalog()
+  // S33: the current status is the backend's effective status (S32), not derived from statusPeriods.
+  const effectiveStatus = useEffectiveStatus(personId, relationshipId)
+  const partialSecondments = usePartialSecondmentPeriods(personId, relationshipId)
+  const workSchedules = useWorkSchedulePeriods(personId, relationshipId)
+  const categoryPeriods = useEmploymentCategoryPeriods(personId, relationshipId)
+  const contractPeriods = useEmploymentContractPeriods(personId, relationshipId)
+  const jobTitlePeriods = useEmploymentJobTitlePeriods(personId, relationshipId)
+  const specialtyPeriods = useEmploymentSpecialtyPeriods(personId, relationshipId)
+  const qualifications = usePersonQualifications(personId)
+
+  const idsOf = <T,>(state: { status: string; data?: T[] }, pick: (row: T) => string): string[] =>
+    state.status === 'success' && state.data ? state.data.map(pick) : []
+  const categoryIds = useMemo(() => idsOf(categoryPeriods, (r) => r.employment_category_id), [categoryPeriods])
+  const contractTypeIds = useMemo(() => idsOf(contractPeriods, (r) => r.contract_type_id), [contractPeriods])
+  const jobTitleIds = useMemo(() => idsOf(jobTitlePeriods, (r) => r.job_title_id), [jobTitlePeriods])
+  const specialtyIds = useMemo(() => idsOf(specialtyPeriods, (r) => r.specialty_id), [specialtyPeriods])
+  const degreeIds = useMemo(() => idsOf(qualifications, (r) => r.academic_degree_id), [qualifications])
+  const qualificationTypeIds = useMemo(() => idsOf(qualifications, (r) => r.qualification_type_id), [qualifications])
+  const categoryNames = useReferenceValues('employment-categories', categoryIds)
+  const contractTypeNames = useReferenceValues('contract-types', contractTypeIds)
+  const jobTitleNames = useReferenceValues('job-titles', jobTitleIds)
+  const specialtyNames = useReferenceValues('specialties', specialtyIds)
+  const degreeNames = useReferenceValues('academic-degrees', degreeIds)
+  const qualificationTypeNames = useReferenceValues('qualification-types', qualificationTypeIds)
 
   const unitIds = useMemo(() => {
     const ids = new Set<string>()
@@ -74,8 +135,11 @@ export function Employee360Page() {
     if (assignmentPeriods.status === 'success') {
       assignmentPeriods.data.forEach((period) => ids.add(period.organizational_unit_id))
     }
+    if (partialSecondments.status === 'success') {
+      partialSecondments.data.forEach((period) => ids.add(period.organizational_unit_id))
+    }
     return Array.from(ids)
-  }, [actualWorkplace, placementPeriods, secondmentPeriods, assignmentPeriods])
+  }, [actualWorkplace, placementPeriods, secondmentPeriods, assignmentPeriods, partialSecondments])
 
   const unitNames = useOrganizationalUnitNames(unitIds)
 
@@ -151,7 +215,7 @@ export function Employee360Page() {
       <Employee360Header
         person={person.data}
         relationship={relationship}
-        statusPeriods={statusPeriods}
+        effectiveStatus={effectiveStatus}
         actualWorkplace={actualWorkplace}
         statusCatalog={statusCatalog}
         unitNames={unitNames}
@@ -189,7 +253,7 @@ export function Employee360Page() {
         hidden={tab !== 'overview'}
       >
         <Employee360Overview
-          statusPeriods={statusPeriods}
+          effectiveStatus={effectiveStatus}
           statusCatalog={statusCatalog}
           actualWorkplace={actualWorkplace}
           placementPeriods={placementPeriods}
@@ -235,6 +299,38 @@ export function Employee360Page() {
           secondmentPeriods={secondmentPeriods}
           assignmentPeriods={assignmentPeriods}
           unitNames={unitNames}
+        />
+      </div>
+      <div
+        role="tabpanel"
+        id="employee-360-panel-work-arrangements"
+        aria-labelledby="employee-360-tab-work-arrangements"
+        hidden={tab !== 'work-arrangements'}
+      >
+        <Employee360WorkArrangements
+          partialSecondments={partialSecondments}
+          workSchedules={workSchedules}
+          unitNames={unitNames}
+        />
+      </div>
+      <div
+        role="tabpanel"
+        id="employee-360-panel-career-history"
+        aria-labelledby="employee-360-tab-career-history"
+        hidden={tab !== 'career-history'}
+      >
+        <Employee360CareerHistory
+          categories={categoryPeriods}
+          contracts={contractPeriods}
+          jobTitles={jobTitlePeriods}
+          specialties={specialtyPeriods}
+          qualifications={qualifications}
+          categoryNames={categoryNames}
+          contractTypeNames={contractTypeNames}
+          jobTitleNames={jobTitleNames}
+          specialtyNames={specialtyNames}
+          degreeNames={degreeNames}
+          qualificationTypeNames={qualificationTypeNames}
         />
       </div>
     </PermissionGate>

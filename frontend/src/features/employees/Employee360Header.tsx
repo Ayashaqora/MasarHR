@@ -2,11 +2,12 @@ import { useI18n } from '../../i18n/context'
 import type { ApiResourceState } from '../../shared/hooks/useApiResource'
 import type {
   ActualWorkplace,
+  EffectiveEmploymentStatus,
   EmploymentRelationship,
   EmploymentStatusDetail,
-  EmploymentStatusPeriod,
   Person,
 } from './api'
+import { EffectiveStatusText } from './EffectiveStatusText'
 
 /**
  * Compact identity/employment header (spec §S18 §11), always visible above the tabs. Only fields
@@ -15,33 +16,26 @@ import type {
  * full_name_ar (docs/person-profile-foundation-specification.md §S24.17); a legacy Person with no
  * recorded name shows "not recorded", never a placeholder. The other S24 profile fields are not
  * displayed here yet (deferred — §S24.17).
+ *
+ * S33: the current status is the backend's effective status (S32 semantics), never the persisted
+ * open period (which is absent during a bounded status and after its expiry).
  */
 export function Employee360Header({
   person,
   relationship,
-  statusPeriods,
+  effectiveStatus,
   actualWorkplace,
   statusCatalog,
   unitNames,
 }: {
   person: Person
   relationship: EmploymentRelationship
-  statusPeriods: ApiResourceState<EmploymentStatusPeriod[]>
+  effectiveStatus: ApiResourceState<EffectiveEmploymentStatus>
   actualWorkplace: ApiResourceState<ActualWorkplace>
   statusCatalog: ApiResourceState<EmploymentStatusDetail[]>
   unitNames: { status: 'loading' | 'ready'; names: Record<string, string> }
 }) {
-  const { messages, locale } = useI18n()
-
-  const openStatusPeriod =
-    statusPeriods.status === 'success' ? statusPeriods.data.find((period) => period.effective_to === null) : null
-
-  const statusDetail =
-    openStatusPeriod && statusCatalog.status === 'success'
-      ? statusCatalog.data.find((detail) => detail.id === openStatusPeriod.status_detail_id)
-      : null
-
-  const statusLabel = statusDetail ? (locale === 'ar' ? statusDetail.name_ar : statusDetail.name_en) : null
+  const { messages } = useI18n()
 
   const actualWorkplaceName =
     actualWorkplace.status === 'success' && actualWorkplace.data.organizational_unit_id
@@ -85,9 +79,13 @@ export function Employee360Header({
         <div className="description-list__row">
           <dt>{messages.employee360.currentStatus}</dt>
           <dd>
-            {statusPeriods.status === 'loading' || statusCatalog.status === 'loading'
-              ? messages.employee360.loading
-              : (statusLabel ?? messages.employee360.noOpenStatusPeriod)}
+            {effectiveStatus.status === 'loading' || statusCatalog.status === 'loading' ? (
+              messages.employee360.loading
+            ) : effectiveStatus.status === 'error' ? (
+              messages.employee360.loadFailed
+            ) : (
+              <EffectiveStatusText effectiveStatus={effectiveStatus} statusCatalog={statusCatalog} />
+            )}
           </dd>
         </div>
         <div className="description-list__row">

@@ -7,9 +7,10 @@ import type { EmploymentStatusDetail, EmploymentStatusPeriod } from './api'
 /**
  * Status History tab (spec §S18 §15): renders S10's authoritative employment-status periods
  * as-is. Open (effective_to = null) vs. closed periods are shown from the data itself — no
- * S17-proposed automatic-return behavior is implemented (spec §15 explicit boundary), and there
- * is no second, frontend-computed "current status" here — the same open-period read the header
- * and Overview tab use.
+ * S17-proposed automatic-return behavior is implemented (spec §15 explicit boundary).
+ * S33: this tab is PERSISTED HISTORY only. The current status (including the S32-derived on_duty
+ * that follows an expired bounded status, which has no row) comes from the backend's effective
+ * status on the header/Overview — never from these rows.
  */
 export function Employee360StatusHistory({
   statusPeriods,
@@ -55,6 +56,8 @@ export function Employee360StatusHistory({
   const catalog = statusCatalog.status === 'success' ? statusCatalog.data : []
 
   return (
+    <>
+      <p>{messages.employee360.statusHistoryNote}</p>
     <table className="data-table">
       <caption className="sr-only">{messages.employee360.tabStatusHistory}</caption>
       <thead>
@@ -79,5 +82,6 @@ export function Employee360StatusHistory({
           })}
       </tbody>
     </table>
+    </>
   )
 }
