@@ -16,3 +16,12 @@ Schedule::command('masar:hr:scan-movement-expiry-followups')
     ->dailyAt('01:00')
     ->withoutOverlapping(60)
     ->name('hr-movement-expiry-followups');
+
+// S38 (docs/employment-status-expiry-followup-specification.md §S38.12): the 7-day employment status expiry
+// follow-up scan, independent of the S31 movement scan above (separate command, separate overlap lock, its own
+// time). The definition holds no business rule — the command calls the idempotent
+// ScanEmploymentStatusExpiryFollowUps service — so an overlapping or repeated run is harmless.
+Schedule::command('masar:hr:scan-employment-status-expiry-followups')
+    ->dailyAt('01:15')
+    ->withoutOverlapping(60)
+    ->name('hr-employment-status-expiry-followups');

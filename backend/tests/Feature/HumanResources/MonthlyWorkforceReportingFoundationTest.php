@@ -942,9 +942,14 @@ class MonthlyWorkforceReportingFoundationTest extends HumanResourcesTestCase
 
     public function test_ar_no_schema_object_was_added(): void
     {
-        $newest = collect(glob(base_path('database/migrations/*.php')))->map('basename')->sort()->last();
-        $this->assertSame('2026_10_15_000003_retire_legacy_return_intention_status_details.php', $newest, 'S37 adds no migration');
-        $this->assertCount(82, glob(base_path('database/migrations/*.php')));
+        // S37 added no migration: every migration after S34's last one (2026_10_15_000003) belongs to S38 (2026_10_16, the only later stage).
+        $afterS34 = collect(glob(base_path('database/migrations/*.php')))->map('basename')->sort()->filter(fn ($name) => $name >= '2026_10_16')->values()->all();
+        $this->assertSame([
+            '2026_10_16_000001_create_automation_employment_status_expiry_followups_table.php',
+            '2026_10_16_000002_seed_security_employment_status_expiry_followup_permission.php',
+            '2026_10_16_000003_add_effective_to_index_to_hr_employment_status_periods_table.php',
+        ], $afterS34, 'no S37 migration exists');
+        $this->assertCount(85, glob(base_path('database/migrations/*.php')));
         $this->assertSame(0, DB::table('information_schema.tables')->whereIn('table_schema', ['hr', 'ref', 'org', 'automation', 'reporting'])->where('table_name', 'like', '%monthly_population%')->count());
         $this->assertSame(0, (int) DB::selectOne('select count(*) as c from pg_matviews')->c);
         $this->assertSame(0, DB::table('information_schema.views')->whereIn('table_schema', ['hr', 'ref', 'org', 'automation', 'reporting'])->count(), 'no view');

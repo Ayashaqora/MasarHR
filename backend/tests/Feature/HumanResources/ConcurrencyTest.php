@@ -8,6 +8,7 @@ use App\Modules\HumanResources\Application\Commands\EndWorkplaceAssignment;
 use App\Modules\HumanResources\Application\Commands\RecordEmploymentStatusPeriod;
 use App\Modules\HumanResources\Application\Commands\RecordReturnIntention;
 use App\Modules\HumanResources\Application\Commands\RecordWorkSchedulePeriod;
+use App\Modules\HumanResources\Application\Commands\ScanEmploymentStatusExpiryFollowUps;
 use App\Modules\HumanResources\Application\Commands\ScanMovementExpiryFollowUps;
 use App\Modules\HumanResources\Application\Commands\StartFullSecondment;
 use App\Modules\HumanResources\Application\Commands\StartWorkplaceAssignment;
@@ -19,6 +20,8 @@ use App\Modules\HumanResources\Domain\Exceptions\InvalidReturnIntentionPeriodDat
 use App\Modules\HumanResources\Domain\Exceptions\InvalidWorkSchedulePeriodDateException;
 use App\Modules\HumanResources\Domain\ExpiryFollowUpEmission;
 use App\Modules\HumanResources\Domain\FollowUpSuppressionReason;
+use App\Modules\HumanResources\Domain\StatusExpiryFollowUpEmission;
+use App\Modules\HumanResources\Domain\StatusFollowUpSuppressionReason;
 use App\Modules\HumanResources\Domain\TemporaryMovementType;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRelationship;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\Person;
@@ -79,6 +82,9 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
             // automation.movement_expiry_followups (S31) carries RESTRICT FKs to the movement tables,
             // employment_relationships and org units, so it goes first.
             DB::table('automation.movement_expiry_followups')->whereIn('employment_relationship_id', $relationshipIds)->delete();
+            // automation.employment_status_expiry_followups (S38) carries RESTRICT FKs to the status periods and
+            // employment_relationships, so it goes before employment_status_periods below.
+            DB::table('automation.employment_status_expiry_followups')->whereIn('employment_relationship_id', $relationshipIds)->delete();
             // employment_category_periods (S20) likewise carries a RESTRICT FK to
             // employment_relationships.
             DB::table('hr.employment_category_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
@@ -2014,6 +2020,148 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
         $this->assertSame(ExpiryFollowUpEmission::STALE, $emission->outcome);
         $this->assertSame(FollowUpSuppressionReason::TruncatedEarlier, $emission->reason);
         $this->assertSame(0, (int) $this->scalar('select count(*) from automation.movement_expiry_followups where employment_relationship_id = ?', [$relationshipId]), 'nothing was emitted for the stale expected end');
+    }
+
+    /** A committed relationship with one bounded unpaid_leave period [2026-10-01, 2026-11-15) for S38 races. */
+    private function boundedStatusPeriod(string $numberPrefix): array
+    {
+        $relationshipId = (string) Str::uuid7();
+        $this->pg()->insert($this->insertSql(), [$relationshipId, $this->person(), $this->permanentEmploymentTypeId(), $numberPrefix.Str::random(6), 'PERMANENT', '2026-01-01']);
+        $periodId = (string) Str::uuid7();
+        $this->pg()->insert(
+            'insert into hr.employment_status_periods (id, employment_relationship_id, status_detail_id, effective_from, effective_to, created_at) values (?, ?, ?, ?, ?, now())',
+            [$periodId, $relationshipId, $this->statusDetailId('unpaid_leave'), '2026-10-01', '2026-11-15'],
+        );
+
+        return [$relationshipId, $periodId];
+    }
+
+    private function statusFollowUpEmissionSql(): string
+    {
+        return "INSERT INTO automation.employment_status_expiry_followups
+                    (id, followup_kind, employment_status_period_id, employment_relationship_id, expected_effective_to, due_date, status, created_at)
+                SELECT ?, 'EXPIRY_WARNING_7D', p.id, p.employment_relationship_id, p.effective_to, p.effective_to - 7, 'ACTIONABLE', now()
+                FROM hr.employment_status_periods p WHERE p.id = ? AND p.effective_to = CAST(? AS date)
+                ON CONFLICT ON CONSTRAINT employment_status_expiry_followups_logical_key DO NOTHING
+                RETURNING id";
+    }
+
+    private function statusScanContext(): CommandContext
+    {
+        return new CommandContext(Actor::system(ScanEmploymentStatusExpiryFollowUps::ACTOR_LABEL), CorrelationId::generate(), Source::System);
+    }
+
+    /**
+     * S38 I39: the SAME logical status follow-up discovered concurrently by two real sessions yields exactly ONE row —
+     * PostgreSQL's logical-identity UNIQUE is the backstop (the second INSERT … ON CONFLICT waits for the first and,
+     * once it commits, becomes a no-op).
+     */
+    public function test_s38_two_concurrent_scanners_produce_exactly_one_status_follow_up(): void
+    {
+        [$relationshipId, $periodId] = $this->boundedStatusPeriod('PN-S38-KEY-');
+
+        $first = $this->pg();
+        $second = $this->second();
+
+        $first->beginTransaction();
+        $this->assertCount(1, $first->select($this->statusFollowUpEmissionSql(), [(string) Str::uuid7(), $periodId, '2026-11-15']));
+
+        $second->statement("set lock_timeout = '300ms'");
+        $blocked = $this->databaseError(fn () => $second->transaction(fn () => $second->select($this->statusFollowUpEmissionSql(), [(string) Str::uuid7(), $periodId, '2026-11-15'])));
+        $this->assertTrue(Errors::isLockNotAvailable($blocked), 'the concurrent scan waits on the in-flight identical insert');
+
+        $first->commit();
+
+        $this->assertCount(0, $second->transaction(fn () => $second->select($this->statusFollowUpEmissionSql(), [(string) Str::uuid7(), $periodId, '2026-11-15'])), 'once committed, the same logical key is a no-op');
+        $this->assertSame(1, (int) $this->scalar('select count(*) from automation.employment_status_expiry_followups where employment_relationship_id = ?', [$relationshipId]));
+    }
+
+    /**
+     * S38 I40–I42 under REAL races: the scanner takes the EmploymentRelationship row lock like every status and
+     * relationship command, so an in-flight command (holding the lock, uncommitted) makes the emission WAIT; once it
+     * commits, the emission reloads the authoritative state and is rejected with the frozen deterministic reason —
+     * a stale follow-up is never emitted and nothing is written.
+     *
+     * @return list<array{string, callable(Connection, string, string): void, StatusFollowUpSuppressionReason}>
+     */
+    public static function inFlightStatusChanges(): array
+    {
+        return [
+            'I40 successor recorded at E' => ['successor', fn (Connection $c, string $rel, string $period) => $c->insert(
+                'insert into hr.employment_status_periods (id, employment_relationship_id, status_detail_id, effective_from, effective_to, created_at) values (?, ?, (select id from ref.employment_status_details where code = \'on_duty\'), ?, null, now())',
+                [(string) Str::uuid7(), $rel, '2026-11-15'],
+            ), StatusFollowUpSuppressionReason::SuccessorRecorded],
+            'I41 relationship end' => ['end', fn (Connection $c, string $rel, string $period) => $c->update(
+                "update hr.employment_relationships set end_knowledge_state = 'KNOWN', effective_to = ?, ended_terminally = false where id = ?",
+                ['2026-11-15', $rel],
+            ), StatusFollowUpSuppressionReason::RelationshipEnded],
+            'I42 status truncation' => ['truncate', fn (Connection $c, string $rel, string $period) => $c->update(
+                'update hr.employment_status_periods set effective_to = ? where id = ?', ['2026-11-12', $period],
+            ), StatusFollowUpSuppressionReason::TruncatedEarlier],
+        ];
+    }
+
+    /** @dataProvider-free on purpose: the three races share one body and stay independent, deterministic tests. */
+    public function test_s38_an_in_flight_status_change_makes_the_scanner_wait_and_then_reject_with_the_frozen_reason(): void
+    {
+        foreach (self::inFlightStatusChanges() as $label => [$key, $change, $reason]) {
+            [$relationshipId, $periodId] = $this->boundedStatusPeriod('PN-S38-'.strtoupper($key).'-');
+            $emit = fn () => app(ScanEmploymentStatusExpiryFollowUps::class)->emit($periodId, $relationshipId, '2026-11-15', '2026-11-10', $this->statusScanContext());
+
+            $second = $this->second();
+            $second->beginTransaction();
+            $second->select('select id from hr.employment_relationships where id = ? for no key update', [$relationshipId]);   // not a FK-blocking lock: only the scanner\'s own explicit lock can wait on it
+            $change($second, $relationshipId, $periodId);   // an in-flight command, not committed yet
+
+            DB::statement("set lock_timeout = '300ms'");
+            try {
+                $blocked = $this->databaseError($emit);
+                $this->assertTrue(Errors::isLockNotAvailable($blocked), "{$label}: the scanner waits on the in-flight command");
+            } finally {
+                DB::statement('set lock_timeout = 0');
+            }
+
+            $second->commit();
+
+            $emission = $emit();
+
+            $this->assertSame(StatusExpiryFollowUpEmission::STALE, $emission->outcome, $label);
+            $this->assertSame($reason, $emission->reason, $label);
+            $this->assertSame(0, (int) $this->scalar('select count(*) from automation.employment_status_expiry_followups where employment_relationship_id = ?', [$relationshipId]), "{$label}: nothing was emitted");
+        }
+    }
+
+    /**
+     * S38: the reconcile path also waits for an in-flight command (relationship lock, then period, then follow-up). The
+     * follow-up row is inserted directly and the in-flight change is rolled back, so this proof writes NO audit entry
+     * (audit rows are immutable and this class commits for real); the deterministic suppression itself is proven in
+     * EmploymentStatusExpiryFollowUpFoundationTest.
+     */
+    public function test_s38_an_in_flight_status_change_makes_reconciliation_wait(): void
+    {
+        [$relationshipId, $periodId] = $this->boundedStatusPeriod('PN-S38-RECON-');
+        $followUpId = (string) Str::uuid7();
+        $this->pg()->insert(
+            "insert into automation.employment_status_expiry_followups (id, followup_kind, employment_status_period_id, employment_relationship_id, expected_effective_to, due_date, status, created_at)
+             values (?, 'EXPIRY_WARNING_7D', ?, ?, '2026-11-15', '2026-11-08', 'ACTIONABLE', now())",
+            [$followUpId, $periodId, $relationshipId],
+        );
+        $reconcile = fn () => app(ScanEmploymentStatusExpiryFollowUps::class)->reconcile($followUpId, $relationshipId, $periodId, '2026-11-11', $this->statusScanContext());
+
+        $second = $this->second();
+        $second->beginTransaction();
+        $second->select('select id from hr.employment_relationships where id = ? for no key update', [$relationshipId]);
+        $second->update('update hr.employment_status_periods set effective_to = ? where id = ?', ['2026-11-12', $periodId]);
+
+        DB::statement("set lock_timeout = '300ms'");
+        try {
+            $this->assertTrue(Errors::isLockNotAvailable($this->databaseError($reconcile)), 'reconciliation waits on the in-flight status change');
+        } finally {
+            DB::statement('set lock_timeout = 0');
+        }
+        $second->rollBack();
+
+        $this->assertSame('ACTIONABLE', (string) $this->scalar('select status from automation.employment_status_expiry_followups where id = ?', [$followUpId]), 'nothing was written while the change was in flight');
     }
 
     /**

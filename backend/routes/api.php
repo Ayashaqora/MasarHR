@@ -6,6 +6,7 @@ use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentContractP
 use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentJobTitlePeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentRelationshipController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentSpecialtyPeriodController;
+use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentStatusExpiryFollowUpController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentStatusPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\FullSecondmentPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\MovementExpiryFollowUpController;
@@ -419,5 +420,11 @@ Route::middleware('web')->group(function (): void {
             // no DELETE. RBAC via permission: middleware plus S08 scope filtering in the controller.
             Route::get('/movement-expiry-followups', [MovementExpiryFollowUpController::class, 'index'])
                 ->middleware('permission:'.HrPerm::MOVEMENT_EXPIRY_FOLLOWUPS_VIEW)->name('movement-expiry-followups.index');
+
+            // S38: employment status expiry follow-ups — read only (docs/employment-status-expiry-followup-
+            // specification.md §S38.16). Written only by the system scanner: no store, no PATCH/PUT, no DELETE.
+            // Dedicated permission, plain RBAC (a status period has no organizational unit, S10 §13).
+            Route::get('/employment-status-expiry-followups', [EmploymentStatusExpiryFollowUpController::class, 'index'])
+                ->middleware('permission:'.HrPerm::EMPLOYMENT_STATUS_EXPIRY_FOLLOWUPS_VIEW)->name('employment-status-expiry-followups.index');
         });
 });
