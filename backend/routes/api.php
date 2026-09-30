@@ -10,6 +10,7 @@ use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentStatusExp
 use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentStatusPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\FullSecondmentPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\MovementExpiryFollowUpController;
+use App\Modules\HumanResources\Presentation\Http\Controllers\NotOnDutyController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\OrganizationalPlacementPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\PartialSecondmentPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\PersonController;
@@ -426,5 +427,11 @@ Route::middleware('web')->group(function (): void {
             // Dedicated permission, plain RBAC (a status period has no organizational unit, S10 §13).
             Route::get('/employment-status-expiry-followups', [EmploymentStatusExpiryFollowUpController::class, 'index'])
                 ->middleware('permission:'.HrPerm::EMPLOYMENT_STATUS_EXPIRY_FOLLOWUPS_VIEW)->name('employment-status-expiry-followups.index');
+
+            // S39: REPORT-3 Monthly Not-On-Duty — one read-only endpoint (docs/monthly-not-on-duty-report-foundation-
+            // specification.md §S39.11/§S39.12). The URI is the smallest neutral one that passes every current route guard (the
+            // preferred 'monthly-not-on-duty' is rejected by the S37 guard). Dedicated permission, plain RBAC; no write method.
+            Route::get('/not-on-duty', [NotOnDutyController::class, 'index'])
+                ->middleware('permission:'.HrPerm::MONTHLY_NOT_ON_DUTY_VIEW)->name('not-on-duty.index');
         });
 });

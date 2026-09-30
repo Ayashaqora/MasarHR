@@ -141,6 +141,9 @@ final class HumanResourcesPermissionCatalog
     /** S38 (docs/employment-status-expiry-followup-specification.md §S38.15). Dedicated, plain RBAC (no organizational scope); read-only — follow-ups are written by the system scanner. */
     public const EMPLOYMENT_STATUS_EXPIRY_FOLLOWUPS_VIEW = 'hr.employment_status_expiry_followups.view';
 
+    /** S39 (docs/monthly-not-on-duty-report-foundation-specification.md §S39.10). Dedicated, plain RBAC (no organizational scope); read-only. */
+    public const MONTHLY_NOT_ON_DUTY_VIEW = 'hr.monthly_not_on_duty.view';
+
     /** S34: Return Intention — independent of the employment-status permissions. */
     public const RETURN_INTENTION_PERIODS_VIEW = 'hr.return_intention_periods.view';
 
@@ -180,6 +183,7 @@ final class HumanResourcesPermissionCatalog
         self::PARTIAL_SECONDMENT_PERIODS_RECORD,
         self::MOVEMENT_EXPIRY_FOLLOWUPS_VIEW,
         self::EMPLOYMENT_STATUS_EXPIRY_FOLLOWUPS_VIEW,
+        self::MONTHLY_NOT_ON_DUTY_VIEW,
         self::RETURN_INTENTION_PERIODS_VIEW,
         self::RETURN_INTENTION_PERIODS_RECORD,
     ];
