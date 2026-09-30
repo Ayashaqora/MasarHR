@@ -28,6 +28,11 @@ use InvalidArgumentException;
  * job title→administrator, contract type→population) and status behaviors are resolved on the
  * same date; unmapped → null. Actual workplace goes through the shared CA-S27-02 decision table.
  *
+ * S36: exposes the Person's existing birth_date (a plain DATE fact, no age calculation) and the Person's
+ * CURRENT recorded qualifications as a nested, deterministically ordered (created_at, id — technical, not a
+ * ranking) collection. Qualifications carry no dates, so they are NOT as-of facts: a historical row receives the
+ * qualifications recorded today. No flat join, no highest/primary rule.
+ *
  * S30 (docs/partial-secondment-foundation-specification.md §S30.18): Partial Secondments are the one
  * stream that may legitimately have several rows effective per relationship (disjoint weekdays),
  * so a plain join would multiply rows. They are aggregated per relationship by a LEFT JOIN LATERAL
@@ -68,7 +73,7 @@ final class ListReportingPopulationAsOf
                 r.id AS employment_relationship_id, r.person_id, r.employment_type_id, et.code AS employment_type_code,
                 r.employee_number_scheme, r.effective_from AS relationship_effective_from,
                 r.effective_to AS relationship_effective_to, r.end_knowledge_state AS relationship_end_knowledge_state,
-                per.gender_id,
+                per.gender_id, per.birth_date,
                 sp.id AS status_period_id, sd.id AS status_detail_id, sd.code AS status_detail_code,
                 dv.derived_from_period_id,
                 ri.id AS return_intention_period_id, ri.intention AS return_intention,
@@ -80,7 +85,7 @@ final class ListReportingPopulationAsOf
                 cat.employment_category_id, con.id AS contract_period_id, con.contract_type_id,
                 jt.job_title_id, spc.specialty_id,
                 cm.cadre_category_id, ja.is_administrator, pm.population_category_id,
-                psa.partial_secondments
+                psa.partial_secondments, pqa.person_qualifications
             FROM hr.employment_relationships r
             CROSS JOIN p
             JOIN hr.persons per ON per.id = r.person_id
@@ -138,6 +143,27 @@ final class ListReportingPopulationAsOf
                 WHERE ps.employment_relationship_id = r.id
                   AND ps.effective_from <= p.d AND (ps.effective_to IS NULL OR p.d < ps.effective_to)
             ) psa ON true
+            -- S36: the Person's CURRENT recorded qualifications (undated person facts — NOT reconstructed as of
+            -- the date), nested so the canonical one-row-per-relationship cardinality is preserved: an aggregate
+            -- without GROUP BY always yields exactly one row (NULL for a person with none), and the person_id
+            -- correlation uses the existing person_qualifications_person_id_index. Technical order only.
+            LEFT JOIN LATERAL (
+                SELECT json_agg(json_build_object(
+                    'id', pq.id,
+                    'academic_degree_id', pq.academic_degree_id,
+                    'academic_degree_code', ad.code,
+                    'academic_degree_name_ar', ad.name_ar,
+                    'academic_degree_name_en', ad.name_en,
+                    'qualification_type_id', pq.qualification_type_id,
+                    'qualification_type_code', qt.code,
+                    'qualification_type_name_ar', qt.name_ar,
+                    'qualification_type_name_en', qt.name_en
+                ) ORDER BY pq.created_at, pq.id) AS person_qualifications
+                FROM hr.person_qualifications pq
+                LEFT JOIN ref.academic_degrees ad ON ad.id = pq.academic_degree_id
+                LEFT JOIN ref.qualification_types qt ON qt.id = pq.qualification_type_id
+                WHERE pq.person_id = r.person_id
+            ) pqa ON true
             WHERE r.effective_from <= p.d
               AND NOT (r.end_knowledge_state = 'KNOWN' AND r.effective_to <= p.d){$restriction}
             ORDER BY r.person_id, r.effective_from, r.id
@@ -170,6 +196,8 @@ final class ListReportingPopulationAsOf
             derivedFromStatusPeriodId: $r->derived_from_period_id,
             returnIntentionPeriodId: $r->return_intention_period_id,
             returnIntention: $r->return_intention,
+            birthDate: $r->birth_date,
+            qualifications: $r->person_qualifications === null ? [] : json_decode($r->person_qualifications, true),
             participatesInActiveWorkforce: $bool($r->participates_in_active_workforce),
             isOngoingRelationship: $bool($r->is_ongoing_relationship),
             isRelationshipEnding: $bool($r->is_relationship_ending),

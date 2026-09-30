@@ -61,5 +61,15 @@ final class ReportingPopulationRow
         /** S34: independent Return Intention as of the date (WANTS_TO_RETURN / DOES_NOT_WANT_TO_RETURN); null = NOT RECORDED. Never a status. */
         public readonly ?string $returnIntentionPeriodId = null,
         public readonly ?string $returnIntention = null,
+        /** S36: the Person's existing birth_date (YYYY-MM-DD, DATE fact); null when unrecorded. Never an age. */
+        public readonly ?string $birthDate = null,
+        /**
+         * S36: the Person's CURRENT recorded qualifications, ordered by (created_at, id) — a technical order,
+         * not a ranking. Each entry: id, academic_degree_id/code/name_ar/name_en and qualification_type_id/code/
+         * name_ar/name_en (each side nullable). NOT reconstructed as of the requested date (no dates exist).
+         *
+         * @var list<array<string, string|null>>
+         */
+        public readonly array $qualifications = [],
     ) {}
 }
