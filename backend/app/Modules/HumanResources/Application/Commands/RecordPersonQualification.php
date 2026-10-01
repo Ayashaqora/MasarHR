@@ -6,6 +6,7 @@ use App\Modules\HumanResources\Domain\Exceptions\DuplicatePersonQualificationExc
 use App\Modules\HumanResources\Domain\Exceptions\InvalidPersonQualificationAcademicDegreeException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidPersonQualificationTypeException;
 use App\Modules\HumanResources\Domain\Exceptions\PersonQualificationIdentityMissingException;
+use App\Modules\HumanResources\Domain\Exceptions\PrimaryQualificationConflictException;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\Person;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\PersonQualification;
 use App\Modules\Platform\Infrastructure\Persistence\Postgres\PostgresErrorClassifier as Errors;
@@ -42,7 +43,9 @@ final class RecordPersonQualification
             throw new PersonQualificationIdentityMissingException;
         }
 
-        $freshPerson = Person::query()->where('id', $person->getKey())->firstOrFail();
+        // S41 (R1-D49): the Person row is locked first (the repository convention, CreateEmploymentRelationship), so two
+        // concurrent "first" qualifications serialize and only one can become Primary.
+        $freshPerson = Person::query()->where('id', $person->getKey())->lockForUpdate()->firstOrFail();
 
         $freshDegree = null;
         if ($academicDegree !== null) {
@@ -66,12 +69,18 @@ final class RecordPersonQualification
             'person_id' => $freshPerson->getKey(),
             'academic_degree_id' => $freshDegree?->getKey(),
             'qualification_type_id' => $freshType?->getKey(),
+            // S41 (R1-D49): the FIRST qualification of a Person is Primary automatically; a later one never replaces it.
+            'is_primary' => ! PersonQualification::query()->where('person_id', $freshPerson->getKey())->exists(),
         ]);
 
         try {
             $qualification->save();
         } catch (QueryException $e) {
             if (Errors::isUniqueViolation($e)) {
+                if (str_contains($e->getMessage(), 'person_qualifications_one_primary_unique')) {
+                    throw new PrimaryQualificationConflictException;
+                }
+
                 throw new DuplicatePersonQualificationException;
             }
 

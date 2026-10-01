@@ -15,6 +15,7 @@ class PersonQualificationResource extends JsonResource
             'person_id' => $this->person_id,
             'academic_degree_id' => $this->academic_degree_id,
             'qualification_type_id' => $this->qualification_type_id,
+            'is_primary' => (bool) $this->is_primary,
         ];
     }
 }

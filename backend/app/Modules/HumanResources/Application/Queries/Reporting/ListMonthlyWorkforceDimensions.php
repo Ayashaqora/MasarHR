@@ -30,8 +30,16 @@ final class ListMonthlyWorkforceDimensions
     /** @param  string|Carbon  $monthStart  the first day of the reporting month (Y-m-01) */
     public function __invoke(string|Carbon $monthStart, ?array $personIds = null): MonthlyWorkforceDimensions
     {
-        $canonical = ($this->population)($monthStart, $personIds);
+        return $this->fromPopulation(($this->population)($monthStart, $personIds));
+    }
 
+    /**
+     * S41 (R1-D39): the same enrichment for an ALREADY computed canonical S37 population, so a consumer that needs the S37
+     * facts as well (REPORT-1) executes S37 exactly once. This is the whole post-S37 half of __invoke, unchanged: only the
+     * S40 statements run here (the four period streams and the three mappings).
+     */
+    public function fromPopulation(MonthlyReportingPopulation $canonical): MonthlyWorkforceDimensions
+    {
         $relationshipIds = [];
         foreach ($canonical->persons as $person) {
             foreach ($person->relationships as $segment) {

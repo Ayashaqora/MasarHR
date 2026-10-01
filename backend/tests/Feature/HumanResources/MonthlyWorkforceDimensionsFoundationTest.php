@@ -38,6 +38,18 @@ class MonthlyWorkforceDimensionsFoundationTest extends HumanResourcesTestCase
 
     private const N = '2026-12-01';
 
+    /** The original S40 guard pattern, unchanged: R1/R2/R4/R5 report names. */
+    private const R_REPORT_NAME_PATTERN = '/(HumanCadre|AdministrativeReport|SupportServicesReport|VolunteersReport|UnemploymentReport|Report[1245]\\b|R[1245]Report)/i';
+
+    /** S41 (R1-D51): the only app/ files allowed to carry a HumanCadre name — exact repository-relative paths. */
+    private const S41_AUTHORIZED_HUMAN_CADRE_FILES = [
+        'app/Modules/HumanResources/Application/Queries/Reporting/BuildHumanCadreResult.php',
+        'app/Modules/HumanResources/Application/Queries/Reporting/HumanCadrePersonRecord.php',
+        'app/Modules/HumanResources/Application/Queries/Reporting/HumanCadreResult.php',
+        'app/Modules/HumanResources/Presentation/Http/Controllers/HumanCadreController.php',
+        'app/Modules/HumanResources/Presentation/Http/Resources/HumanCadreResource.php',
+    ];
+
     private const CODE = 'app/Modules/HumanResources/Application/Queries/Reporting/ListMonthlyWorkforceDimensions.php';
 
     // ------------------------------------------------------------------------------------------------------------
@@ -676,9 +688,10 @@ class MonthlyWorkforceDimensionsFoundationTest extends HumanResourcesTestCase
 
     public function test_s40_adds_no_schema_object(): void
     {
-        $this->assertCount(86, glob(base_path('database/migrations/*.php')), 'no S40 migration: the S39 migration remains the latest');
-        $latest = collect(glob(base_path('database/migrations/*.php')))->map('basename')->sort()->last();
-        $this->assertSame('2026_10_17_000001_seed_security_monthly_not_on_duty_permission.php', $latest);
+        // Mechanical S41 accommodation: S40 itself added no migration — the migrations before S41's (2026_10_18) are still 86, ending with S39's.
+        $beforeS41 = collect(glob(base_path('database/migrations/*.php')))->map('basename')->sort()->filter(fn ($name) => $name < '2026_10_18')->values();
+        $this->assertCount(86, $beforeS41, 'no S40 migration: the S39 migration was the latest before S41');
+        $this->assertSame('2026_10_17_000001_seed_security_monthly_not_on_duty_permission.php', $beforeS41->last());
         $this->assertSame(0, DB::table('information_schema.tables')->whereIn('table_schema', ['hr', 'ref', 'org', 'automation', 'reporting'])->where(fn ($q) => $q->where('table_name', 'like', '%dimension%')->orWhere('table_name', 'like', '%monthly_workforce%')->orWhere('table_name', 'like', '%monthly_population%'))->count());
         $this->assertSame(0, (int) DB::selectOne('select count(*) as c from pg_matviews')->c);
         $this->assertSame(0, DB::table('information_schema.views')->whereIn('table_schema', ['hr', 'ref', 'org', 'automation', 'reporting'])->count());
@@ -706,15 +719,78 @@ class MonthlyWorkforceDimensionsFoundationTest extends HumanResourcesTestCase
             $this->assertStringNotContainsString('MonthlyWorkforceDimensions', (string) file_get_contents($file), 'no frontend consumer');
         }
 
-        $names = [];
+        $paths = [];
         $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator(base_path('app'), \FilesystemIterator::SKIP_DOTS));
         foreach ($iterator as $file) {
-            $names[] = $file->getFilename();
+            $paths[] = ltrim(str_replace('\\', '/', substr($file->getPathname(), strlen(base_path()))), '/');
         }
-        foreach ($names as $name) {
-            $this->assertDoesNotMatchRegularExpression('/(Xlsx|Pdf|Csv|Print|Dashboard|Export)/i', $name, "no output class: {$name}");
-            $this->assertDoesNotMatchRegularExpression('/(HumanCadre|AdministrativeReport|SupportServicesReport|VolunteersReport|UnemploymentReport|Report[1245]\b|R[1245]Report)/i', $name, "R1/R2/R4/R5 stay unimplemented: {$name}");
+
+        $this->assertSame([], $this->guardViolations($paths), 'no output class and no R1/R2/R4/R5 report file outside the exact S41 allowlist');
+    }
+
+    /**
+     * The S40 name guard, as a pure function over repository-relative paths: every file is checked against the output-class ban;
+     * the R1/R2/R4/R5 pattern is then applied to every file EXCEPT the exact S41 allowlist paths (R1-D51).
+     *
+     * @param  list<string>  $paths
+     * @param  list<string>|null  $allowlist  the exact-path exception (default: the S41 files)
+     * @return list<string> the rejected paths
+     */
+    private function guardViolations(array $paths, ?array $allowlist = null): array
+    {
+        $allowlist ??= self::S41_AUTHORIZED_HUMAN_CADRE_FILES;
+        $violations = [];
+        foreach ($paths as $path) {
+            $name = basename($path);
+            if (preg_match('/(Xlsx|Pdf|Csv|Print|Dashboard|Export)/i', $name) === 1) {
+                $violations[] = $path;
+
+                continue;
+            }
+            if (in_array($path, $allowlist, true)) {
+                continue; // S41 (R1-D51): an explicit, exact-path exception — never a pattern, never a wildcard
+            }
+            if (preg_match(self::R_REPORT_NAME_PATTERN, $name) === 1) {
+                $violations[] = $path;
+            }
         }
+
+        return $violations;
+    }
+
+    /**
+     * S41 (R1-D51): the guard keeps its R1/R2/R4/R5 name pattern for every file of app/ except the EXACT paths of the files the S41
+     * stage authorizes for REPORT-1. The exception is an exact-path allowlist (no wildcard, no global HumanCadre exemption), the
+     * output-class ban still applies to allowlisted files, and a future, unlisted or relocated HumanCadre-like file still fails.
+     */
+    public function test_the_s41_exception_is_an_exact_path_allowlist_and_future_human_cadre_files_still_fail(): void
+    {
+        foreach (self::S41_AUTHORIZED_HUMAN_CADRE_FILES as $path) {
+            $this->assertStringStartsWith('app/Modules/HumanResources/', $path, 'only HumanResources REPORT-1 files');
+            $this->assertStringNotContainsString('*', $path, 'no wildcard');
+            $this->assertMatchesRegularExpression(self::R_REPORT_NAME_PATTERN, basename($path), 'each allowlisted file is exactly the kind the pattern forbids elsewhere');
+            $this->assertFileExists(base_path($path));
+        }
+        $this->assertCount(5, self::S41_AUTHORIZED_HUMAN_CADRE_FILES);
+        $this->assertSame([], $this->guardViolations(self::S41_AUTHORIZED_HUMAN_CADRE_FILES), 'the authorized S41 files pass');
+
+        $reporting = 'app/Modules/HumanResources/Application/Queries/Reporting/';
+        $rejected = [
+            $reporting.'FutureHumanCadreSummary.php',              // unlisted HumanCadre-like file
+            $reporting.'HumanCadreExportBuilder.php',               // HumanCadre + export naming
+            $reporting.'BuildHumanCadreResultXlsx.php',             // an allowlist-like name with an output suffix
+            'app/Modules/Other/Application/BuildHumanCadreResult.php', // an allowlisted basename at a different path
+            $reporting.'HumanCadreReport2Builder.php',
+            $reporting.'AdministrativeReportBuilder.php',
+            $reporting.'Report5.php',
+        ];
+        $this->assertSame($rejected, $this->guardViolations(array_merge(self::S41_AUTHORIZED_HUMAN_CADRE_FILES, $rejected)), 'every non-allowlisted or output-named file is still rejected');
+        $this->assertSame(['app/Modules/HumanResources/Presentation/Http/Controllers/HumanCadreExport.php'], $this->guardViolations(['app/Modules/HumanResources/Presentation/Http/Controllers/HumanCadreExport.php']), 'a HumanCadre export file fails even in an authorized directory');
+
+        // The output-class ban applies to allowlisted files too: even an exact-path exception cannot admit an output class.
+        $exportPath = 'app/Modules/HumanResources/Presentation/Http/Controllers/HumanCadreExportController.php';
+        $this->assertSame([$exportPath], $this->guardViolations([$exportPath], [$exportPath]), 'allowlisting an export-named path does not admit it');
+        $this->assertSame([], $this->guardViolations([self::S41_AUTHORIZED_HUMAN_CADRE_FILES[0]], [self::S41_AUTHORIZED_HUMAN_CADRE_FILES[0]]));
     }
 
     public function test_s40_computes_no_total_percentage_age_or_aggregate(): void

@@ -16,6 +16,7 @@ class EmploymentStatusPeriodResource extends JsonResource
             'status_detail_id' => $this->status_detail_id,
             'effective_from' => $this->effective_from?->toDateString(),
             'effective_to' => $this->effective_to?->toDateString(),
+            'travel_pay_status' => $this->travel_pay_status,
         ];
     }
 }

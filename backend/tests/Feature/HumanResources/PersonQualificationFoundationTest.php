@@ -80,8 +80,10 @@ class PersonQualificationFoundationTest extends HumanResourcesTestCase
         $response = $this->getJson($this->url($person))->assertOk();
         $this->assertCount(2, $response->json());
         foreach ($response->json() as $row) {
-            $this->assertSame(['id', 'person_id', 'academic_degree_id', 'qualification_type_id'], array_keys($row),
-                'no primary/highest/current flag, date, or specialty is exposed');
+            // S41 (R1-D44/D49) supersedes the S23 "no primary flag": the Primary designation is the ONLY ranking-like field;
+            // there is still no highest/current flag, date or specialty.
+            $this->assertSame(['id', 'person_id', 'academic_degree_id', 'qualification_type_id', 'is_primary'], array_keys($row),
+                'only the S41 Primary designation is exposed; no highest/current flag, date, or specialty');
         }
     }
 
@@ -316,9 +318,10 @@ class PersonQualificationFoundationTest extends HumanResourcesTestCase
             'academic_degree_id' => 'uuid',
             'created_at' => 'timestamp with time zone',
             'id' => 'uuid',
+            'is_primary' => 'boolean', // S41 SCHEMA-02 (R1-D44): the Primary designation
             'person_id' => 'uuid',
             'qualification_type_id' => 'uuid',
-        ], $types, 'no acquisition/graduation date, knowledge state, specialty, primary/highest flag, institution, or employment_relationship_id');
+        ], $types, 'no acquisition/graduation date, knowledge state, specialty, highest flag, institution, or employment_relationship_id (is_primary is the S41 designation)');
 
         foreach (DB::table('information_schema.columns')->where('table_schema', 'hr')->where('table_name', 'persons')->pluck('column_name') as $column) {
             $this->assertStringNotContainsString('qualification', $column, 'no single snapshot qualification column on Person');
@@ -391,7 +394,7 @@ class PersonQualificationFoundationTest extends HumanResourcesTestCase
         $this->assertSame($principal->id, $entry->actor_principal_id);
         $this->assertSame('hr_person_qualification', $entry->target_type);
         $this->assertSame($response->json('id'), $entry->target_id);
-        $this->assertEquals(['person_id' => $person->id, 'academic_degree_id' => $degree->id, 'qualification_type_id' => null], $entry->changes);
+        $this->assertEquals(['person_id' => $person->id, 'academic_degree_id' => $degree->id, 'qualification_type_id' => null, 'is_primary' => true], $entry->changes, 'S41: the first qualification is Primary and the audit says so');
         $this->assertEquals(['academic_degree_code' => $degree->code], $entry->metadata);
         $this->assertStringNotContainsString($person->national_id, json_encode([$entry->changes, $entry->metadata]));
     }

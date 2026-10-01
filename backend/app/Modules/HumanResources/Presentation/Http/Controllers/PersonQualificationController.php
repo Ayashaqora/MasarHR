@@ -4,6 +4,8 @@ namespace App\Modules\HumanResources\Presentation\Http\Controllers;
 
 use App\Modules\Audit\Application\AuditedCommandExecutor;
 use App\Modules\Audit\Domain\AuditSpec;
+use App\Modules\HumanResources\Application\Commands\DesignateQualificationAsPrimary;
+use App\Modules\HumanResources\Application\Commands\PrimaryQualificationDesignation;
 use App\Modules\HumanResources\Application\Commands\RecordPersonQualification;
 use App\Modules\HumanResources\Application\Queries\ListPersonQualifications;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\Person;
@@ -63,6 +65,7 @@ class PersonQualificationController
                 'person_id' => $qualification->person_id,
                 'academic_degree_id' => $qualification->academic_degree_id,
                 'qualification_type_id' => $qualification->qualification_type_id,
+                'is_primary' => (bool) $qualification->is_primary,
             ],
             metadata: fn () => array_filter([
                 'academic_degree_code' => $academicDegree?->code,
@@ -77,5 +80,42 @@ class PersonQualificationController
         );
 
         return (new PersonQualificationResource($qualification))->response()->setStatusCode(201);
+    }
+
+    /**
+     * S41 (R1-D49): POST /persons/{person}/qualifications/{personQualification}/designate-primary — the explicit operation that
+     * makes one of the Person's qualifications Primary. No generic PATCH. A qualification of another Person is 404; an
+     * already-Primary target is an idempotent 200 (audited, state unchanged).
+     */
+    public function designatePrimary(
+        Request $request,
+        Person $person,
+        PersonQualification $personQualification,
+        DesignateQualificationAsPrimary $command,
+        AuditedCommandExecutor $executor,
+    ): JsonResponse {
+        if ($personQualification->person_id !== $person->getKey()) {
+            throw new NotFoundHttpException('Qualification not found for this person.');
+        }
+
+        $spec = new AuditSpec(
+            action: 'hr.person_qualification.designate_primary',
+            targetType: 'hr_person_qualification',
+            targetId: fn (PrimaryQualificationDesignation $result) => $result->qualification->getKey(),
+            changes: fn (PrimaryQualificationDesignation $result) => [
+                'person_id' => $result->qualification->person_id,
+                'previous_primary_qualification_id' => $result->previousPrimaryQualificationId,
+                'new_primary_qualification_id' => $result->qualification->getKey(),
+            ],
+            metadata: fn (PrimaryQualificationDesignation $result) => ['state_changed' => $result->changed],
+        );
+
+        $result = $executor->run(
+            ResolveCommandContext::from($request),
+            $spec,
+            fn () => $command->handle($person, $personQualification),
+        );
+
+        return (new PersonQualificationResource($result->qualification))->response();
     }
 }

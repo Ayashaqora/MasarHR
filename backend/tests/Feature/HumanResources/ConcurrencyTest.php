@@ -2,10 +2,12 @@
 
 namespace Tests\Feature\HumanResources;
 
+use App\Modules\HumanResources\Application\Commands\DesignateQualificationAsPrimary;
 use App\Modules\HumanResources\Application\Commands\EndEmploymentRelationship;
 use App\Modules\HumanResources\Application\Commands\EndFullSecondment;
 use App\Modules\HumanResources\Application\Commands\EndWorkplaceAssignment;
 use App\Modules\HumanResources\Application\Commands\RecordEmploymentStatusPeriod;
+use App\Modules\HumanResources\Application\Commands\RecordPersonQualification;
 use App\Modules\HumanResources\Application\Commands\RecordReturnIntention;
 use App\Modules\HumanResources\Application\Commands\RecordWorkSchedulePeriod;
 use App\Modules\HumanResources\Application\Commands\ScanEmploymentStatusExpiryFollowUps;
@@ -25,14 +27,17 @@ use App\Modules\HumanResources\Domain\StatusFollowUpSuppressionReason;
 use App\Modules\HumanResources\Domain\TemporaryMovementType;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\EmploymentRelationship;
 use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\Person;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\PersonQualification;
 use App\Modules\Organization\Infrastructure\Persistence\Eloquent\OrganizationalUnit;
 use App\Modules\Platform\Application\Execution\CommandContext;
 use App\Modules\Platform\Domain\Actor;
 use App\Modules\Platform\Domain\CorrelationId;
 use App\Modules\Platform\Domain\Source;
 use App\Modules\Platform\Infrastructure\Persistence\Postgres\PostgresErrorClassifier as Errors;
+use App\Modules\Reference\Infrastructure\Persistence\Eloquent\AcademicDegree;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\DecisionType;
 use App\Modules\Reference\Infrastructure\Persistence\Eloquent\EmploymentStatusDetail;
+use App\Modules\Reference\Infrastructure\Persistence\Eloquent\QualificationType;
 use Illuminate\Database\Connection;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Str;
@@ -2644,5 +2649,136 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
     {
         $this->raceMovementCommitsBeforeEnd('WORKPLACE_ASSIGNMENT', '2026-12-01', null, ['2026-12-01', null]);
         $this->raceEndCommitsBeforeMovement('WORKPLACE_ASSIGNMENT', '2026-12-01', null);
+    }
+
+    // ------------------------------------------------------------------------------------------------------------
+    // S41 — Primary Qualification (R1-D44/D49): the Person lock serialises writers, the partial unique index is final
+    // ------------------------------------------------------------------------------------------------------------
+
+    /** @return array{0: string, 1: string} a committed synthetic academic degree id and qualification type id */
+    private function primaryRaceCatalog(): array
+    {
+        $degreeId = (string) Str::uuid7();
+        $typeId = (string) Str::uuid7();
+        DB::table('ref.academic_degrees')->insert(['id' => $degreeId, 'code' => 's41_race_'.Str::lower(Str::random(8)), 'name_ar' => 'درجة اختبار', 'name_en' => null, 'is_active' => true, 'display_order' => 99, 'version' => 1, 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('ref.qualification_types')->insert(['id' => $typeId, 'code' => 's41_race_'.Str::lower(Str::random(8)), 'name_ar' => 'نوع اختبار', 'name_en' => null, 'is_active' => true, 'display_order' => 99, 'version' => 1, 'created_at' => now(), 'updated_at' => now()]);
+
+        return [$degreeId, $typeId];
+    }
+
+    private function dropPrimaryRaceCatalog(string $personId, string $degreeId, string $typeId): void
+    {
+        foreach ([DB::connection(), $this->hasSecond() ? $this->second() : null] as $connection) {
+            while ($connection !== null && $connection->transactionLevel() > 0) {
+                $connection->rollBack();
+            }
+        }
+        DB::statement('set lock_timeout = 0');
+        DB::table('hr.person_qualifications')->where('person_id', $personId)->delete();
+        DB::table('ref.academic_degrees')->where('id', $degreeId)->delete();
+        DB::table('ref.qualification_types')->where('id', $typeId)->delete();
+    }
+
+    public function test_two_concurrent_first_qualifications_never_commit_two_primary_rows(): void
+    {
+        $personId = $this->person();
+        [$degreeId, $typeId] = $this->primaryRaceCatalog();
+        $insertPrimary = 'insert into hr.person_qualifications (id, person_id, academic_degree_id, qualification_type_id, is_primary, created_at) values (?, ?, ?, ?, true, now())';
+
+        $first = $this->pg();
+        $second = $this->second();
+
+        try {
+            // Without any application lock, two writers that both saw "no qualification" would both insert a Primary: the partial
+            // unique index makes the second wait, then rejects it once the first commits.
+            $first->beginTransaction();
+            $first->insert($insertPrimary, [(string) Str::uuid7(), $personId, $degreeId, null]);
+
+            $second->statement("set lock_timeout = '300ms'");
+            $blocked = $this->databaseError(fn () => $second->transaction(fn () => $second->insert($insertPrimary, [(string) Str::uuid7(), $personId, null, $typeId])));
+            $this->assertTrue(Errors::isLockNotAvailable($blocked), 'the second Primary waits on the first (lock_timeout fired)');
+
+            $first->commit();
+
+            $rejected = $this->databaseError(fn () => $second->transaction(fn () => $second->insert($insertPrimary, [(string) Str::uuid7(), $personId, null, $typeId])));
+            $this->assertTrue(Errors::isUniqueViolation($rejected), 'the second Primary is rejected by PostgreSQL itself');
+            $this->assertStringContainsString('person_qualifications_one_primary_unique', $rejected->getMessage());
+            $this->assertSame(1, (int) $this->scalar('select count(*) from hr.person_qualifications where person_id = ? and is_primary', [$personId]), 'never two Primary rows');
+        } finally {
+            $this->dropPrimaryRaceCatalog($personId, $degreeId, $typeId);
+        }
+    }
+
+    public function test_recording_a_qualification_waits_on_the_person_lock_and_the_first_one_becomes_primary(): void
+    {
+        $personId = $this->person();
+        [$degreeId, $typeId] = $this->primaryRaceCatalog();
+        $person = Person::query()->findOrFail($personId);
+        $degree = AcademicDegree::query()->findOrFail($degreeId);
+        $type = QualificationType::query()->findOrFail($typeId);
+        $holder = $this->second();
+
+        try {
+            $holder->beginTransaction();
+            // FOR NO KEY UPDATE does not conflict with the FOR KEY SHARE lock an INSERT's foreign key takes, so only the command's own
+            // lockForUpdate can make it wait (a plain FOR UPDATE would be masked by the FK check and prove nothing).
+            $holder->selectOne('select id from hr.persons where id = ? for no key update', [$personId]);
+
+            DB::statement("set lock_timeout = '300ms'");
+            $blocked = $this->databaseError(fn () => app(RecordPersonQualification::class)->handle($person, $degree, null));
+            $this->assertTrue(Errors::isLockNotAvailable($blocked), 'RecordPersonQualification waits on the Person row lock (R1-D49)');
+            $this->assertSame(0, (int) $this->scalar('select count(*) from hr.person_qualifications where person_id = ?', [$personId]), 'nothing was written while blocked');
+
+            $holder->commit();
+            DB::statement('set lock_timeout = 0');
+
+            $firstQualification = app(RecordPersonQualification::class)->handle($person, $degree, null);
+            $secondQualification = app(RecordPersonQualification::class)->handle($person, null, $type);
+
+            $this->assertTrue($firstQualification->is_primary, 'the first qualification is Primary');
+            $this->assertFalse($secondQualification->is_primary, 'a later one never replaces it');
+            $this->assertSame(1, (int) $this->scalar('select count(*) from hr.person_qualifications where person_id = ? and is_primary', [$personId]));
+        } finally {
+            $this->dropPrimaryRaceCatalog($personId, $degreeId, $typeId);
+        }
+    }
+
+    public function test_concurrent_primary_designations_serialise_on_the_person_lock_and_the_database_keeps_one_primary(): void
+    {
+        $personId = $this->person();
+        [$degreeId, $typeId] = $this->primaryRaceCatalog();
+        $a = (string) Str::uuid7();
+        $b = (string) Str::uuid7();
+        DB::table('hr.person_qualifications')->insert([
+            ['id' => $a, 'person_id' => $personId, 'academic_degree_id' => $degreeId, 'qualification_type_id' => null, 'is_primary' => true, 'created_at' => now()],
+            ['id' => $b, 'person_id' => $personId, 'academic_degree_id' => null, 'qualification_type_id' => $typeId, 'is_primary' => false, 'created_at' => now()],
+        ]);
+        $person = Person::query()->findOrFail($personId);
+        $target = PersonQualification::query()->findOrFail($b);
+        $holder = $this->second();
+
+        try {
+            $holder->beginTransaction();
+            $holder->selectOne('select id from hr.persons where id = ? for update', [$personId]);
+
+            DB::statement("set lock_timeout = '300ms'");
+            $blocked = $this->databaseError(fn () => app(DesignateQualificationAsPrimary::class)->handle($person, $target));
+            $this->assertTrue(Errors::isLockNotAvailable($blocked), 'the designation waits on the Person row lock');
+            $this->assertSame($a, $this->scalar('select id from hr.person_qualifications where person_id = ? and is_primary', [$personId]), 'the previous Primary is untouched while blocked');
+
+            $holder->commit();
+            DB::statement('set lock_timeout = 0');
+
+            $result = app(DesignateQualificationAsPrimary::class)->handle($person, $target);
+            $this->assertTrue($result->changed);
+            $this->assertSame([$a], [$result->previousPrimaryQualificationId]);
+            $this->assertSame([$b], array_column(DB::select('select id from hr.person_qualifications where person_id = ? and is_primary', [$personId]), 'id'), 'exactly one Primary, the new one');
+
+            // The final protection: a raw writer that bypasses the lock still cannot commit a second Primary.
+            $rejected = $this->databaseError(fn () => DB::transaction(fn () => DB::table('hr.person_qualifications')->where('id', $a)->update(['is_primary' => true])));
+            $this->assertTrue(Errors::isUniqueViolation($rejected));
+        } finally {
+            $this->dropPrimaryRaceCatalog($personId, $degreeId, $typeId);
+        }
     }
 }

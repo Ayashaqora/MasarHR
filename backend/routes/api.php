@@ -9,6 +9,7 @@ use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentSpecialty
 use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentStatusExpiryFollowUpController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentStatusPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\FullSecondmentPeriodController;
+use App\Modules\HumanResources\Presentation\Http\Controllers\HumanCadreController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\MovementExpiryFollowUpController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\NotOnDutyController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\OrganizationalPlacementPeriodController;
@@ -281,6 +282,9 @@ Route::middleware('web')->group(function (): void {
                 ->middleware('permission:'.HrPerm::PERSON_QUALIFICATIONS_VIEW)->name('persons.qualifications.index');
             Route::post('/persons/{person}/qualifications', [PersonQualificationController::class, 'store'])
                 ->middleware('permission:'.HrPerm::PERSON_QUALIFICATIONS_RECORD)->name('persons.qualifications.store');
+            // S41 (R1-D49): explicit Primary Qualification designation — no generic PATCH; Person-scoped ownership (404 otherwise).
+            Route::post('/persons/{person}/qualifications/{personQualification}/designate-primary', [PersonQualificationController::class, 'designatePrimary'])
+                ->middleware('permission:'.HrPerm::PERSON_QUALIFICATIONS_DESIGNATE_PRIMARY)->name('persons.qualifications.designate-primary');
 
             Route::get('/persons/{person}/employment-relationships', [EmploymentRelationshipController::class, 'index'])
                 ->middleware('permission:'.HrPerm::EMPLOYMENT_RELATIONSHIPS_VIEW)->name('persons.employment-relationships.index');
@@ -433,5 +437,10 @@ Route::middleware('web')->group(function (): void {
             // preferred 'monthly-not-on-duty' is rejected by the S37 guard). Dedicated permission, plain RBAC; no write method.
             Route::get('/not-on-duty', [NotOnDutyController::class, 'index'])
                 ->middleware('permission:'.HrPerm::MONTHLY_NOT_ON_DUTY_VIEW)->name('not-on-duty.index');
+
+            // S41: REPORT-1 Human Cadre — one read-only endpoint (docs/human-cadre-report-foundation-specification.md §S41.13). Dedicated
+            // permission, plain RBAC; no write method. The URI avoids every term the route guards forbid.
+            Route::get('/human-cadre', [HumanCadreController::class, 'index'])
+                ->middleware('permission:'.HrPerm::HUMAN_CADRE_VIEW)->name('human-cadre.index');
         });
 });

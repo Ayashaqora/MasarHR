@@ -16,7 +16,7 @@ use Illuminate\Support\Str;
  * is setting `effective_to` on the previously-inserted open row, done by
  * RecordEmploymentStatusPeriod as part of recording the next one.
  */
-#[Fillable(['employment_relationship_id', 'status_detail_id', 'effective_from', 'effective_to'])]
+#[Fillable(['employment_relationship_id', 'status_detail_id', 'effective_from', 'effective_to', 'travel_pay_status'])]
 class EmploymentStatusPeriod extends Model
 {
     protected $table = 'hr.employment_status_periods';

@@ -120,6 +120,9 @@ final class HumanResourcesPermissionCatalog
 
     public const PERSON_QUALIFICATIONS_RECORD = 'hr.person_qualifications.record';
 
+    /** S41 (R1-D49): the explicit Primary Qualification designation — separate from `record`. */
+    public const PERSON_QUALIFICATIONS_DESIGNATE_PRIMARY = 'hr.person_qualifications.designate_primary';
+
     /** S26 (docs/employee-specialty-history-foundation-specification.md §S26.13). */
     public const EMPLOYMENT_SPECIALTY_PERIODS_VIEW = 'hr.employment_specialty_periods.view';
 
@@ -143,6 +146,9 @@ final class HumanResourcesPermissionCatalog
 
     /** S39 (docs/monthly-not-on-duty-report-foundation-specification.md §S39.10). Dedicated, plain RBAC (no organizational scope); read-only. */
     public const MONTHLY_NOT_ON_DUTY_VIEW = 'hr.monthly_not_on_duty.view';
+
+    /** S41: REPORT-1 Monthly Human Cadre — report-specific, plain RBAC. */
+    public const HUMAN_CADRE_VIEW = 'hr.human_cadre.view';
 
     /** S34: Return Intention — independent of the employment-status permissions. */
     public const RETURN_INTENTION_PERIODS_VIEW = 'hr.return_intention_periods.view';
@@ -175,6 +181,7 @@ final class HumanResourcesPermissionCatalog
         self::EMPLOYMENT_JOB_TITLE_PERIODS_RECORD,
         self::PERSON_QUALIFICATIONS_VIEW,
         self::PERSON_QUALIFICATIONS_RECORD,
+        self::PERSON_QUALIFICATIONS_DESIGNATE_PRIMARY,
         self::EMPLOYMENT_SPECIALTY_PERIODS_VIEW,
         self::EMPLOYMENT_SPECIALTY_PERIODS_RECORD,
         self::WORK_SCHEDULE_PERIODS_VIEW,
@@ -184,6 +191,7 @@ final class HumanResourcesPermissionCatalog
         self::MOVEMENT_EXPIRY_FOLLOWUPS_VIEW,
         self::EMPLOYMENT_STATUS_EXPIRY_FOLLOWUPS_VIEW,
         self::MONTHLY_NOT_ON_DUTY_VIEW,
+        self::HUMAN_CADRE_VIEW,
         self::RETURN_INTENTION_PERIODS_VIEW,
         self::RETURN_INTENTION_PERIODS_RECORD,
     ];

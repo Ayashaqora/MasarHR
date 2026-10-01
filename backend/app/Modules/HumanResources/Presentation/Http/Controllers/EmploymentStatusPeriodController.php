@@ -26,6 +26,7 @@ use App\Modules\Reference\Infrastructure\Persistence\Eloquent\EmploymentStatusDe
 use Illuminate\Http\JsonResponse;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use Illuminate\Validation\Rule;
 use Symfony\Component\HttpKernel\Exception\NotFoundHttpException;
 
 /**
@@ -88,6 +89,8 @@ class EmploymentStatusPeriodController
             'effective_to' => ['nullable', 'date_format:Y-m-d', 'after:effective_from'],
             'end_date' => ['prohibited'],
             'effective_until' => ['prohibited'],
+            // S41 (R1-D36): explicit pay indicator, meaningful only for `traveling`; omitted or null = not recorded.
+            'travel_pay_status' => ['nullable', Rule::in(['PAID', 'UNPAID'])],
             'duration_days' => ['prohibited'],
             'duration' => ['prohibited'],
             'is_temporary' => ['prohibited'],
@@ -197,6 +200,7 @@ class EmploymentStatusPeriodController
                     'status_detail_id' => $period->status_detail_id,
                     'effective_from' => $period->effective_from?->toDateString(),
                     'effective_to' => $period->effective_to?->toDateString(),
+                    'travel_pay_status' => $period->travel_pay_status,
                 ],
                 metadata: function () use ($statusDetail, $employmentRelationship, $wasAlreadyEnded, $hadOpenSecondment, $hadOpenCategoryPeriod, $hadContractBeyondEnd, $data, $hadOpenJobTitlePeriod, $hadOpenSpecialtyPeriod, $hadOpenWorkSchedulePeriod, $partialsBeyondEnd, $movementSnapshot) {
                     $metadata = ['status_detail_code' => $statusDetail->code];
@@ -298,6 +302,7 @@ class EmploymentStatusPeriodController
                     $statusDetail,
                     $data['effective_from'],
                     $data['effective_to'] ?? null,
+                    $data['travel_pay_status'] ?? null,
                 ),
             );
 

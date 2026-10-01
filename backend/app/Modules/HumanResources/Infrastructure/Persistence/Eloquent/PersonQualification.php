@@ -17,7 +17,7 @@ use Illuminate\Support\Str;
  * no edit, no delete; correction semantics are deferred. Carries no date, specialty, or
  * primary/highest designation.
  */
-#[Fillable(['person_id', 'academic_degree_id', 'qualification_type_id'])]
+#[Fillable(['person_id', 'academic_degree_id', 'qualification_type_id', 'is_primary'])]
 class PersonQualification extends Model
 {
     protected $table = 'hr.person_qualifications';
@@ -27,6 +27,11 @@ class PersonQualification extends Model
     public $incrementing = false;
 
     public const UPDATED_AT = null;
+
+    protected function casts(): array
+    {
+        return ['is_primary' => 'boolean'];
+    }
 
     protected static function boot(): void
     {

@@ -33,6 +33,7 @@ use App\Modules\HumanResources\Domain\Exceptions\InvalidReturnIntentionValueExce
 use App\Modules\HumanResources\Domain\Exceptions\InvalidStatusPeriodDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidStatusPeriodEndException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidTransferDecisionTypeException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidTravelPayStatusException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidWorkplaceAssignmentDecisionTypeException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidWorkplaceAssignmentEndDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidWorkplaceAssignmentStartDateException;
@@ -46,6 +47,7 @@ use App\Modules\HumanResources\Domain\Exceptions\PartialSecondmentWeekdayConflic
 use App\Modules\HumanResources\Domain\Exceptions\PersonIsTerminalException;
 use App\Modules\HumanResources\Domain\Exceptions\PersonQualificationIdentityMissingException;
 use App\Modules\HumanResources\Domain\Exceptions\PersonStaleVersionException;
+use App\Modules\HumanResources\Domain\Exceptions\PrimaryQualificationConflictException;
 use App\Modules\HumanResources\Domain\Exceptions\RetiredEmploymentStatusCodeException;
 use App\Modules\HumanResources\Domain\Exceptions\UnresolvedEmploymentStatusBehaviorException;
 use App\Modules\HumanResources\Domain\Exceptions\WorkScheduleChangeInvalidatesPartialSecondmentException;
@@ -137,6 +139,8 @@ return Application::configure(basePath: dirname(__DIR__))
             InvalidEndDateException::class,
             InvalidStatusPeriodDateException::class,
             InvalidStatusPeriodEndException::class,
+            InvalidTravelPayStatusException::class,
+            PrimaryQualificationConflictException::class,
             InvalidReturnIntentionPeriodDateException::class,
             InvalidReturnIntentionPeriodEndException::class,
             InvalidReturnIntentionValueException::class,
@@ -226,6 +230,11 @@ return Application::configure(basePath: dirname(__DIR__))
             'message' => $e->getMessage(),
             'errors' => ['effective_from' => [$e->getMessage()]],
         ], 422));
+        $exceptions->render(fn (InvalidTravelPayStatusException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['travel_pay_status' => [$e->getMessage()]],
+        ], 422));
+        $exceptions->render(fn (PrimaryQualificationConflictException $e) => response()->json(['message' => $e->getMessage()], 409));
         $exceptions->render(fn (InvalidStatusPeriodEndException $e) => response()->json([
             'message' => $e->getMessage(),
             'errors' => ['effective_to' => [$e->getMessage()]],

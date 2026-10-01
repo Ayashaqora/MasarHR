@@ -6,6 +6,7 @@ use App\Modules\HumanResources\Domain\BoundedEmploymentStatusPolicy;
 use App\Modules\HumanResources\Domain\Exceptions\EmploymentRelationshipAlreadyEndedException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidStatusPeriodDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidStatusPeriodEndException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidTravelPayStatusException;
 use App\Modules\HumanResources\Domain\Exceptions\RetiredEmploymentStatusCodeException;
 use App\Modules\HumanResources\Domain\Exceptions\UnresolvedEmploymentStatusBehaviorException;
 use App\Modules\HumanResources\Domain\RetiredEmploymentStatusCodes;
@@ -49,6 +50,7 @@ final class RecordEmploymentStatusPeriod
         EmploymentStatusDetail $statusDetail,
         string $effectiveFrom,
         ?string $effectiveTo = null,
+        ?string $travelPayStatus = null,
     ): EmploymentStatusPeriod {
         $freshRelationship = EmploymentRelationship::query()
             ->where('id', $relationship->getKey())
@@ -64,6 +66,12 @@ final class RecordEmploymentStatusPeriod
             ->firstOrFail();
 
         $code = (string) $freshStatusDetail->code;
+
+        // S41 (R1-D36): the pay indicator is meaningful only for `traveling`; NULL (omitted) is always valid. A CHECK cannot read
+        // the status code from ref.employment_status_details, so applicability is enforced here.
+        if ($travelPayStatus !== null && ($code !== 'traveling' || ! in_array($travelPayStatus, ['PAID', 'UNPAID'], true))) {
+            throw new InvalidTravelPayStatusException;
+        }
 
         // S34: the two legacy Return Intention codes are no longer employment statuses. This code-level
         // guard is authoritative — reactivating the catalog row does not bypass it.
@@ -143,6 +151,7 @@ final class RecordEmploymentStatusPeriod
             'status_detail_id' => $freshStatusDetail->getKey(),
             'effective_from' => $effectiveFrom,
             'effective_to' => $effectiveTo,
+            'travel_pay_status' => $travelPayStatus,
         ]);
 
         try {

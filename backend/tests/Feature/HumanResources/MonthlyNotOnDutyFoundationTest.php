@@ -557,7 +557,8 @@ class MonthlyNotOnDutyFoundationTest extends HumanResourcesTestCase
 
     public function test_no_report_persistence_was_added(): void
     {
-        $newest = collect(glob(base_path('database/migrations/*.php')))->map('basename')->sort()->filter(fn ($n) => $n >= '2026_10_17')->values()->all();
+        // Mechanical S41 accommodation: S41's 2026_10_18 migrations follow; S39's own migration set is still exactly one permission seed.
+        $newest = collect(glob(base_path('database/migrations/*.php')))->map('basename')->sort()->filter(fn ($n) => $n >= '2026_10_17' && $n < '2026_10_18')->values()->all();
         $this->assertSame(['2026_10_17_000001_seed_security_monthly_not_on_duty_permission.php'], $newest, 'S39 adds only the permission registration');
         $this->assertSame(0, DB::table('information_schema.tables')->whereIn('table_schema', ['hr', 'ref', 'org', 'automation', 'reporting'])
             ->where(fn ($q) => $q->where('table_name', 'like', '%not_on_duty%')->orWhere('table_name', 'like', '%report%'))->count(), 'no report table');
