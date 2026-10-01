@@ -1,6 +1,7 @@
 <?php
 
 use App\Modules\HumanResources\Infrastructure\Authorization\HumanResourcesPermissionCatalog as HrPerm;
+use App\Modules\HumanResources\Presentation\Http\Controllers\AdministrativeReportController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentCategoryPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentContractPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentJobTitlePeriodController;
@@ -442,5 +443,11 @@ Route::middleware('web')->group(function (): void {
             // permission, plain RBAC; no write method. The URI avoids every term the route guards forbid.
             Route::get('/human-cadre', [HumanCadreController::class, 'index'])
                 ->middleware('permission:'.HrPerm::HUMAN_CADRE_VIEW)->name('human-cadre.index');
+
+            // S42: R2 Administrative / Job Title / Gender / Actual Work report — one read-only endpoint (docs/administrative-report-foundation-
+            // specification.md §S42.13). Dedicated permission, plain RBAC; no write method. The mandated URI contains the word the S27/S37/HR route
+            // guards forbid, so each guard carries one EXACT-URI exception for it (and nothing else).
+            Route::get('/administrative-report', [AdministrativeReportController::class, 'index'])
+                ->middleware('permission:'.HrPerm::MONTHLY_ADMINISTRATIVE_REPORT_VIEW)->name('administrative-report.index');
         });
 });

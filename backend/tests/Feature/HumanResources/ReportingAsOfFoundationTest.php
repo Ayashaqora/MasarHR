@@ -554,6 +554,9 @@ class ReportingAsOfFoundationTest extends HumanResourcesTestCase
         $this->assertSame([], array_values(array_diff(array_map('basename', glob(base_path('database/migrations/2026_10_12_*.php'))), $s29Migrations)), 'S27 adds no migration (the 2026_10_12 files are S29\'s)');
 
         foreach (Route::getRoutes() as $route) {
+            if ($route->uri() === 'api/v1/hr/administrative-report') {
+                continue; // S42: the one EXACT-URI exception — the mandated R2 endpoint; every other route is still checked
+            }
             $this->assertDoesNotMatchRegularExpression('/report|export|dashboard|as-of|pdf|xlsx|csv/i', $route->uri(), 'S27 exposes no endpoint or output');
         }
         foreach (['Pdf', 'Xlsx', 'Csv', 'Export', 'Dashboard', 'Chart'] as $forbidden) {

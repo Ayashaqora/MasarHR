@@ -34,6 +34,15 @@ class HumanCadreFoundationTest extends HumanResourcesTestCase
 
     private const URL = '/api/v1/hr/human-cadre';
 
+    /** S42: the exact paths of the five authorized R2 files (the R2 name is forbidden for every other file). */
+    private const S42_AUTHORIZED_R2_FILES = [
+        'app/Modules/HumanResources/Application/Queries/Reporting/AdministrativeReportPersonRecord.php',
+        'app/Modules/HumanResources/Application/Queries/Reporting/AdministrativeReportResult.php',
+        'app/Modules/HumanResources/Application/Queries/Reporting/BuildAdministrativeReportResult.php',
+        'app/Modules/HumanResources/Presentation/Http/Controllers/AdministrativeReportController.php',
+        'app/Modules/HumanResources/Presentation/Http/Resources/AdministrativeReportResource.php',
+    ];
+
     private const BUILDER = 'app/Modules/HumanResources/Application/Queries/Reporting/BuildHumanCadreResult.php';
 
     // ------------------------------------------------------------------------------------------------------------
@@ -669,6 +678,11 @@ class HumanCadreFoundationTest extends HumanResourcesTestCase
         $iterator = new \RecursiveIteratorIterator(new \RecursiveDirectoryIterator(base_path('app'), \FilesystemIterator::SKIP_DOTS));
         foreach ($iterator as $file) {
             $this->assertDoesNotMatchRegularExpression('/(Xlsx|Pdf|Csv|Print|Dashboard|Export)/i', $file->getFilename(), 'no output class');
+            // S42: R2 (AdministrativeReport) is now authorized — only these EXACT paths are exempt from the R2 name; R4/R5 and every other file are not.
+            $relative = ltrim(str_replace('\\', '/', substr($file->getPathname(), strlen(base_path()))), '/');
+            if (in_array($relative, self::S42_AUTHORIZED_R2_FILES, true)) {
+                continue;
+            }
             $this->assertDoesNotMatchRegularExpression('/(AdministrativeReport|SupportServicesReport|VolunteersReport|UnemploymentReport|Report[245]\b|R[245]Report)/i', $file->getFilename(), 'R2/R4/R5 stay unimplemented');
         }
     }

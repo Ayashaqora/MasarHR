@@ -50,6 +50,15 @@ class MonthlyWorkforceDimensionsFoundationTest extends HumanResourcesTestCase
         'app/Modules/HumanResources/Presentation/Http/Resources/HumanCadreResource.php',
     ];
 
+    /** S42: the only app/ files allowed to carry an AdministrativeReport name (the R2 report) — exact repository-relative paths. */
+    private const S42_AUTHORIZED_ADMINISTRATIVE_REPORT_FILES = [
+        'app/Modules/HumanResources/Application/Queries/Reporting/AdministrativeReportPersonRecord.php',
+        'app/Modules/HumanResources/Application/Queries/Reporting/AdministrativeReportResult.php',
+        'app/Modules/HumanResources/Application/Queries/Reporting/BuildAdministrativeReportResult.php',
+        'app/Modules/HumanResources/Presentation/Http/Controllers/AdministrativeReportController.php',
+        'app/Modules/HumanResources/Presentation/Http/Resources/AdministrativeReportResource.php',
+    ];
+
     private const CODE = 'app/Modules/HumanResources/Application/Queries/Reporting/ListMonthlyWorkforceDimensions.php';
 
     // ------------------------------------------------------------------------------------------------------------
@@ -738,7 +747,7 @@ class MonthlyWorkforceDimensionsFoundationTest extends HumanResourcesTestCase
      */
     private function guardViolations(array $paths, ?array $allowlist = null): array
     {
-        $allowlist ??= self::S41_AUTHORIZED_HUMAN_CADRE_FILES;
+        $allowlist ??= array_merge(self::S41_AUTHORIZED_HUMAN_CADRE_FILES, self::S42_AUTHORIZED_ADMINISTRATIVE_REPORT_FILES);
         $violations = [];
         foreach ($paths as $path) {
             $name = basename($path);
@@ -791,6 +800,34 @@ class MonthlyWorkforceDimensionsFoundationTest extends HumanResourcesTestCase
         $exportPath = 'app/Modules/HumanResources/Presentation/Http/Controllers/HumanCadreExportController.php';
         $this->assertSame([$exportPath], $this->guardViolations([$exportPath], [$exportPath]), 'allowlisting an export-named path does not admit it');
         $this->assertSame([], $this->guardViolations([self::S41_AUTHORIZED_HUMAN_CADRE_FILES[0]], [self::S41_AUTHORIZED_HUMAN_CADRE_FILES[0]]));
+    }
+
+    /**
+     * S42: the same exact-path allowlist for the five authorized R2 files. The R1/R2/R4/R5 name pattern and the output-class ban are
+     * unchanged for everything else, and a future, unlisted, relocated or export-named AdministrativeReport file still fails.
+     */
+    public function test_the_s42_exception_is_an_exact_path_allowlist_and_other_administrative_report_files_still_fail(): void
+    {
+        foreach (self::S42_AUTHORIZED_ADMINISTRATIVE_REPORT_FILES as $path) {
+            $this->assertStringStartsWith('app/Modules/HumanResources/', $path);
+            $this->assertStringNotContainsString('*', $path, 'no wildcard');
+            $this->assertMatchesRegularExpression(self::R_REPORT_NAME_PATTERN, basename($path), 'each file is exactly the kind the pattern forbids elsewhere');
+            $this->assertFileExists(base_path($path));
+        }
+        $this->assertCount(5, self::S42_AUTHORIZED_ADMINISTRATIVE_REPORT_FILES);
+        $this->assertSame([], $this->guardViolations(self::S42_AUTHORIZED_ADMINISTRATIVE_REPORT_FILES), 'the authorized S42 files pass');
+
+        $reporting = 'app/Modules/HumanResources/Application/Queries/Reporting/';
+        $rejected = [
+            $reporting.'FutureAdministrativeReportBuilder.php',
+            $reporting.'AdministrativeReportExporter.php',
+            $reporting.'BuildAdministrativeReportResultXlsx.php',
+            'app/Modules/Other/Application/BuildAdministrativeReportResult.php',
+            $reporting.'SupportServicesReportBuilder.php',
+        ];
+        $this->assertSame($rejected, $this->guardViolations(array_merge(self::S42_AUTHORIZED_ADMINISTRATIVE_REPORT_FILES, $rejected)));
+        $exportPath = 'app/Modules/HumanResources/Presentation/Http/Controllers/AdministrativeReportExportController.php';
+        $this->assertSame([$exportPath], $this->guardViolations([$exportPath], [$exportPath]), 'allowlisting an export-named path does not admit it');
     }
 
     public function test_s40_computes_no_total_percentage_age_or_aggregate(): void
