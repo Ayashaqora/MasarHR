@@ -156,6 +156,9 @@ final class HumanResourcesPermissionCatalog
     /** S43: R4 Monthly Employment Status report — report-specific, plain RBAC. */
     public const MONTHLY_EMPLOYMENT_STATUS_REPORT_VIEW = 'hr.monthly_employment_status_report.view';
 
+    /** S44: Workforce Analytics foundation — analytics-specific, plain RBAC. */
+    public const WORKFORCE_ANALYTICS_VIEW = 'hr.workforce_analytics.view';
+
     /** S34: Return Intention — independent of the employment-status permissions. */
     public const RETURN_INTENTION_PERIODS_VIEW = 'hr.return_intention_periods.view';
 
@@ -200,6 +203,7 @@ final class HumanResourcesPermissionCatalog
         self::HUMAN_CADRE_VIEW,
         self::MONTHLY_ADMINISTRATIVE_REPORT_VIEW,
         self::MONTHLY_EMPLOYMENT_STATUS_REPORT_VIEW,
+        self::WORKFORCE_ANALYTICS_VIEW,
         self::RETURN_INTENTION_PERIODS_VIEW,
         self::RETURN_INTENTION_PERIODS_RECORD,
     ];

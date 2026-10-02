@@ -20,6 +20,7 @@ use App\Modules\HumanResources\Presentation\Http\Controllers\PersonController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\PersonQualificationController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\ReturnIntentionPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\TransferController;
+use App\Modules\HumanResources\Presentation\Http\Controllers\WorkforceAnalyticsController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\WorkplaceAssignmentPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\WorkSchedulePeriodController;
 use App\Modules\Organization\Infrastructure\Authorization\OrganizationPermissionCatalog as OrgPerm;
@@ -456,5 +457,10 @@ Route::middleware('web')->group(function (): void {
             // forbid, so each guard carries one EXACT-URI exception for it (and nothing else).
             Route::get('/employment-status-report', [EmploymentStatusReportController::class, 'index'])
                 ->middleware('permission:'.HrPerm::MONTHLY_EMPLOYMENT_STATUS_REPORT_VIEW)->name('employment-status-report.index');
+
+            // S44: Workforce Analytics foundation — one read-only endpoint (docs/workforce-analytics-foundation-specification.md §S44.13).
+            // Dedicated permission, plain RBAC; no write method. The URI matches no route guard, so no guard carries an exception for it.
+            Route::get('/workforce-analytics', [WorkforceAnalyticsController::class, 'index'])
+                ->middleware('permission:'.HrPerm::WORKFORCE_ANALYTICS_VIEW)->name('workforce-analytics.index');
         });
 });

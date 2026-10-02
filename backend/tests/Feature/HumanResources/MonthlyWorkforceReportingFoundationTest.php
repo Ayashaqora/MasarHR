@@ -954,8 +954,9 @@ class MonthlyWorkforceReportingFoundationTest extends HumanResourcesTestCase
             '2026_10_18_000003_seed_security_human_cadre_permissions.php',
             '2026_10_19_000001_seed_security_monthly_administrative_report_permission.php',
             '2026_10_20_000001_seed_security_monthly_employment_status_report_permission.php',
+            '2026_10_21_000001_seed_security_workforce_analytics_permission.php',
         ], $afterS34, 'no S37 migration exists');
-        $this->assertCount(91, glob(base_path('database/migrations/*.php')));
+        $this->assertCount(92, glob(base_path('database/migrations/*.php')));
         $this->assertSame(0, DB::table('information_schema.tables')->whereIn('table_schema', ['hr', 'ref', 'org', 'automation', 'reporting'])->where('table_name', 'like', '%monthly_population%')->count());
         $this->assertSame(0, (int) DB::selectOne('select count(*) as c from pg_matviews')->c);
         $this->assertSame(0, DB::table('information_schema.views')->whereIn('table_schema', ['hr', 'ref', 'org', 'automation', 'reporting'])->count(), 'no view');

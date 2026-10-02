@@ -994,7 +994,7 @@ class EmploymentStatusReportFoundationTest extends HumanResourcesTestCase
 
     public function test_s43_adds_no_business_schema_and_no_frontend_or_output_file(): void
     {
-        $this->assertSame('2026_10_20_000001_seed_security_monthly_employment_status_report_permission.php', collect(glob(base_path('database/migrations/*.php')))->map('basename')->sort()->last(), 'the only S43 migration is the permission seed');
+        $this->assertSame('2026_10_20_000001_seed_security_monthly_employment_status_report_permission.php', collect(glob(base_path('database/migrations/*.php')))->map('basename')->sort()->filter(fn ($name) => $name < '2026_10_21')->last(), 'the only S43 migration is the permission seed (the last one before S44\'s)');
         $this->assertSame(0, (int) DB::selectOne('select count(*) as c from pg_matviews')->c);
         $this->assertSame(0, DB::table('information_schema.views')->whereIn('table_schema', ['hr', 'ref', 'org', 'automation', 'reporting'])->count());
         $this->assertSame(0, DB::table('information_schema.columns')->where('table_schema', 'hr')->where('table_name', 'employment_relationships')->whereIn('column_name', ['end_reason', 'is_active', 'status', 'return_intention'])->count(), 'no convenience column');
