@@ -953,8 +953,9 @@ class MonthlyWorkforceReportingFoundationTest extends HumanResourcesTestCase
             '2026_10_18_000002_add_is_primary_to_hr_person_qualifications_table.php',
             '2026_10_18_000003_seed_security_human_cadre_permissions.php',
             '2026_10_19_000001_seed_security_monthly_administrative_report_permission.php',
+            '2026_10_20_000001_seed_security_monthly_employment_status_report_permission.php',
         ], $afterS34, 'no S37 migration exists');
-        $this->assertCount(90, glob(base_path('database/migrations/*.php')));
+        $this->assertCount(91, glob(base_path('database/migrations/*.php')));
         $this->assertSame(0, DB::table('information_schema.tables')->whereIn('table_schema', ['hr', 'ref', 'org', 'automation', 'reporting'])->where('table_name', 'like', '%monthly_population%')->count());
         $this->assertSame(0, (int) DB::selectOne('select count(*) as c from pg_matviews')->c);
         $this->assertSame(0, DB::table('information_schema.views')->whereIn('table_schema', ['hr', 'ref', 'org', 'automation', 'reporting'])->count(), 'no view');
@@ -963,8 +964,8 @@ class MonthlyWorkforceReportingFoundationTest extends HumanResourcesTestCase
     public function test_as_no_route_or_api_exposes_the_monthly_foundation(): void
     {
         foreach (Route::getRoutes() as $route) {
-            if ($route->uri() === 'api/v1/hr/administrative-report') {
-                continue; // S42: the one EXACT-URI exception — the mandated R2 endpoint; every other route is still checked
+            if (in_array($route->uri(), ['api/v1/hr/administrative-report', 'api/v1/hr/employment-status-report'], true)) {
+                continue; // S42/S43: the EXACT-URI exceptions — the mandated R2 and R4 endpoints; every other route is still checked
             }
             $this->assertDoesNotMatchRegularExpression('/monthly(?!-cadre-categories|CadreCategory)|report|export|dashboard|pdf|xlsx|csv|print/i', $route->uri(), 'S37 exposes no endpoint');
             $this->assertDoesNotMatchRegularExpression('/ListMonthlyReportingPopulation|MonthlyReporting/', (string) $route->getActionName());

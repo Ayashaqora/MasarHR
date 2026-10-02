@@ -777,8 +777,8 @@ class AdministrativeReportFoundationTest extends HumanResourcesTestCase
 
     public function test_s42_adds_no_schema_object_and_no_frontend_or_output_file(): void
     {
-        $this->assertCount(90, glob(base_path('database/migrations/*.php')), 'S42 adds exactly one migration: the permission seed');
-        $this->assertSame('2026_10_19_000001_seed_security_monthly_administrative_report_permission.php', collect(glob(base_path('database/migrations/*.php')))->map('basename')->sort()->last());
+        $this->assertCount(91, glob(base_path('database/migrations/*.php')), 'S42 adds exactly one migration (the permission seed); S43 adds one more permission seed');
+        $this->assertSame('2026_10_19_000001_seed_security_monthly_administrative_report_permission.php', collect(glob(base_path('database/migrations/*.php')))->map('basename')->sort()->filter(fn ($name) => $name < '2026_10_20')->last(), 'S42 migration is the last one before S43');
         $this->assertSame(0, (int) DB::selectOne('select count(*) as c from pg_matviews')->c);
         $this->assertSame(0, DB::table('information_schema.views')->whereIn('table_schema', ['hr', 'ref', 'org', 'automation', 'reporting'])->count());
         foreach (glob(base_path('../frontend/src/*/*.ts*')) ?: [] as $file) {

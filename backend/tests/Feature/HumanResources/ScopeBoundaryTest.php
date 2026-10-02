@@ -193,8 +193,8 @@ class ScopeBoundaryTest extends HumanResourcesTestCase
 
         foreach ($hrRoutes as $route) {
             foreach (self::FORBIDDEN_ROUTE_SEGMENTS as $forbidden) {
-                if ($forbidden === 'report' && $route->uri() === 'api/v1/hr/administrative-report') {
-                    continue; // S42: one EXACT-URI exception for the mandated R2 endpoint, for this one segment only
+                if ($forbidden === 'report' && in_array($route->uri(), ['api/v1/hr/administrative-report', 'api/v1/hr/employment-status-report'], true)) {
+                    continue; // S42/S43: EXACT-URI exceptions for the mandated R2 and R4 endpoints, for this one segment only
                 }
                 $this->assertStringNotContainsString($forbidden, $route->uri(), "route {$route->uri()} must not expose the out-of-scope concept '{$forbidden}'");
             }

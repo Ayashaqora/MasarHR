@@ -153,6 +153,9 @@ final class HumanResourcesPermissionCatalog
     /** S42: R2 Administrative / Job Title / Gender / Actual Work report — report-specific, plain RBAC. */
     public const MONTHLY_ADMINISTRATIVE_REPORT_VIEW = 'hr.monthly_administrative_report.view';
 
+    /** S43: R4 Monthly Employment Status report — report-specific, plain RBAC. */
+    public const MONTHLY_EMPLOYMENT_STATUS_REPORT_VIEW = 'hr.monthly_employment_status_report.view';
+
     /** S34: Return Intention — independent of the employment-status permissions. */
     public const RETURN_INTENTION_PERIODS_VIEW = 'hr.return_intention_periods.view';
 
@@ -196,6 +199,7 @@ final class HumanResourcesPermissionCatalog
         self::MONTHLY_NOT_ON_DUTY_VIEW,
         self::HUMAN_CADRE_VIEW,
         self::MONTHLY_ADMINISTRATIVE_REPORT_VIEW,
+        self::MONTHLY_EMPLOYMENT_STATUS_REPORT_VIEW,
         self::RETURN_INTENTION_PERIODS_VIEW,
         self::RETURN_INTENTION_PERIODS_RECORD,
     ];

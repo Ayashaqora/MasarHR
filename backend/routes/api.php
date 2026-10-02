@@ -9,6 +9,7 @@ use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentRelations
 use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentSpecialtyPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentStatusExpiryFollowUpController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentStatusPeriodController;
+use App\Modules\HumanResources\Presentation\Http\Controllers\EmploymentStatusReportController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\FullSecondmentPeriodController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\HumanCadreController;
 use App\Modules\HumanResources\Presentation\Http\Controllers\MovementExpiryFollowUpController;
@@ -449,5 +450,11 @@ Route::middleware('web')->group(function (): void {
             // guards forbid, so each guard carries one EXACT-URI exception for it (and nothing else).
             Route::get('/administrative-report', [AdministrativeReportController::class, 'index'])
                 ->middleware('permission:'.HrPerm::MONTHLY_ADMINISTRATIVE_REPORT_VIEW)->name('administrative-report.index');
+
+            // S43: R4 Monthly Employment Status report — one read-only endpoint (docs/employment-status-report-foundation-specification.md
+            // §S43.12). Dedicated permission, plain RBAC; no write method. The mandated URI contains the word the S27/S37/HR route guards
+            // forbid, so each guard carries one EXACT-URI exception for it (and nothing else).
+            Route::get('/employment-status-report', [EmploymentStatusReportController::class, 'index'])
+                ->middleware('permission:'.HrPerm::MONTHLY_EMPLOYMENT_STATUS_REPORT_VIEW)->name('employment-status-report.index');
         });
 });
