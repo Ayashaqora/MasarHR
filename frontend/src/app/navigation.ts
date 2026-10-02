@@ -18,6 +18,7 @@ export interface NavItem {
  */
 export const NAV_ITEMS: readonly NavItem[] = [
   { to: '/', labelKey: 'home', end: true },
+  { to: '/dashboard', labelKey: 'dashboard', requiresAuth: true },
   { to: '/employees', labelKey: 'employees', requiresAuth: true },
   { to: '/organization', labelKey: 'organization' },
   { to: '/reports', labelKey: 'reports' },

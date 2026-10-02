@@ -405,6 +405,9 @@ class SpecialtyCatalogAdministrationFoundationTest extends ReferenceTestCase
             $s33Employee360Files = [
                 'features/employees/api.ts', 'features/employees/hooks.ts', 'features/employees/Employee360CareerHistory.tsx',
                 'pages/Employee360Page.tsx', 'pages/Employee360Page.test.tsx', 'i18n/messages/ar.ts', 'i18n/messages/en.ts',
+                // S45 (Dashboard Foundation) authorizes the aggregate specialty EXPOSURE distribution (S44 data) — exactly these files.
+                'features/dashboard/api.ts', 'features/dashboard/contract.ts', 'features/dashboard/DashboardView.tsx',
+                'features/dashboard/dashboard.contract.test.ts', 'pages/DashboardPage.test.tsx', 'test/dashboardFixtures.ts',
             ];
             foreach ($iterator as $file) {
                 if (in_array(str_replace($frontend.'/', '', str_replace('\\', '/', $file->getPathname())), $s33Employee360Files, true)) {

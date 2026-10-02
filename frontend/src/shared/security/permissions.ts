@@ -39,3 +39,9 @@ export const HR_PERMISSIONS = {
   workplaceAssignmentPeriodsStart: 'hr.workplace_assignment_periods.start',
   workplaceAssignmentPeriodsEnd: 'hr.workplace_assignment_periods.end',
 } as const
+
+/**
+ * S44/S45: the dedicated read permission of the Workforce Analytics foundation (plain RBAC, granted to no role by default). The
+ * aggregate Dashboard reuses it; the backend re-checks it on every request.
+ */
+export const PERMISSIONS_HR_WORKFORCE_ANALYTICS_VIEW = 'hr.workforce_analytics.view'

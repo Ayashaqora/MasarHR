@@ -1,6 +1,7 @@
 import { createBrowserRouter, createMemoryRouter, Navigate, type RouteObject } from 'react-router'
 import { RequireAuth } from '../features/auth/RequireAuth'
 import { AppShell } from '../layouts/AppShell'
+import { DashboardPage } from '../pages/DashboardPage'
 import { Employee360Page } from '../pages/Employee360Page'
 import { EmployeesPage } from '../pages/EmployeesPage'
 import { HomePage } from '../pages/HomePage'
@@ -31,6 +32,8 @@ export const routes: RouteObject[] = [
           { path: ':personId/relationships/:relationshipId', element: <Employee360Page /> },
         ],
       },
+      // S45: the aggregate Dashboard Foundation — one authenticated, read-only page over the S44 analytics response.
+      { path: 'dashboard', element: <RequireAuth />, children: [{ index: true, element: <DashboardPage /> }] },
       { path: 'organization', element: <PlaceholderPage navKey="organization" /> },
       { path: 'reports', element: <PlaceholderPage navKey="reports" /> },
       { path: 'settings', element: <PlaceholderPage navKey="settings" /> },

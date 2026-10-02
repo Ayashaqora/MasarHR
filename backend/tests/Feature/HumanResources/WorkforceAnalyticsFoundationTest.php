@@ -1053,6 +1053,10 @@ class WorkforceAnalyticsFoundationTest extends HumanResourcesTestCase
         $this->assertSame(0, DB::table('information_schema.views')->whereIn('table_schema', ['hr', 'ref', 'org', 'automation', 'reporting'])->count());
         $this->assertSame(0, DB::table('information_schema.tables')->whereIn('table_schema', ['hr', 'ref', 'org', 'automation', 'reporting'])->where('table_name', 'like', '%analytic%')->count(), 'no analytics table');
         foreach (glob(base_path('../frontend/src/*/*.ts*')) ?: [] as $file) {
+            // S45 (Dashboard Foundation) is the authorized consumer of this endpoint: its page test is the ONE exact-path exception.
+            if (str_ends_with(str_replace('\\', '/', $file), 'src/pages/DashboardPage.test.tsx')) {
+                continue;
+            }
             $this->assertStringNotContainsString('workforce-analytics', (string) file_get_contents($file), 'no frontend consumer');
         }
         foreach (['Pdf', 'Xlsx', 'Csv', 'Export', 'Dashboard', 'Chart', 'Print'] as $forbidden) {
