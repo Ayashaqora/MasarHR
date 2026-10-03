@@ -1,10 +1,14 @@
+import { Briefcase, MapPin, Undo2 } from 'lucide-react'
 import { useI18n } from '../../i18n/context'
 import { describeApiError } from '../../shared/api/errorMessage'
 import type { ApiResourceState } from '../../shared/hooks/useApiResource'
+import { DefinitionItem, DefinitionList } from '../../shared/ui/DefinitionList'
+import { SectionCard } from '../../shared/ui/SectionCard'
 import { StatePanel } from '../../shared/ui/StatePanel'
 import type { ActualWorkplace, EffectiveEmploymentStatus, EffectiveReturnIntention, EmploymentStatusDetail, OrganizationalUnitPeriod } from './api'
 import { EffectiveStatusText } from './EffectiveStatusText'
 import { ReturnIntentionText } from './Employee360ReturnIntention'
+import { Ltr } from '../../shared/ui/Ltr'
 
 const SOURCE_LABEL_KEY = {
   secondment: 'sourceSecondment',
@@ -21,11 +25,18 @@ const SOURCE_LABEL_KEY = {
  */
 const UNKNOWN_DATE_SORTS_LAST = '9999-99-99'
 
+function stateError(error: { status?: number | undefined }, messages: ReturnType<typeof useI18n>['messages']) {
+  return {
+    title: error.status === 403 ? messages.securityShared.unauthorizedTitle : messages.employee360.loadFailed,
+    body: error.status === 403 ? messages.securityShared.unauthorizedDescription : null,
+  }
+}
+
 /**
- * Overview tab (spec §S18 §12.A; S33): the CURRENT STATE — the backend's effective status (S32) — and current and current vs. original workplace, each with
- * its effective date — the same facts the header shows at a glance, expanded with dates and the
- * resolver's own disclosed source (spec §13: actual workplace always comes from the existing
- * authoritative ResolveActualWorkplaceForRelationship result, never recomputed here).
+ * The CURRENT STATE (spec §S18 §12.A; S33), always visible above the history tabs: the backend's effective
+ * status (S32), the independent Return Intention (S34), and original vs. actual workplace. The three are
+ * separate cards on purpose — status, return intention and movement never merge into one field. The actual
+ * workplace always comes from the existing authoritative ResolveActualWorkplaceForRelationship result.
  */
 export function Employee360Overview({
   effectiveStatus,
@@ -52,106 +63,97 @@ export function Employee360Overview({
       : null
 
   return (
-    <div className="tab-panel-content">
-      <section className="card" aria-labelledby="overview-status-heading">
-        <h3 id="overview-status-heading" className="card__title">
-          {messages.employee360.currentStatus}
-        </h3>
-        {effectiveStatus.status === 'loading' || statusCatalog.status === 'loading' ? (
-          <StatePanel tone="loading" title={messages.employee360.loading} />
-        ) : effectiveStatus.status === 'error' ? (
-          <StatePanel
-            tone="error"
-            title={
-              effectiveStatus.error.status === 403
-                ? messages.securityShared.unauthorizedTitle
-                : messages.employee360.loadFailed
-            }
-          >
-            {effectiveStatus.error.status === 403
-              ? messages.securityShared.unauthorizedDescription
-              : describeApiError(effectiveStatus.error, messages)}
-          </StatePanel>
-        ) : (
-          <>
-            <p>
-              <EffectiveStatusText effectiveStatus={effectiveStatus} statusCatalog={statusCatalog} withSince />
-            </p>
-            <p>
-              {messages.employee360.asOf} {effectiveStatus.data.as_of}
-            </p>
-          </>
-        )}
-      </section>
+    <div className="space-y-2">
+      <div>
+        <h2 className="text-base font-semibold">{messages.employee360.currentStateTitle}</h2>
+        <p className="text-xs text-muted-foreground">{messages.employee360.currentStateNote}</p>
+      </div>
+      <div className="grid gap-4 lg:grid-cols-3">
+        <SectionCard
+          level={3}
+          headingId="overview-status-heading"
+          title={
+            <>
+              <Briefcase aria-hidden="true" className="size-4 text-muted-foreground" />
+              {messages.employee360.currentStatus}
+            </>
+          }
+        >
+          {effectiveStatus.status === 'loading' || statusCatalog.status === 'loading' ? (
+            <StatePanel tone="loading" title={messages.employee360.loading} className="my-0" />
+          ) : effectiveStatus.status === 'error' ? (
+            <StatePanel tone="error" className="my-0" title={stateError(effectiveStatus.error, messages).title}>
+              {stateError(effectiveStatus.error, messages).body ?? describeApiError(effectiveStatus.error, messages)}
+            </StatePanel>
+          ) : (
+            <div className="space-y-2">
+              <p>
+                <EffectiveStatusText effectiveStatus={effectiveStatus} statusCatalog={statusCatalog} withSince />
+              </p>
+              <p className="text-xs text-muted-foreground">
+                {messages.employee360.asOf} <Ltr>{effectiveStatus.data.as_of}</Ltr>
+              </p>
+            </div>
+          )}
+        </SectionCard>
 
-      <section className="card" aria-labelledby="overview-return-intention-heading">
-        <h3 id="overview-return-intention-heading" className="card__title">
-          {messages.employee360.returnIntention}
-        </h3>
-        {effectiveIntention.status === 'loading' ? (
-          <StatePanel tone="loading" title={messages.employee360.loading} />
-        ) : effectiveIntention.status === 'error' ? (
-          <StatePanel
-            tone="error"
-            title={
-              effectiveIntention.error.status === 403
-                ? messages.securityShared.unauthorizedTitle
-                : messages.employee360.loadFailed
-            }
-          >
-            {effectiveIntention.error.status === 403
-              ? messages.securityShared.unauthorizedDescription
-              : describeApiError(effectiveIntention.error, messages)}
-          </StatePanel>
-        ) : (
-          <p>
-            <ReturnIntentionText effectiveIntention={effectiveIntention} />
-          </p>
-        )}
-      </section>
+        <SectionCard
+          level={3}
+          headingId="overview-return-intention-heading"
+          title={
+            <>
+              <Undo2 aria-hidden="true" className="size-4 text-muted-foreground" />
+              {messages.employee360.returnIntention}
+            </>
+          }
+        >
+          {effectiveIntention.status === 'loading' ? (
+            <StatePanel tone="loading" title={messages.employee360.loading} className="my-0" />
+          ) : effectiveIntention.status === 'error' ? (
+            <StatePanel tone="error" className="my-0" title={stateError(effectiveIntention.error, messages).title}>
+              {stateError(effectiveIntention.error, messages).body ?? describeApiError(effectiveIntention.error, messages)}
+            </StatePanel>
+          ) : (
+            <p className="text-sm font-medium">
+              <ReturnIntentionText effectiveIntention={effectiveIntention} />
+            </p>
+          )}
+        </SectionCard>
 
-      <section className="card" aria-labelledby="overview-workplace-heading">
-        <h3 id="overview-workplace-heading" className="card__title">
-          {messages.employee360.workplaceSummary}
-        </h3>
-        {actualWorkplace.status === 'loading' || unitNames.status === 'loading' ? (
-          <StatePanel tone="loading" title={messages.employee360.loading} />
-        ) : actualWorkplace.status === 'error' ? (
-          <StatePanel
-            tone="error"
-            title={
-              actualWorkplace.error.status === 403
-                ? messages.securityShared.unauthorizedTitle
-                : messages.employee360.loadFailed
-            }
-          >
-            {actualWorkplace.error.status === 403
-              ? messages.securityShared.unauthorizedDescription
-              : describeApiError(actualWorkplace.error, messages)}
-          </StatePanel>
-        ) : (
-          <dl className="description-list">
-            <div className="description-list__row">
-              <dt>{messages.employee360.originalWorkplace}</dt>
-              <dd>
+        <SectionCard
+          level={3}
+          headingId="overview-workplace-heading"
+          title={
+            <>
+              <MapPin aria-hidden="true" className="size-4 text-muted-foreground" />
+              {messages.employee360.workplaceSummary}
+            </>
+          }
+        >
+          {actualWorkplace.status === 'loading' || unitNames.status === 'loading' ? (
+            <StatePanel tone="loading" title={messages.employee360.loading} className="my-0" />
+          ) : actualWorkplace.status === 'error' ? (
+            <StatePanel tone="error" className="my-0" title={stateError(actualWorkplace.error, messages).title}>
+              {stateError(actualWorkplace.error, messages).body ?? describeApiError(actualWorkplace.error, messages)}
+            </StatePanel>
+          ) : (
+            <DefinitionList className="sm:grid-cols-1">
+              <DefinitionItem label={messages.employee360.originalWorkplace}>
                 {originalPlacement
                   ? (unitNames.names[originalPlacement.organizational_unit_id] ?? originalPlacement.organizational_unit_id)
                   : messages.employee360.noOriginalWorkplace}
-              </dd>
-            </div>
-            <div className="description-list__row">
-              <dt>{messages.employee360.actualWorkplace}</dt>
-              <dd>
+              </DefinitionItem>
+              <DefinitionItem label={messages.employee360.actualWorkplace}>
                 {actualWorkplace.data.organizational_unit_id
                   ? `${unitNames.names[actualWorkplace.data.organizational_unit_id] ?? actualWorkplace.data.organizational_unit_id} (${
                       messages.employee360[SOURCE_LABEL_KEY[actualWorkplace.data.source ?? 'placement']]
                     })`
                   : messages.employee360.noActualWorkplace}
-              </dd>
-            </div>
-          </dl>
-        )}
-      </section>
+              </DefinitionItem>
+            </DefinitionList>
+          )}
+        </SectionCard>
+      </div>
     </div>
   )
 }

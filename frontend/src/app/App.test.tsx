@@ -58,11 +58,12 @@ describe('Masar application shell', () => {
     const user = userEvent.setup()
     renderApp()
 
-    await user.click(screen.getByRole('link', { name: 'الهيكل التنظيمي' }))
+    await user.click(within(screen.getByRole('navigation', { name: 'التنقل الرئيسي' })).getByRole('link', { name: 'الهيكل التنظيمي' }))
 
     expect(screen.getByRole('heading', { level: 1, name: 'الهيكل التنظيمي' })).toBeInTheDocument()
     expect(screen.getByText('هذا القسم مخطط له ولم يُنفَّذ بعد.')).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'الهيكل التنظيمي' })).toHaveAttribute('aria-current', 'page')
+    const nav = screen.getByRole('navigation', { name: 'التنقل الرئيسي' })
+    expect(within(nav).getByRole('link', { name: 'الهيكل التنظيمي' })).toHaveAttribute('aria-current', 'page')
     expect(screen.queryByRole('table')).not.toBeInTheDocument()
     expect(screen.queryByRole('textbox')).not.toBeInTheDocument()
   })

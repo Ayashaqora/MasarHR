@@ -1,16 +1,10 @@
 import { createBrowserRouter, createMemoryRouter, Navigate, type RouteObject } from 'react-router'
 import { RequireAuth } from '../features/auth/RequireAuth'
 import { AppShell } from '../layouts/AppShell'
-import { DashboardPage } from '../pages/DashboardPage'
-import { Employee360Page } from '../pages/Employee360Page'
-import { EmployeesPage } from '../pages/EmployeesPage'
 import { HomePage } from '../pages/HomePage'
 import { LoginPage } from '../pages/LoginPage'
 import { NotFoundPage } from '../pages/NotFoundPage'
 import { PlaceholderPage } from '../pages/PlaceholderPage'
-import { PermissionsPage } from '../pages/security/PermissionsPage'
-import { PrincipalsPage } from '../pages/security/PrincipalsPage'
-import { RolesPage } from '../pages/security/RolesPage'
 import { ErrorFallback } from './ErrorBoundary'
 
 export const routes: RouteObject[] = [
@@ -28,12 +22,12 @@ export const routes: RouteObject[] = [
         path: 'employees',
         element: <RequireAuth />,
         children: [
-          { index: true, element: <EmployeesPage /> },
-          { path: ':personId/relationships/:relationshipId', element: <Employee360Page /> },
+          { index: true, lazy: async () => ({ Component: (await import('../pages/EmployeesPage')).EmployeesPage }) },
+          { path: ':personId/relationships/:relationshipId', lazy: async () => ({ Component: (await import('../pages/Employee360Page')).Employee360Page }) },
         ],
       },
       // S45: the aggregate Dashboard Foundation — one authenticated, read-only page over the S44 analytics response.
-      { path: 'dashboard', element: <RequireAuth />, children: [{ index: true, element: <DashboardPage /> }] },
+      { path: 'dashboard', element: <RequireAuth />, children: [{ index: true, lazy: async () => ({ Component: (await import('../pages/DashboardPage')).DashboardPage }) }] },
       { path: 'organization', element: <PlaceholderPage navKey="organization" /> },
       { path: 'reports', element: <PlaceholderPage navKey="reports" /> },
       { path: 'settings', element: <PlaceholderPage navKey="settings" /> },
@@ -44,9 +38,9 @@ export const routes: RouteObject[] = [
         element: <RequireAuth />,
         children: [
           { index: true, element: <Navigate to="principals" replace /> },
-          { path: 'principals', element: <PrincipalsPage /> },
-          { path: 'roles', element: <RolesPage /> },
-          { path: 'permissions', element: <PermissionsPage /> },
+          { path: 'principals', lazy: async () => ({ Component: (await import('../pages/security/PrincipalsPage')).PrincipalsPage }) },
+          { path: 'roles', lazy: async () => ({ Component: (await import('../pages/security/RolesPage')).RolesPage }) },
+          { path: 'permissions', lazy: async () => ({ Component: (await import('../pages/security/PermissionsPage')).PermissionsPage }) },
         ],
       },
       { path: '*', element: <NotFoundPage /> },

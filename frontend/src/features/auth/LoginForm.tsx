@@ -1,7 +1,12 @@
-import { useId, useState, type FormEvent } from 'react'
+import { LogIn } from 'lucide-react'
+import { useState, type FormEvent } from 'react'
 import { useLocation, useNavigate } from 'react-router'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
 import { useI18n } from '../../i18n/context'
 import { ApiError } from '../../shared/api'
+import { FormField } from '../../shared/ui/FormField'
 import { StatePanel } from '../../shared/ui/StatePanel'
 import { useAuth } from './context'
 
@@ -10,8 +15,6 @@ export function LoginForm() {
   const { login } = useAuth()
   const navigate = useNavigate()
   const location = useLocation()
-  const usernameId = useId()
-  const passwordId = useId()
 
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -51,44 +54,53 @@ export function LoginForm() {
   }
 
   return (
-    <form
-      className="card auth-form"
-      noValidate
-      onSubmit={(event) => {
-        void handleSubmit(event)
-      }}
-    >
-      <div className="form-field">
-        <label htmlFor={usernameId}>{messages.auth.username}</label>
-        <input
-          id={usernameId}
-          name="username"
-          type="text"
-          autoComplete="username"
-          value={username}
-          disabled={submitting}
-          onChange={(event) => setUsername(event.target.value)}
-        />
-      </div>
+    <Card>
+      <CardContent>
+        <form
+          className="space-y-5"
+          noValidate
+          onSubmit={(event) => {
+            void handleSubmit(event)
+          }}
+        >
+          <FormField label={messages.auth.username} required>
+            {(field) => (
+              <Input
+                {...field}
+                name="username"
+                type="text"
+                autoComplete="username"
+                dir="auto"
+                value={username}
+                disabled={submitting}
+                onChange={(event) => setUsername(event.target.value)}
+              />
+            )}
+          </FormField>
 
-      <div className="form-field">
-        <label htmlFor={passwordId}>{messages.auth.password}</label>
-        <input
-          id={passwordId}
-          name="password"
-          type="password"
-          autoComplete="current-password"
-          value={password}
-          disabled={submitting}
-          onChange={(event) => setPassword(event.target.value)}
-        />
-      </div>
+          <FormField label={messages.auth.password} required>
+            {(field) => (
+              <Input
+                {...field}
+                name="password"
+                type="password"
+                autoComplete="current-password"
+                dir="auto"
+                value={password}
+                disabled={submitting}
+                onChange={(event) => setPassword(event.target.value)}
+              />
+            )}
+          </FormField>
 
-      {error ? <StatePanel tone="error" title={error} /> : null}
+          {error ? <StatePanel tone="error" title={error} className="my-0" /> : null}
 
-      <button type="submit" className="button" disabled={submitting}>
-        {submitting ? messages.auth.signingIn : messages.auth.signIn}
-      </button>
-    </form>
+          <Button type="submit" className="w-full" disabled={submitting}>
+            <LogIn aria-hidden="true" className="rtl:-scale-x-100" />
+            {submitting ? messages.auth.signingIn : messages.auth.signIn}
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
   )
 }

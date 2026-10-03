@@ -2,6 +2,7 @@ import { PermissionGate } from '../../features/auth/PermissionGate'
 import { PermissionsTable } from '../../features/security-admin/PermissionsTable'
 import { useI18n } from '../../i18n/context'
 import { PERMISSIONS } from '../../shared/security/permissions'
+import { SecuritySubNav } from '../../features/security-admin/SecuritySubNav'
 import { PageHeader } from '../../shared/ui/PageHeader'
 
 export function PermissionsPage() {
@@ -10,6 +11,7 @@ export function PermissionsPage() {
   return (
     <>
       <PageHeader title={messages.securityPermissions.title} />
+      <SecuritySubNav />
       <PermissionGate permission={PERMISSIONS.permissionsView}>
         <PermissionsTable />
       </PermissionGate>

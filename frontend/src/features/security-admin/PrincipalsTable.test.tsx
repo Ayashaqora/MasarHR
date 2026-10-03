@@ -58,8 +58,23 @@ describe('PrincipalsTable', () => {
 
     await screen.findByText('admin')
     await user.click(screen.getAllByRole('button', { name: 'تعطيل' })[0]!)
+    // Disabling an account is destructive: it asks for an explicit confirmation first (AlertDialog).
+    await user.click(await screen.findByRole('button', { name: 'تأكيد التعطيل' }))
 
     expect(await screen.findAllByText('معطّل')).toHaveLength(2)
+  })
+
+  it('does not disable anything when the confirmation is cancelled', async () => {
+    const fetchMock = stubFetch((url) => (url.includes('/status') ? jsonResponse({}, 500) : jsonResponse(PRINCIPALS_PAGE)))
+    const user = userEvent.setup()
+    renderTable(['security.users.view', 'security.users.status.manage'])
+
+    await screen.findByText('admin')
+    await user.click(screen.getAllByRole('button', { name: 'تعطيل' })[0]!)
+    expect(await screen.findByText('تعطيل هذا المستخدم؟')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: 'إلغاء' }))
+
+    expect(fetchMock.mock.calls.some(([url]) => String(url).includes('/status'))).toBe(false)
   })
 
   it('shows a generic conflict message on a 409 without leaking which protection fired', async () => {
@@ -69,6 +84,8 @@ describe('PrincipalsTable', () => {
 
     await screen.findByText('admin')
     await user.click(screen.getAllByRole('button', { name: 'تعطيل' })[0]!)
+    // Disabling an account is destructive: it asks for an explicit confirmation first (AlertDialog).
+    await user.click(await screen.findByRole('button', { name: 'تأكيد التعطيل' }))
 
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent('تعذّر إتمام العملية؛ قد تكون البيانات قد تغيّرت')
@@ -91,6 +108,8 @@ describe('PrincipalsTable', () => {
 
     await screen.findByText('admin')
     await user.click(screen.getAllByRole('button', { name: 'تعطيل' })[0]!)
+    // Disabling an account is destructive: it asks for an explicit confirmation first (AlertDialog).
+    await user.click(await screen.findByRole('button', { name: 'تأكيد التعطيل' }))
 
     await waitFor(() => expect(sessionExpired).toHaveBeenCalledTimes(1))
   })

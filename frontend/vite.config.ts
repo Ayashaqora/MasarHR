@@ -1,3 +1,5 @@
+import { fileURLToPath } from 'node:url'
+import tailwindcss from '@tailwindcss/vite'
 import react from '@vitejs/plugin-react'
 import { loadEnv } from 'vite'
 import { defineConfig } from 'vitest/config'
@@ -7,7 +9,10 @@ export default defineConfig(({ mode }) => {
   const env = loadEnv(mode, process.cwd(), '')
 
   return {
-    plugins: [react()],
+    plugins: [react(), tailwindcss()],
+    resolve: {
+      alias: { '@': fileURLToPath(new URL('./src', import.meta.url)) },
+    },
     server: {
       // Dev-only: forwards /api/* to the Laravel backend so the browser stays same-origin.
       proxy: {

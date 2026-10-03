@@ -8,6 +8,7 @@ import type {
   PersonQualification,
   ReferenceValue,
 } from './api'
+import { DateText } from '../../shared/ui/DateText'
 import { Employee360HistorySection } from './Employee360HistorySection'
 
 type Names = { status: 'loading' | 'ready'; values: Record<string, ReferenceValue> }
@@ -59,7 +60,7 @@ export function Employee360CareerHistory({
   const to = { header: e.effectiveTo }
 
   return (
-    <div className="tab-panel-content">
+    <div className="space-y-4">
       <Employee360HistorySection
         headingId="career-category-heading"
         title={e.categoryHistory}
@@ -69,8 +70,8 @@ export function Employee360CareerHistory({
         sortKey={(row) => row.effective_from}
         columns={[
           { header: e.employmentCategory, cell: (row) => name(categoryNames, row.employment_category_id) },
-          { ...from, cell: (row) => row.effective_from ?? '—' },
-          { ...to, cell: (row) => row.effective_to ?? e.openEnded },
+          { ...from, cell: (row) => <DateText value={row.effective_from} /> },
+          { ...to, cell: (row) => <DateText value={row.effective_to} fallback={e.openEnded} /> },
         ]}
       />
       <Employee360HistorySection
@@ -82,14 +83,14 @@ export function Employee360CareerHistory({
         sortKey={(row) => row.effective_from}
         columns={[
           { header: e.contractType, cell: (row) => name(contractTypeNames, row.contract_type_id) },
-          { ...from, cell: (row) => row.effective_from ?? '—' },
-          { header: e.contractValidTo, cell: (row) => row.effective_to ?? e.openEnded },
+          { ...from, cell: (row) => <DateText value={row.effective_from} /> },
+          { header: e.contractValidTo, cell: (row) => <DateText value={row.effective_to} fallback={e.openEnded} /> },
           {
             header: e.contractualEnd,
             cell: (row) =>
               row.contract_end_knowledge_state === 'UNKNOWN_LEGACY'
                 ? e.endUnknown
-                : (row.contractual_effective_to ?? e.openEnded),
+                : <DateText value={row.contractual_effective_to} fallback={e.openEnded} />,
           },
         ]}
       />
@@ -105,9 +106,9 @@ export function Employee360CareerHistory({
           {
             ...from,
             cell: (row) =>
-              row.start_knowledge_state === 'UNKNOWN_LEGACY' ? e.startUnknown : (row.effective_from ?? '—'),
+              row.start_knowledge_state === 'UNKNOWN_LEGACY' ? e.startUnknown : <DateText value={row.effective_from} />,
           },
-          { ...to, cell: (row) => row.effective_to ?? e.openEnded },
+          { ...to, cell: (row) => <DateText value={row.effective_to} fallback={e.openEnded} /> },
         ]}
       />
       <Employee360HistorySection
@@ -119,8 +120,8 @@ export function Employee360CareerHistory({
         sortKey={(row) => row.effective_from}
         columns={[
           { header: e.specialty, cell: (row) => name(specialtyNames, row.specialty_id) },
-          { ...from, cell: (row) => row.effective_from ?? '—' },
-          { ...to, cell: (row) => row.effective_to ?? e.openEnded },
+          { ...from, cell: (row) => <DateText value={row.effective_from} /> },
+          { ...to, cell: (row) => <DateText value={row.effective_to} fallback={e.openEnded} /> },
         ]}
       />
       <Employee360HistorySection

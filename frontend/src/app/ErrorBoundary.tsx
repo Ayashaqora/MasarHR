@@ -1,5 +1,6 @@
 import { Component, type ErrorInfo, type ReactNode } from 'react'
 import { useI18n } from '../i18n/context'
+import { Button } from '@/components/ui/button'
 import { StatePanel } from '../shared/ui/StatePanel'
 
 /** Fallback shared by the React error boundary and the router's errorElement. */
@@ -7,14 +8,14 @@ export function ErrorFallback({ onReset }: { onReset?: () => void }) {
   const { messages } = useI18n()
 
   return (
-    <div className="fatal-error">
+    <div className="mx-auto max-w-xl p-6">
       <StatePanel
         tone="error"
         title={messages.errors.title}
         action={
-          <button type="button" className="button" onClick={onReset ?? (() => window.location.reload())}>
+          <Button type="button" variant="outline" size="sm" onClick={onReset ?? (() => window.location.reload())}>
             {messages.errors.reload}
-          </button>
+          </Button>
         }
       >
         {messages.errors.description}

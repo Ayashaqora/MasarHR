@@ -1,6 +1,7 @@
 import { useI18n } from '../../i18n/context'
 import type { ApiResourceState } from '../../shared/hooks/useApiResource'
 import type { PartialSecondmentPeriod, WorkSchedulePeriod } from './api'
+import { DateText } from '../../shared/ui/DateText'
 import { Employee360HistorySection } from './Employee360HistorySection'
 import { weekdaysLabel } from './weekdays'
 
@@ -21,7 +22,7 @@ export function Employee360WorkArrangements({
   const e = messages.employee360
 
   return (
-    <div className="tab-panel-content">
+    <div className="space-y-4">
       <Employee360HistorySection
         headingId="work-arrangements-partial-heading"
         title={e.partialSecondmentHistory}
@@ -32,8 +33,8 @@ export function Employee360WorkArrangements({
         columns={[
           { header: e.unit, cell: (row) => unitNames.names[row.organizational_unit_id] ?? row.organizational_unit_id },
           { header: e.weekdays, cell: (row) => weekdaysLabel(row.weekdays, messages) },
-          { header: messages.employees.effectiveFrom, cell: (row) => row.effective_from ?? '—' },
-          { header: e.effectiveTo, cell: (row) => row.effective_to ?? e.openEnded },
+          { header: messages.employees.effectiveFrom, cell: (row) => <DateText value={row.effective_from} /> },
+          { header: e.effectiveTo, cell: (row) => <DateText value={row.effective_to} fallback={e.openEnded} /> },
         ]}
       />
       <Employee360HistorySection
@@ -45,8 +46,8 @@ export function Employee360WorkArrangements({
         sortKey={(row) => row.effective_from}
         columns={[
           { header: e.weekdays, cell: (row) => weekdaysLabel(row.weekdays, messages) },
-          { header: messages.employees.effectiveFrom, cell: (row) => row.effective_from ?? '—' },
-          { header: e.effectiveTo, cell: (row) => row.effective_to ?? e.openEnded },
+          { header: messages.employees.effectiveFrom, cell: (row) => <DateText value={row.effective_from} /> },
+          { header: e.effectiveTo, cell: (row) => <DateText value={row.effective_to} fallback={e.openEnded} /> },
         ]}
       />
     </div>

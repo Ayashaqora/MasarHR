@@ -4,7 +4,23 @@ import { useI18n } from '../../i18n/context'
 import { ApiError } from '../../shared/api'
 import { describeApiError } from '../../shared/api/errorMessage'
 import { PERMISSIONS } from '../../shared/security/permissions'
+import { DataTable, type DataTableColumn } from '../../shared/ui/DataTable'
+import { Ltr } from '../../shared/ui/Ltr'
+import { RetryButton } from '../../shared/ui/RetryButton'
 import { StatePanel } from '../../shared/ui/StatePanel'
+import { StatusBadge } from '../../shared/ui/StatusBadge'
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+  AlertDialogTrigger,
+} from '@/components/ui/alert-dialog'
+import { Button } from '@/components/ui/button'
 import { updatePrincipalStatus, type PrincipalSummary } from './api'
 import { usePrincipals } from './hooks'
 
@@ -24,11 +40,7 @@ export function PrincipalsTable() {
       <StatePanel
         tone="error"
         title={messages.securityPrincipals.failed}
-        action={
-          <button type="button" className="button" onClick={principals.retry}>
-            {messages.systemStatus.retry}
-          </button>
-        }
+        action={<RetryButton onClick={principals.retry} />}
       >
         {describeApiError(principals.error, messages)}
       </StatePanel>
@@ -63,57 +75,80 @@ export function PrincipalsTable() {
     }
   }
 
-  const columnCount = canManageStatus ? 4 : 3
+  const columns: DataTableColumn<PrincipalSummary>[] = [
+    { header: messages.securityPrincipals.username, cell: (row) => <Ltr>{row.username}</Ltr> },
+    { header: messages.securityPrincipals.displayName, cell: (row) => row.display_name },
+    {
+      header: messages.securityPrincipals.status,
+      cell: (row) =>
+        row.status === 'ACTIVE' ? (
+          <StatusBadge status="active">{messages.securityPrincipals.statusActive}</StatusBadge>
+        ) : (
+          <StatusBadge status="inactive">{messages.securityPrincipals.statusDisabled}</StatusBadge>
+        ),
+    },
+  ]
+
+  if (canManageStatus) {
+    columns.push({
+      header: messages.securityPrincipals.actions,
+      cell: (row) => (
+        <div className="space-y-1">
+          {row.status === 'ACTIVE' ? (
+            <AlertDialog>
+              <AlertDialogTrigger asChild>
+                <Button type="button" size="sm" variant="outline" disabled={pendingId === row.id}>
+                  {messages.securityPrincipals.disable}
+                </Button>
+              </AlertDialogTrigger>
+              <AlertDialogContent>
+                <AlertDialogHeader>
+                  <AlertDialogTitle>{messages.securityPrincipals.confirmDisableTitle}</AlertDialogTitle>
+                  <AlertDialogDescription>{messages.securityPrincipals.confirmDisableDescription}</AlertDialogDescription>
+                </AlertDialogHeader>
+                <AlertDialogFooter>
+                  <AlertDialogCancel>{messages.securityPrincipals.cancel}</AlertDialogCancel>
+                  <AlertDialogAction
+                    className="bg-destructive text-white hover:bg-destructive/90"
+                    onClick={() => {
+                      void toggleStatus(row)
+                    }}
+                  >
+                    {messages.securityPrincipals.confirmDisable}
+                  </AlertDialogAction>
+                </AlertDialogFooter>
+              </AlertDialogContent>
+            </AlertDialog>
+          ) : (
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={pendingId === row.id}
+              onClick={() => {
+                void toggleStatus(row)
+              }}
+            >
+              {messages.securityPrincipals.enable}
+            </Button>
+          )}
+          {rowError && rowError.id === row.id ? (
+            <p role="alert" className="text-sm font-medium text-destructive">
+              {rowError.message}
+            </p>
+          ) : null}
+        </div>
+      ),
+    })
+  }
 
   return (
-    <table className="data-table">
-      <caption className="sr-only">{messages.securityPrincipals.title}</caption>
-      <thead>
-        <tr>
-          <th scope="col">{messages.securityPrincipals.username}</th>
-          <th scope="col">{messages.securityPrincipals.displayName}</th>
-          <th scope="col">{messages.securityPrincipals.status}</th>
-          {canManageStatus ? <th scope="col">{messages.securityPrincipals.actions}</th> : null}
-        </tr>
-      </thead>
-      <tbody>
-        {principals.data.length === 0 ? (
-          <tr>
-            <td colSpan={columnCount}>{messages.securityPrincipals.empty}</td>
-          </tr>
-        ) : null}
-
-        {principals.data.map((row) => (
-          <tr key={row.id}>
-            <td>{row.username}</td>
-            <td>{row.display_name}</td>
-            <td>
-              {row.status === 'ACTIVE'
-                ? messages.securityPrincipals.statusActive
-                : messages.securityPrincipals.statusDisabled}
-            </td>
-            {canManageStatus ? (
-              <td>
-                <button
-                  type="button"
-                  className="button button--small"
-                  disabled={pendingId === row.id}
-                  onClick={() => {
-                    void toggleStatus(row)
-                  }}
-                >
-                  {row.status === 'ACTIVE' ? messages.securityPrincipals.disable : messages.securityPrincipals.enable}
-                </button>
-                {rowError && rowError.id === row.id ? (
-                  <p role="alert" className="field-error">
-                    {rowError.message}
-                  </p>
-                ) : null}
-              </td>
-            ) : null}
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <DataTable
+      caption={messages.securityPrincipals.title}
+      emptyText={messages.securityPrincipals.empty}
+      rows={principals.data}
+      getKey={(row) => row.id}
+      columns={columns}
+    />
   )
 }

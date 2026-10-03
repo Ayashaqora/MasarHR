@@ -1,8 +1,14 @@
+import { Info, TriangleAlert } from 'lucide-react'
 import type { ReactNode } from 'react'
+import { Alert, AlertDescription } from '@/components/ui/alert'
+import { Badge } from '@/components/ui/badge'
 import { useI18n } from '../../i18n/context'
+import { SectionCard } from '../../shared/ui/SectionCard'
+import { StatCard } from '../../shared/ui/StatCard'
 import type { Percentage } from './api'
 import { usePercentText } from './usePercentText'
 import { kpiContract, type HistoricalSemantics, type KpiId } from './contract'
+import { cn } from '@/lib/utils'
 
 /** A bar's visual length is a presentation of the canonical basis points (null → empty), clamped to the track. */
 function barWidth(value: Percentage): string {
@@ -34,57 +40,47 @@ export function KpiSection({
   kpi,
   title,
   hint,
+  wide,
   children,
 }: {
   kpi: KpiId
   title: string
   hint?: string
+  /** Spans both columns of the dashboard grid (long lists). */
+  wide?: boolean
   children: ReactNode
 }) {
   const contract = kpiContract(kpi)
   const historicalLabel = useHistoricalLabel()(contract.historical)
-  const headingId = `kpi-${kpi}`
 
   return (
-    <section
-      className="card dashboard-section"
-      aria-labelledby={headingId}
+    <SectionCard
+      headingId={`kpi-${kpi}`}
       data-kpi={kpi}
       data-family={contract.family}
       data-historical={contract.historical}
+      className={cn('h-full', wide && 'lg:col-span-2')}
+      title={
+        <>
+          {title}
+          {historicalLabel ? (
+            <Badge variant="secondary" className="font-normal">
+              {historicalLabel}
+            </Badge>
+          ) : null}
+        </>
+      }
+      description={hint}
     >
-      <h2 id={headingId} className="card__title">
-        {title}
-        {historicalLabel ? <span className="tag">{historicalLabel}</span> : null}
-      </h2>
-      {hint ? <p className="dashboard-section__hint">{hint}</p> : null}
       {children}
-    </section>
+    </SectionCard>
   )
 }
 
-export function ScalarCard({
-  kpi,
-  label,
-  value,
-  hint,
-}: {
-  kpi: KpiId
-  label: string
-  value: number
-  hint: string
-}) {
+export function ScalarCard({ kpi, label, value, hint }: { kpi: KpiId; label: string; value: number; hint: string }) {
   const contract = kpiContract(kpi)
 
-  return (
-    <div className="kpi" data-kpi={kpi} data-family={contract.family}>
-      <p className="kpi__label">{label}</p>
-      <p className="kpi__value" data-testid={`value-${kpi}`}>
-        {value}
-      </p>
-      <p className="kpi__hint">{hint}</p>
-    </div>
-  )
+  return <StatCard label={label} value={value} hint={hint} valueTestId={`value-${kpi}`} data-kpi={kpi} data-family={contract.family} />
 }
 
 export interface DistributionRow {
@@ -99,15 +95,23 @@ export function DistributionList({ rows }: { rows: DistributionRow[] }) {
   const percentText = usePercentText()
 
   return (
-    <ul className="distribution" data-family="MUTUALLY_EXCLUSIVE_DISTRIBUTION">
+    <ul className="space-y-3" data-family="MUTUALLY_EXCLUSIVE_DISTRIBUTION">
       {rows.map((row) => (
-        <li key={row.key} className="distribution__row" data-bucket={row.key}>
-          <span className="distribution__label">{row.label}</span>
-          <span className="distribution__count">{row.count}</span>
-          <span className="distribution__percent">{percentText(row.percentage)}</span>
-          <span className="bar" aria-hidden="true">
-            <span className="bar__fill" style={{ inlineSize: barWidth(row.percentage) }} />
-          </span>
+        <li key={row.key} className="space-y-1.5" data-bucket={row.key}>
+          <div className="flex items-baseline justify-between gap-3 text-sm">
+            <span data-role="label">{row.label}</span>
+            <span className="flex shrink-0 items-baseline gap-3 tabular-nums">
+              <span data-role="count" className="font-semibold">
+                {row.count}
+              </span>
+              <span data-role="percent" className="text-xs text-muted-foreground">
+                {percentText(row.percentage)}
+              </span>
+            </span>
+          </div>
+          <div aria-hidden="true" className="h-2 overflow-hidden rounded-full bg-muted">
+            <div className="h-full rounded-full bg-chart-2" style={{ inlineSize: barWidth(row.percentage) }} />
+          </div>
         </li>
       ))}
     </ul>
@@ -123,6 +127,18 @@ export interface ExposureRow {
   detail?: ReactNode
 }
 
+/** The shared "not a partition" notice for every multi-value exposure section. */
+export function ExposureNote() {
+  const { messages } = useI18n()
+
+  return (
+    <Alert role="note" data-role="exposure-note" className="border-status-information-border bg-status-information text-status-information-foreground">
+      <Info aria-hidden="true" />
+      <AlertDescription className="text-status-information-foreground">{messages.dashboard.exposureNote}</AlertDescription>
+    </Alert>
+  )
+}
+
 /**
  * A MULTI_VALUE_EXPOSURE: a Person may be in several rows. It is a ranked list with an explicit not-a-partition note: no total
  * row, no sum of the shares, no pie/donut.
@@ -133,26 +149,61 @@ export function ExposureList({ rows }: { rows: ExposureRow[] }) {
 
   return (
     <>
-      <p className="exposure-note" role="note">
-        {messages.dashboard.exposureNote}
-      </p>
-      <ul className="distribution" data-family="MULTI_VALUE_EXPOSURE">
+      <ExposureNote />
+      <ul className="space-y-3" data-family="MULTI_VALUE_EXPOSURE">
         {rows.map((row) => (
-          <li key={row.key} className="distribution__row" data-bucket={row.key}>
-            <span className="distribution__label">{row.label}</span>
-            <span className="distribution__count">
-              {row.personCount} {messages.dashboard.persons}
-            </span>
-            <span className="distribution__percent" title={messages.dashboard.exposureShare}>
-              {messages.dashboard.sharePrefix} {percentText(row.share)}
-            </span>
-            <span className="bar" aria-hidden="true">
-              <span className="bar__fill" style={{ inlineSize: barWidth(row.share) }} />
-            </span>
-            {row.detail ? <span className="distribution__detail">{row.detail}</span> : null}
+          <li key={row.key} className="space-y-1.5" data-bucket={row.key}>
+            <div className="flex items-baseline justify-between gap-3 text-sm">
+              <span data-role="label">{row.label}</span>
+              <span className="flex shrink-0 items-baseline gap-3 tabular-nums">
+                <span data-role="count" className="font-semibold">
+                  {row.personCount} {messages.dashboard.persons}
+                </span>
+                <span data-role="percent" className="text-xs text-muted-foreground" title={messages.dashboard.exposureShare}>
+                  {messages.dashboard.sharePrefix} {percentText(row.share)}
+                </span>
+              </span>
+            </div>
+            <div aria-hidden="true" className="h-2 overflow-hidden rounded-full bg-muted">
+              <div className="h-full rounded-full bg-chart-4" style={{ inlineSize: barWidth(row.share) }} />
+            </div>
+            {row.detail ? <p className="text-xs text-muted-foreground">{row.detail}</p> : null}
           </li>
         ))}
       </ul>
     </>
+  )
+}
+
+/** A small titled sub-list inside a section (never a heading level that would outrank the section). */
+export function SubHeading({ children }: { children: ReactNode }) {
+  return <h3 className="pt-2 text-sm font-semibold">{children}</h3>
+}
+
+/** Plain count lines (age calculation states, ends by reason, non-determinable workplace). */
+export function CountList({ items, testId }: { items: Array<{ key: string; text: ReactNode }>; testId?: string }) {
+  return (
+    <ul className="space-y-1 text-sm" data-testid={testId}>
+      {items.map((item) => (
+        <li key={item.key} className="flex items-center gap-2 before:size-1.5 before:rounded-full before:bg-muted-foreground/50 before:content-['']">
+          {item.text}
+        </li>
+      ))}
+    </ul>
+  )
+}
+
+export function QualityFinding({ code, label, counts }: { code: string; label: string; counts: string }) {
+  return (
+    <li
+      data-dq={code}
+      className="flex items-start gap-3 rounded-md border border-status-warning-border bg-status-warning p-3 text-status-warning-foreground"
+    >
+      <TriangleAlert aria-hidden="true" className="mt-0.5 size-4 shrink-0" />
+      <span className="flex flex-1 flex-wrap items-baseline justify-between gap-x-4 gap-y-1 text-sm">
+        <span className="font-medium">{label}</span>
+        <span className="tabular-nums">{counts}</span>
+      </span>
+    </li>
   )
 }

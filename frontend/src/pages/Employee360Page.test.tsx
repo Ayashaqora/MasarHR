@@ -1,4 +1,4 @@
-import { screen, within } from '@testing-library/react'
+import { screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import type { CurrentPrincipal } from '../features/auth/api'
@@ -142,6 +142,18 @@ function stub360App(overrides?: (url: string) => Response | undefined) {
   return stubAppFetch({ overrides: (url) => overrides?.(url) ?? defaultRoute(url) })
 }
 
+/** The identity/employment header section, found by its stable heading id (locale-independent). */
+async function findHeaderSection(): Promise<HTMLElement> {
+  const heading = await waitFor(() => {
+    const element = document.getElementById('employee-360-header-heading')
+    if (!element) throw new Error('header heading not rendered yet')
+    return element
+  })
+  const section = heading.closest('section')
+  if (!section) throw new Error('expected the Employee 360 header section to be present')
+  return section
+}
+
 const ROUTE = '/employees/person-1/relationships/rel-1'
 
 describe('Employee360Page', () => {
@@ -149,14 +161,18 @@ describe('Employee360Page', () => {
     stub360App()
     renderApp(ROUTE)
 
-    expect(await screen.findByRole('heading', { level: 1, name: 'الملف الشامل للموظف' })).toBeInTheDocument()
+    // This is the first render in the file, so it also pays the one-time cold import of the lazy
+    // Employee 360 route chunk (router.tsx). On a slower machine that can exceed Testing Library's
+    // default 1000ms, so this single assertion states a longer bound; the heading itself is unchanged.
+    expect(
+      await screen.findByRole('heading', { level: 1, name: 'الملف الشامل للموظف' }, { timeout: 4000 }),
+    ).toBeInTheDocument()
     // Scoped to the header section itself: every tabpanel now stays mounted (hidden, not
     // unmounted — see Employee360Page.tsx) so a field the Employment tab also displays, such as
     // the employee number, exists twice in the DOM once that panel is mounted. Querying the whole
     // document for 'EMP-001' would incorrectly match both; the header's own <h2> is the only
     // level-2 heading on the page, so its closest section unambiguously scopes to just the header.
-    const headerSection = (await screen.findByRole('heading', { level: 2 })).closest('section')
-    if (!headerSection) throw new Error('expected the Employee 360 header section to be present')
+    const headerSection = await findHeaderSection()
     const header = within(headerSection)
     expect(header.getByText('1234567890')).toBeInTheDocument()
     expect(header.getByText('موظف اختبار')).toBeInTheDocument()
@@ -175,8 +191,7 @@ describe('Employee360Page', () => {
     )
     renderApp(ROUTE)
 
-    const headerSection = (await screen.findByRole('heading', { level: 2 })).closest('section')
-    if (!headerSection) throw new Error('expected the Employee 360 header section to be present')
+    const headerSection = await findHeaderSection()
     const header = within(headerSection)
     expect(await header.findByText('1234567890')).toBeInTheDocument()
     expect(header.getByText('الاسم الكامل')).toBeInTheDocument()
@@ -184,14 +199,17 @@ describe('Employee360Page', () => {
     expect(header.queryByText('موظف اختبار')).not.toBeInTheDocument()
   })
 
-  it('shows the Overview tab by default with original and actual workplace', async () => {
+  it('shows the current state (status, return intention, original and actual workplace) without opening any tab', async () => {
     stub360App()
     renderApp(ROUTE)
 
     await screen.findByRole('heading', { level: 1, name: 'الملف الشامل للموظف' })
-    const overviewPanel = await screen.findByRole('tabpanel')
-    expect(within(overviewPanel).getByText('مكان العمل الأصلي')).toBeInTheDocument()
-    expect(within(overviewPanel).getAllByText('الإدارة العامة للمستشفيات').length).toBeGreaterThan(0)
+    const workplaceCard = (await screen.findByRole('heading', { level: 3, name: 'ملخص مكان العمل' })).closest('section')
+    if (!workplaceCard) throw new Error('workplace card expected')
+    expect(await within(workplaceCard).findByText('مكان العمل الأصلي')).toBeInTheDocument()
+    expect(within(workplaceCard).getAllByText('الإدارة العامة للمستشفيات').length).toBeGreaterThan(0)
+    expect(screen.getByRole('heading', { level: 3, name: 'الحالة الوظيفية الحالية' })).toBeInTheDocument()
+    expect(screen.getByRole('heading', { level: 3, name: 'الرغبة في العودة' })).toBeInTheDocument()
   })
 
   it('switches to the Status History tab and lists the status periods', async () => {
@@ -202,9 +220,9 @@ describe('Employee360Page', () => {
     await screen.findByRole('heading', { level: 1, name: 'الملف الشامل للموظف' })
     await user.click(screen.getByRole('tab', { name: 'سجل الحالات الوظيفية' }))
 
-    const table = await screen.findByRole('table')
-    expect(within(table).getByText('على رأس العمل')).toBeInTheDocument()
-    expect(within(table).getByText('مستمرة')).toBeInTheDocument()
+    const timeline = await screen.findByRole('list', { name: 'الخط الزمني للحالات الوظيفية' })
+    expect(within(timeline).getByText('على رأس العمل')).toBeInTheDocument()
+    expect(within(timeline).getByText('مستمرة')).toBeInTheDocument()
   })
 
   it('switches to the Movement Timeline tab and shows the placement period, with no fabricated "transfer" entries', async () => {
@@ -215,9 +233,9 @@ describe('Employee360Page', () => {
     await screen.findByRole('heading', { level: 1, name: 'الملف الشامل للموظف' })
     await user.click(screen.getByRole('tab', { name: 'الخط الزمني للحركات' }))
 
-    const table = await screen.findByRole('table')
-    expect(within(table).getByText('إلحاق تنظيمي')).toBeInTheDocument()
-    expect(within(table).queryByText(/نقل/)).not.toBeInTheDocument()
+    const timeline = await screen.findByRole('list', { name: 'الخط الزمني للحركات' })
+    expect(within(timeline).getByText('إلحاق تنظيمي')).toBeInTheDocument()
+    expect(within(timeline).queryByText(/نقل/)).not.toBeInTheDocument()
   })
 
   it('switches to the Employment tab and shows the full relationship record', async () => {
@@ -286,12 +304,14 @@ describe('Employee360Page', () => {
       )
       renderApp(ROUTE)
 
-      const headerSection = (await screen.findByRole('heading', { level: 2 })).closest('section')
-      if (!headerSection) throw new Error('header expected')
+      const headerSection = await findHeaderSection()
       // No open persisted period exists, yet the current status is the temporary one.
       expect(await within(headerSection).findByText('إجازة بدون راتب')).toBeInTheDocument()
       expect(within(headerSection).queryByText(/مشتقّة/)).not.toBeInTheDocument()
-      expect(await within(await screen.findByRole('tabpanel')).findByText(/إجازة بدون راتب — منذ 2026-10-01/)).toBeInTheDocument()
+      const statusCard = (await screen.findByRole('heading', { level: 3, name: 'الحالة الوظيفية الحالية' })).closest('section')
+      if (!statusCard) throw new Error('current status card expected')
+      expect(await within(statusCard).findByText('إجازة بدون راتب')).toBeInTheDocument()
+      expect(within(statusCard).getByText('2026-10-01')).toBeInTheDocument()
     })
 
     it('shows the derived on_duty after an expired bounded status, labelled derived, and never as a history row', async () => {
@@ -305,16 +325,16 @@ describe('Employee360Page', () => {
       const user = userEvent.setup()
       renderApp(ROUTE)
 
-      const headerSection = (await screen.findByRole('heading', { level: 2 })).closest('section')
-      if (!headerSection) throw new Error('header expected')
-      expect(await within(headerSection).findByText(/على رأس العمل \(مشتقّة/)).toBeInTheDocument()
+      const headerSection = await findHeaderSection()
+      expect(await within(headerSection).findByText('على رأس العمل')).toBeInTheDocument()
+      expect(within(headerSection).getByText(/مشتقّة/)).toBeInTheDocument()
 
       await user.click(screen.getByRole('tab', { name: 'سجل الحالات الوظيفية' }))
-      const table = await screen.findByRole('table')
+      const timeline = await screen.findByRole('list', { name: 'الخط الزمني للحالات الوظيفية' })
       // Persisted history only: the single recorded leave period; no synthetic on_duty row.
-      expect(within(table).getAllByRole('row')).toHaveLength(2)
-      expect(within(table).getByText('إجازة بدون راتب')).toBeInTheDocument()
-      expect(within(table).queryByText('على رأس العمل')).not.toBeInTheDocument()
+      expect(within(timeline).getAllByRole('listitem')).toHaveLength(1)
+      expect(within(timeline).getByText('إجازة بدون راتب')).toBeInTheDocument()
+      expect(within(timeline).queryByText('على رأس العمل')).not.toBeInTheDocument()
       // Read-only: every request was a GET (nothing is persisted for the derived status).
       const methods = (fetchMock.mock.calls as unknown[][]).map(([, init]) => (init as RequestInit | undefined)?.method ?? 'GET')
       expect(methods.every((method) => method === 'GET')).toBe(true)
@@ -327,8 +347,7 @@ describe('Employee360Page', () => {
           : undefined,
       )
       renderApp(ROUTE)
-      const headerSection = (await screen.findByRole('heading', { level: 2 })).closest('section')
-      if (!headerSection) throw new Error('header expected')
+      const headerSection = await findHeaderSection()
       expect(await within(headerSection).findByText('مسافر')).toBeInTheDocument()
       expect(within(headerSection).queryByText(/مشتقّة/)).not.toBeInTheDocument()
     })
@@ -336,8 +355,7 @@ describe('Employee360Page', () => {
     it('shows a no-effective-status message when the backend resolves none', async () => {
       stub360App((url) => (url.includes('/effective-status') ? jsonResponse(effective(null)) : undefined))
       renderApp(ROUTE)
-      const headerSection = (await screen.findByRole('heading', { level: 2 })).closest('section')
-      if (!headerSection) throw new Error('header expected')
+      const headerSection = await findHeaderSection()
       expect(await within(headerSection).findByText('لا توجد حالة وظيفية فعّالة في هذا التاريخ.')).toBeInTheDocument()
     })
 
@@ -348,9 +366,9 @@ describe('Employee360Page', () => {
           : undefined,
       )
       renderApp(ROUTE, 'en')
-      const headerSection = (await screen.findByRole('heading', { level: 2 })).closest('section')
-      if (!headerSection) throw new Error('header expected')
-      expect(await within(headerSection).findByText(/On duty \(derived: automatic return/)).toBeInTheDocument()
+      const headerSection = await findHeaderSection()
+      expect(await within(headerSection).findByText('On duty')).toBeInTheDocument()
+      expect(within(headerSection).getByText(/derived: automatic return/)).toBeInTheDocument()
     })
 
     it('exposes the partial secondment and work schedule history', async () => {
@@ -429,8 +447,7 @@ describe('Employee360Page', () => {
       stub360App(endedRelationshipRoutes)
       renderApp(ROUTE)
 
-      const headerSection = (await screen.findByRole('heading', { level: 2 })).closest('section')
-      if (!headerSection) throw new Error('header expected')
+      const headerSection = await findHeaderSection()
       expect(await within(headerSection).findByText('غير محدَّد')).toBeInTheDocument()
       expect(within(headerSection).queryByText('الإدارة العامة للمستشفيات')).not.toBeInTheDocument()
     })
@@ -442,9 +459,9 @@ describe('Employee360Page', () => {
 
       await screen.findByRole('heading', { level: 1, name: 'الملف الشامل للموظف' })
       await user.click(screen.getByRole('tab', { name: 'الخط الزمني للحركات' }))
-      const table = await screen.findByRole('table')
+      const timeline = await screen.findByRole('list', { name: 'الخط الزمني للحركات' })
 
-      const rows = within(table).getAllByRole('row')
+      const rows = within(timeline).getAllByRole('listitem')
       const full = rows.find((row) => within(row).queryByText('انتداب كلي'))
       const assignment = rows.find((row) => within(row).queryByText('تكليف'))
       if (!full || !assignment) throw new Error('both movement rows expected')
@@ -452,7 +469,7 @@ describe('Employee360Page', () => {
       expect(within(full).getByText('2026-11-01')).toBeInTheDocument()
       expect(within(assignment).getByText('2026-12-01')).toBeInTheDocument()
       // The timeline is history: it is never labelled as the current/actual workplace.
-      expect(within(table).queryByText(/الحالي|الفعلي/)).not.toBeInTheDocument()
+      expect(within(timeline).queryByText(/الحالي|الفعلي/)).not.toBeInTheDocument()
     })
   })
 
@@ -484,13 +501,13 @@ describe('Employee360Page', () => {
       )
       renderApp(ROUTE)
 
-      const headerSection = (await screen.findByRole('heading', { level: 2 })).closest('section')
-      if (!headerSection) throw new Error('header expected')
+      const headerSection = await findHeaderSection()
       const header = within(headerSection)
       expect(await header.findByText('مسافر')).toBeInTheDocument()
       const rows = header.getAllByRole('term').map((term) => term.textContent)
       expect(rows).toContain('الرغبة في العودة')
-      expect(await header.findByText(/يرغب في العودة — منذ 2026-10-05/)).toBeInTheDocument()
+      expect(await header.findByText('يرغب في العودة')).toBeInTheDocument()
+      expect(header.getByText('2026-10-05')).toBeInTheDocument()
       // The status text never carries the intention and vice versa.
       expect(header.queryByText(/مسافر.*يرغب/)).not.toBeInTheDocument()
     })
@@ -499,8 +516,7 @@ describe('Employee360Page', () => {
       stub360App()
       renderApp(ROUTE)
 
-      const headerSection = (await screen.findByRole('heading', { level: 2 })).closest('section')
-      if (!headerSection) throw new Error('header expected')
+      const headerSection = await findHeaderSection()
       expect(await within(headerSection).findByText('غير مسجَّلة')).toBeInTheDocument()
       expect(within(headerSection).queryByText(/^(يرغب|لا يرغب) في العودة/)).not.toBeInTheDocument()
     })
@@ -517,10 +533,10 @@ describe('Employee360Page', () => {
       if (!intentionSection) throw new Error('intention history section expected')
       const intention = within(intentionSection)
       expect(await intention.findByText('لا يرغب في العودة')).toBeInTheDocument()
-      expect(intention.getAllByText('2026-10-05', { selector: 'td' })).toHaveLength(2)
-      // The status-history table (first table) contains no return-intention row and the section states independence.
-      const statusTable = within(panel).getAllByRole('table')[0]!
-      expect(within(statusTable).queryByText(/يرغب في العودة/)).not.toBeInTheDocument()
+      expect(intention.getAllByText('2026-10-05', { selector: 'bdi' })).toHaveLength(2)
+      // The status timeline contains no return-intention entry and the section states independence.
+      const statusTimeline = within(panel).getByRole('list', { name: 'الخط الزمني للحالات الوظيفية' })
+      expect(within(statusTimeline).queryByText(/يرغب في العودة/)).not.toBeInTheDocument()
       expect(intention.getByText(/مستقل عن الحالة الوظيفية/)).toBeInTheDocument()
     })
 
@@ -538,22 +554,21 @@ describe('Employee360Page', () => {
       const user = userEvent.setup()
       renderApp(ROUTE)
 
-      const headerSection = (await screen.findByRole('heading', { level: 2 })).closest('section')
-      if (!headerSection) throw new Error('header expected')
+      const headerSection = await findHeaderSection()
       expect(await within(headerSection).findByText('على رأس العمل')).toBeInTheDocument()
 
       await user.click(screen.getByRole('tab', { name: 'سجل الحالات الوظيفية' }))
       const panel = await screen.findByRole('tabpanel')
       expect(await within(panel).findByText('حسابك لا يملك الصلاحية اللازمة لعرض هذا القسم.')).toBeInTheDocument()
-      expect(within(panel).getByRole('table')).toBeInTheDocument() // the persisted status history still renders
+      expect(within(panel).getByRole('list', { name: 'الخط الزمني للحالات الوظيفية' })).toBeInTheDocument() // the persisted status history still renders
     })
 
     it('renders the intention in English (locale-aware)', async () => {
       stub360App(withIntention(CURRENT))
       renderApp(ROUTE, 'en')
-      const headerSection = (await screen.findByRole('heading', { level: 2 })).closest('section')
-      if (!headerSection) throw new Error('header expected')
-      expect(await within(headerSection).findByText(/Wants to return — since 2026-10-05/)).toBeInTheDocument()
+      const headerSection = await findHeaderSection()
+      expect(await within(headerSection).findByText('Wants to return')).toBeInTheDocument()
+      expect(within(headerSection).getByText('2026-10-05')).toBeInTheDocument()
     })
   })
 })

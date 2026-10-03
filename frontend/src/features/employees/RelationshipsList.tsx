@@ -1,7 +1,14 @@
+import { ArrowLeft } from 'lucide-react'
 import { Link } from 'react-router'
+import { Button } from '@/components/ui/button'
 import { useI18n } from '../../i18n/context'
 import { describeApiError } from '../../shared/api/errorMessage'
+import { DataTable } from '../../shared/ui/DataTable'
+import { EmptyState } from '../../shared/ui/EmptyState'
+import { Ltr } from '../../shared/ui/Ltr'
+import { RetryButton } from '../../shared/ui/RetryButton'
 import { StatePanel } from '../../shared/ui/StatePanel'
+import { StatusBadge } from '../../shared/ui/StatusBadge'
 import { useEmploymentRelationships } from './hooks'
 import type { Person } from './api'
 
@@ -16,7 +23,7 @@ export function RelationshipsList({ person }: { person: Person }) {
   const relationships = useEmploymentRelationships(person.id)
 
   if (relationships.status === 'loading') {
-    return <StatePanel tone="loading" title={messages.employees.relationshipsLoading} />
+    return <StatePanel tone="loading" title={messages.employees.relationshipsLoading} className="my-0" />
   }
 
   if (relationships.status === 'error') {
@@ -24,11 +31,8 @@ export function RelationshipsList({ person }: { person: Person }) {
       <StatePanel
         tone="error"
         title={messages.employees.relationshipsFailed}
-        action={
-          <button type="button" className="button" onClick={relationships.retry}>
-            {messages.systemStatus.retry}
-          </button>
-        }
+        className="my-0"
+        action={<RetryButton onClick={relationships.retry} />}
       >
         {describeApiError(relationships.error, messages)}
       </StatePanel>
@@ -36,47 +40,52 @@ export function RelationshipsList({ person }: { person: Person }) {
   }
 
   if (relationships.data.length === 0) {
-    return <StatePanel tone="success" title={messages.employees.relationshipsEmpty} />
+    return <EmptyState title={messages.employees.relationshipsEmpty} />
   }
 
   return (
-    <table className="data-table">
-      <caption className="sr-only">{messages.employees.relationshipsTitle}</caption>
-      <thead>
-        <tr>
-          <th scope="col">{messages.employees.employeeNumber}</th>
-          <th scope="col">{messages.employees.employmentScheme}</th>
-          <th scope="col">{messages.employees.effectiveFrom}</th>
-          <th scope="col">{messages.employees.relationshipState}</th>
-          <th scope="col">{messages.employees.actions}</th>
-        </tr>
-      </thead>
-      <tbody>
-        {relationships.data.map((relationship) => (
-          <tr key={relationship.id}>
-            <td>{relationship.employee_number ?? messages.employees.noEmployeeNumber}</td>
-            <td>
-              {relationship.employee_number_scheme === 'PERMANENT'
-                ? messages.employees.schemePermanent
-                : messages.employees.schemeContract}
-            </td>
-            <td>{relationship.effective_from ?? '—'}</td>
-            <td>
-              {relationship.end_knowledge_state === 'KNOWN'
-                ? messages.employees.relationshipEnded
-                : messages.employees.relationshipActive}
-            </td>
-            <td>
-              <Link
-                className="button button--small"
-                to={`/employees/${person.id}/relationships/${relationship.id}`}
-              >
+    <DataTable
+      caption={messages.employees.relationshipsTitle}
+      rows={relationships.data}
+      getKey={(relationship) => relationship.id}
+      columns={[
+        {
+          header: messages.employees.employeeNumber,
+          cell: (relationship) =>
+            relationship.employee_number ? <Ltr>{relationship.employee_number}</Ltr> : messages.employees.noEmployeeNumber,
+        },
+        {
+          header: messages.employees.employmentScheme,
+          cell: (relationship) =>
+            relationship.employee_number_scheme === 'PERMANENT'
+              ? messages.employees.schemePermanent
+              : messages.employees.schemeContract,
+        },
+        {
+          header: messages.employees.effectiveFrom,
+          cell: (relationship) => (relationship.effective_from ? <Ltr>{relationship.effective_from}</Ltr> : '—'),
+        },
+        {
+          header: messages.employees.relationshipState,
+          cell: (relationship) =>
+            relationship.end_knowledge_state === 'KNOWN' ? (
+              <StatusBadge status="inactive">{messages.employees.relationshipEnded}</StatusBadge>
+            ) : (
+              <StatusBadge status="active">{messages.employees.relationshipActive}</StatusBadge>
+            ),
+        },
+        {
+          header: messages.employees.actions,
+          cell: (relationship) => (
+            <Button asChild size="sm" variant="outline">
+              <Link to={`/employees/${person.id}/relationships/${relationship.id}`}>
                 {messages.employees.view360}
+                <ArrowLeft aria-hidden="true" className="rtl:rotate-0 ltr:rotate-180" />
               </Link>
-            </td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+            </Button>
+          ),
+        },
+      ]}
+    />
   )
 }

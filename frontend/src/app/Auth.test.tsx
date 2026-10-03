@@ -65,7 +65,11 @@ describe('authentication', () => {
 
     await screen.findByText('Admin One')
 
-    await user.click(screen.getByRole('button', { name: 'تسجيل الخروج' }))
+    // Sign-out lives in the account menu (a shadcn DropdownMenu), not as a loose header button.
+    // Opened with the keyboard: also proves the account menu is keyboard-operable.
+    screen.getByRole('button', { name: 'قائمة الحساب' }).focus()
+    await user.keyboard('{Enter}')
+    await user.click(await screen.findByRole('menuitem', { name: 'تسجيل الخروج' }))
 
     expect(await screen.findByRole('link', { name: 'تسجيل الدخول' })).toBeInTheDocument()
     expect(screen.queryByText('Admin One')).not.toBeInTheDocument()

@@ -20,6 +20,11 @@ export default tseslint.config(
     },
   },
   {
+    // shadcn/ui components are project-owned vendor source: they export variant helpers next to components.
+    files: ['src/components/ui/**/*.{ts,tsx}'],
+    rules: { 'react-refresh/only-export-components': 'off' },
+  },
+  {
     files: ['vite.config.ts'],
     languageOptions: { globals: globals.node },
   },

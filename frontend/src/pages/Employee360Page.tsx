@@ -1,5 +1,8 @@
 import { useMemo, useState } from 'react'
-import { useParams } from 'react-router'
+import { ArrowLeft } from 'lucide-react'
+import { Link, useParams } from 'react-router'
+import { Button } from '@/components/ui/button'
+import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs'
 import { PermissionGate } from '../features/auth/PermissionGate'
 import { Employee360CareerHistory } from '../features/employees/Employee360CareerHistory'
 import { Employee360Employment } from '../features/employees/Employee360Employment'
@@ -36,10 +39,10 @@ import { useI18n } from '../i18n/context'
 import { describeApiError } from '../shared/api/errorMessage'
 import { HR_PERMISSIONS } from '../shared/security/permissions'
 import { PageHeader } from '../shared/ui/PageHeader'
+import { RetryButton } from '../shared/ui/RetryButton'
 import { StatePanel } from '../shared/ui/StatePanel'
 
 type TabKey =
-  | 'overview'
   | 'employment'
   | 'workplace'
   | 'status-history'
@@ -48,7 +51,6 @@ type TabKey =
   | 'career-history'
 
 const TAB_ORDER: readonly TabKey[] = [
-  'overview',
   'employment',
   'workplace',
   'status-history',
@@ -59,7 +61,6 @@ const TAB_ORDER: readonly TabKey[] = [
 
 const TAB_LABEL_KEY: Record<
   TabKey,
-  | 'tabOverview'
   | 'tabEmployment'
   | 'tabWorkplace'
   | 'tabStatusHistory'
@@ -67,7 +68,6 @@ const TAB_LABEL_KEY: Record<
   | 'tabWorkArrangements'
   | 'tabCareerHistory'
 > = {
-  overview: 'tabOverview',
   employment: 'tabEmployment',
   workplace: 'tabWorkplace',
   'status-history': 'tabStatusHistory',
@@ -89,7 +89,7 @@ export function Employee360Page() {
   const params = useParams<{ personId: string; relationshipId: string }>()
   const personId = params.personId ?? ''
   const relationshipId = params.relationshipId ?? ''
-  const [tab, setTab] = useState<TabKey>('overview')
+  const [tab, setTab] = useState<TabKey>('status-history')
 
   const person = usePerson(personId || null)
   const relationships = useEmploymentRelationships(personId || null)
@@ -190,11 +190,7 @@ export function Employee360Page() {
           relationships.error.status === 403 ? messages.securityShared.unauthorizedTitle : messages.employee360.loadFailed
         }
         action={
-          relationships.error.status === 403 ? undefined : (
-            <button type="button" className="button" onClick={relationships.retry}>
-              {messages.systemStatus.retry}
-            </button>
-          )
+          relationships.error.status === 403 ? undefined : <RetryButton onClick={relationships.retry} />
         }
       >
         {relationships.error.status === 403
@@ -216,49 +212,29 @@ export function Employee360Page() {
 
   return (
     <PermissionGate permission={HR_PERMISSIONS.employmentRelationshipsView}>
-      <PageHeader title={messages.employee360.title} />
-
-      <Employee360Header
-        person={person.data}
-        relationship={relationship}
-        effectiveStatus={effectiveStatus}
-        effectiveIntention={effectiveIntention}
-        actualWorkplace={actualWorkplace}
-        statusCatalog={statusCatalog}
-        unitNames={unitNames}
+      <PageHeader
+        title={messages.employee360.title}
+        actions={
+          <Button asChild variant="outline" size="sm">
+            <Link to="/employees">
+              <ArrowLeft aria-hidden="true" className="ltr:rotate-180" />
+              {messages.employee360.backToSearch}
+            </Link>
+          </Button>
+        }
       />
 
-      <div className="tab-list" role="tablist" aria-label={messages.employee360.tabsLabel}>
-        {TAB_ORDER.map((key) => (
-          <button
-            key={key}
-            type="button"
-            role="tab"
-            id={`employee-360-tab-${key}`}
-            aria-selected={tab === key}
-            aria-controls={`employee-360-panel-${key}`}
-            className={tab === key ? 'tab-button tab-button--active' : 'tab-button'}
-            onClick={() => setTab(key)}
-          >
-            {messages.employee360[TAB_LABEL_KEY[key]]}
-          </button>
-        ))}
-      </div>
+      <div className="space-y-6">
+        <Employee360Header
+          person={person.data}
+          relationship={relationship}
+          effectiveStatus={effectiveStatus}
+          effectiveIntention={effectiveIntention}
+          actualWorkplace={actualWorkplace}
+          statusCatalog={statusCatalog}
+          unitNames={unitNames}
+        />
 
-      {/*
-        Every tabpanel stays mounted (hidden via the native `hidden` attribute, not unmounted) so
-        each tab button's `aria-controls` always resolves to a real element — an inactive button
-        referencing a not-yet-rendered id was a real adversarial-review finding (S18 review,
-        non-blocking #10) against an earlier draft that rendered only the active panel. All five
-        resources are already fetched unconditionally above regardless of which tab is showing, so
-        this costs nothing extra in data-fetching, only in DOM nodes.
-      */}
-      <div
-        role="tabpanel"
-        id="employee-360-panel-overview"
-        aria-labelledby="employee-360-tab-overview"
-        hidden={tab !== 'overview'}
-      >
         <Employee360Overview
           effectiveStatus={effectiveStatus}
           effectiveIntention={effectiveIntention}
@@ -267,80 +243,60 @@ export function Employee360Page() {
           placementPeriods={placementPeriods}
           unitNames={unitNames}
         />
-      </div>
-      <div
-        role="tabpanel"
-        id="employee-360-panel-employment"
-        aria-labelledby="employee-360-tab-employment"
-        hidden={tab !== 'employment'}
-      >
-        <Employee360Employment relationship={relationship} />
-      </div>
-      <div
-        role="tabpanel"
-        id="employee-360-panel-workplace"
-        aria-labelledby="employee-360-tab-workplace"
-        hidden={tab !== 'workplace'}
-      >
-        <Employee360Workplace
-          actualWorkplace={actualWorkplace}
-          placementPeriods={placementPeriods}
-          unitNames={unitNames}
-        />
-      </div>
-      <div
-        role="tabpanel"
-        id="employee-360-panel-status-history"
-        aria-labelledby="employee-360-tab-status-history"
-        hidden={tab !== 'status-history'}
-      >
-        <Employee360StatusHistory statusPeriods={statusPeriods} statusCatalog={statusCatalog} />
-        <Employee360ReturnIntentionHistory returnIntentionPeriods={returnIntentionPeriods} />
-      </div>
-      <div
-        role="tabpanel"
-        id="employee-360-panel-movement-timeline"
-        aria-labelledby="employee-360-tab-movement-timeline"
-        hidden={tab !== 'movement-timeline'}
-      >
-        <Employee360MovementTimeline
-          placementPeriods={placementPeriods}
-          secondmentPeriods={secondmentPeriods}
-          assignmentPeriods={assignmentPeriods}
-          unitNames={unitNames}
-        />
-      </div>
-      <div
-        role="tabpanel"
-        id="employee-360-panel-work-arrangements"
-        aria-labelledby="employee-360-tab-work-arrangements"
-        hidden={tab !== 'work-arrangements'}
-      >
-        <Employee360WorkArrangements
-          partialSecondments={partialSecondments}
-          workSchedules={workSchedules}
-          unitNames={unitNames}
-        />
-      </div>
-      <div
-        role="tabpanel"
-        id="employee-360-panel-career-history"
-        aria-labelledby="employee-360-tab-career-history"
-        hidden={tab !== 'career-history'}
-      >
-        <Employee360CareerHistory
-          categories={categoryPeriods}
-          contracts={contractPeriods}
-          jobTitles={jobTitlePeriods}
-          specialties={specialtyPeriods}
-          qualifications={qualifications}
-          categoryNames={categoryNames}
-          contractTypeNames={contractTypeNames}
-          jobTitleNames={jobTitleNames}
-          specialtyNames={specialtyNames}
-          degreeNames={degreeNames}
-          qualificationTypeNames={qualificationTypeNames}
-        />
+
+        {/*
+          Every tabpanel stays mounted (hidden via the `hidden` attribute, not unmounted) so each tab trigger's
+          `aria-controls` always resolves to a real element — an inactive trigger referencing a not-yet-rendered id
+          was a real adversarial-review finding (S18 review, non-blocking #10) against an earlier draft that rendered
+          only the active panel. All resources are already fetched unconditionally above regardless of which tab is
+          showing, so this costs nothing extra in data-fetching, only in DOM nodes.
+        */}
+        <Tabs value={tab} onValueChange={(value) => setTab(value as TabKey)}>
+          <TabsList aria-label={messages.employee360.tabsLabel} className="h-auto w-full flex-wrap justify-start gap-1 p-1">
+            {TAB_ORDER.map((key) => (
+              <TabsTrigger key={key} value={key} className="flex-none px-3 py-1.5">
+                {messages.employee360[TAB_LABEL_KEY[key]]}
+              </TabsTrigger>
+            ))}
+          </TabsList>
+
+          <TabsContent value="employment" forceMount hidden={tab !== 'employment'} className="mt-4">
+            <Employee360Employment relationship={relationship} />
+          </TabsContent>
+          <TabsContent value="workplace" forceMount hidden={tab !== 'workplace'} className="mt-4">
+            <Employee360Workplace actualWorkplace={actualWorkplace} placementPeriods={placementPeriods} unitNames={unitNames} />
+          </TabsContent>
+          <TabsContent value="status-history" forceMount hidden={tab !== 'status-history'} className="mt-4 space-y-4">
+            <Employee360StatusHistory statusPeriods={statusPeriods} statusCatalog={statusCatalog} />
+            <Employee360ReturnIntentionHistory returnIntentionPeriods={returnIntentionPeriods} />
+          </TabsContent>
+          <TabsContent value="movement-timeline" forceMount hidden={tab !== 'movement-timeline'} className="mt-4">
+            <Employee360MovementTimeline
+              placementPeriods={placementPeriods}
+              secondmentPeriods={secondmentPeriods}
+              assignmentPeriods={assignmentPeriods}
+              unitNames={unitNames}
+            />
+          </TabsContent>
+          <TabsContent value="work-arrangements" forceMount hidden={tab !== 'work-arrangements'} className="mt-4">
+            <Employee360WorkArrangements partialSecondments={partialSecondments} workSchedules={workSchedules} unitNames={unitNames} />
+          </TabsContent>
+          <TabsContent value="career-history" forceMount hidden={tab !== 'career-history'} className="mt-4">
+            <Employee360CareerHistory
+              categories={categoryPeriods}
+              contracts={contractPeriods}
+              jobTitles={jobTitlePeriods}
+              specialties={specialtyPeriods}
+              qualifications={qualifications}
+              categoryNames={categoryNames}
+              contractTypeNames={contractTypeNames}
+              jobTitleNames={jobTitleNames}
+              specialtyNames={specialtyNames}
+              degreeNames={degreeNames}
+              qualificationTypeNames={qualificationTypeNames}
+            />
+          </TabsContent>
+        </Tabs>
       </div>
     </PermissionGate>
   )

@@ -1,5 +1,10 @@
-import { useId, useState, type FormEvent } from 'react'
+import { Search } from 'lucide-react'
+import { useState, type FormEvent } from 'react'
+import { Button } from '@/components/ui/button'
+import { Card, CardContent } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
 import { useI18n } from '../../i18n/context'
+import { FormField } from '../../shared/ui/FormField'
 
 /**
  * The Employees screen's only discovery mechanism (spec §S18 data contract §10): an exact
@@ -16,7 +21,6 @@ export function EmployeeSearchForm({
   submitting: boolean
 }) {
   const { messages } = useI18n()
-  const fieldId = useId()
   const [value, setValue] = useState('')
   const [validationError, setValidationError] = useState<string | null>(null)
 
@@ -32,35 +36,34 @@ export function EmployeeSearchForm({
   }
 
   return (
-    <form
-      className="card employee-search-form"
-      onSubmit={(event) => {
-        handleSubmit(event)
-      }}
-    >
-      <div className="form-field">
-        <label htmlFor={fieldId}>{messages.employees.searchLabel}</label>
-        <input
-          id={fieldId}
-          name="national_id"
-          type="text"
-          inputMode="numeric"
-          autoComplete="off"
-          value={value}
-          disabled={submitting}
-          onChange={(event) => setValue(event.target.value)}
-        />
-      </div>
-
-      {validationError ? (
-        <p role="alert" className="field-error">
-          {validationError}
-        </p>
-      ) : null}
-
-      <button type="submit" className="button" disabled={submitting}>
-        {submitting ? messages.employees.searching : messages.employees.searchAction}
-      </button>
-    </form>
+    <Card>
+      <CardContent>
+        <form className="flex flex-col gap-4 sm:flex-row sm:items-start" noValidate onSubmit={handleSubmit}>
+          <div className="min-w-0 flex-1">
+            <FormField label={messages.employees.searchLabel} required helper={messages.employees.searchHelper} error={validationError}>
+              {(field) => (
+                <div className="relative">
+                  <Search aria-hidden="true" className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                  <Input
+                    {...field}
+                    name="national_id"
+                    type="text"
+                    inputMode="numeric"
+                    autoComplete="off"
+                    className="h-11 ps-9 text-base tabular-nums"
+                    value={value}
+                    disabled={submitting}
+                    onChange={(event) => setValue(event.target.value)}
+                  />
+                </div>
+              )}
+            </FormField>
+          </div>
+          <Button type="submit" size="lg" className="sm:mt-[1.625rem]" disabled={submitting}>
+            {submitting ? messages.employees.searching : messages.employees.searchAction}
+          </Button>
+        </form>
+      </CardContent>
+    </Card>
   )
 }

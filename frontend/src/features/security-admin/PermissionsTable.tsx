@@ -1,5 +1,8 @@
 import { useI18n } from '../../i18n/context'
 import { describeApiError } from '../../shared/api/errorMessage'
+import { DataTable } from '../../shared/ui/DataTable'
+import { Ltr } from '../../shared/ui/Ltr'
+import { RetryButton } from '../../shared/ui/RetryButton'
 import { StatePanel } from '../../shared/ui/StatePanel'
 import { usePermissions } from './hooks'
 
@@ -13,45 +16,23 @@ export function PermissionsTable() {
 
   if (permissions.status === 'error') {
     return (
-      <StatePanel
-        tone="error"
-        title={messages.securityPermissions.failed}
-        action={
-          <button type="button" className="button" onClick={permissions.retry}>
-            {messages.systemStatus.retry}
-          </button>
-        }
-      >
+      <StatePanel tone="error" title={messages.securityPermissions.failed} action={<RetryButton onClick={permissions.retry} />}>
         {describeApiError(permissions.error, messages)}
       </StatePanel>
     )
   }
 
   return (
-    <table className="data-table">
-      <caption className="sr-only">{messages.securityPermissions.title}</caption>
-      <thead>
-        <tr>
-          <th scope="col">{messages.securityPermissions.code}</th>
-          <th scope="col">{messages.securityPermissions.module}</th>
-          <th scope="col">{messages.securityPermissions.description}</th>
-        </tr>
-      </thead>
-      <tbody>
-        {permissions.data.length === 0 ? (
-          <tr>
-            <td colSpan={3}>{messages.securityPermissions.empty}</td>
-          </tr>
-        ) : null}
-
-        {permissions.data.map((permission) => (
-          <tr key={permission.id}>
-            <td>{permission.code}</td>
-            <td>{permission.module}</td>
-            <td>{permission.description}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <DataTable
+      caption={messages.securityPermissions.title}
+      emptyText={messages.securityPermissions.empty}
+      rows={permissions.data}
+      getKey={(permission) => permission.id}
+      columns={[
+        { header: messages.securityPermissions.code, cell: (permission) => <Ltr>{permission.code}</Ltr> },
+        { header: messages.securityPermissions.module, cell: (permission) => permission.module },
+        { header: messages.securityPermissions.description, cell: (permission) => permission.description },
+      ]}
+    />
   )
 }

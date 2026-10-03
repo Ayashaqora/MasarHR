@@ -1,0 +1,254 @@
+/*
+ * MasarHR design system entry (Tailwind v4 + shadcn/ui, Arabic-first RTL).
+ *
+ * Semantic tokens live ONLY here. Components use utilities such as `bg-card`, `text-muted-foreground`
+ * or `bg-status-traveling`; they never hard-code colors. Light mode only: the application has no
+ * dark-mode contract (index.html declares color-scheme: light), so none is invented.
+ */
+@import "tailwindcss";
+@import "tw-animate-css";
+@import "@fontsource/ibm-plex-sans-arabic/400.css";
+@import "@fontsource/ibm-plex-sans-arabic/500.css";
+@import "@fontsource/ibm-plex-sans-arabic/600.css";
+@import "@fontsource/ibm-plex-sans-arabic/700.css";
+
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  /* ---- shadcn semantic roles ---- */
+  --background: #f4f6f9;
+  --foreground: #14233a;
+  --card: #ffffff;
+  --card-foreground: #14233a;
+  --popover: #ffffff;
+  --popover-foreground: #14233a;
+  --primary: #0f3a5f;
+  --primary-foreground: #ffffff;
+  --secondary: #e9eef4;
+  --secondary-foreground: #14233a;
+  --muted: #eef1f5;
+  --muted-foreground: #4b5c70;
+  --accent: #e3edf3;
+  --accent-foreground: #0f3a5f;
+  --destructive: #b3261e;
+  --border: #d5dce5;
+  --input: #c5cedb;
+  --ring: #1c6fd1;
+  --radius: 0.5rem;
+
+  /* ---- data series (charts, bars): one calm family, never random hues ---- */
+  --chart-1: #0f3a5f;
+  --chart-2: #0d7d74;
+  --chart-3: #8a6d1d;
+  --chart-4: #5b6b7f;
+  --chart-5: #a64b2a;
+
+  /* ---- sidebar (shadcn sidebar tokens) ---- */
+  --sidebar: #0c2a46;
+  --sidebar-foreground: #e8eef5;
+  --sidebar-primary: #0d7d74;
+  --sidebar-primary-foreground: #ffffff;
+  --sidebar-accent: #17436a;
+  --sidebar-accent-foreground: #ffffff;
+  --sidebar-border: #1f4668;
+  --sidebar-ring: #8fbcff;
+
+  /* ---- tone palette (each tone is a text/background/border triple with AA contrast) ---- */
+  --tone-success-bg: #e6f4ea;
+  --tone-success-fg: #17612f;
+  --tone-success-border: #b7dfc3;
+  --tone-info-bg: #e6eff8;
+  --tone-info-fg: #1b4b78;
+  --tone-info-border: #b9d2ea;
+  --tone-warning-bg: #fff3d9;
+  --tone-warning-fg: #7a4a00;
+  --tone-warning-border: #f0d29a;
+  --tone-danger-bg: #fdeaea;
+  --tone-danger-fg: #8a1c1c;
+  --tone-danger-border: #f1bcbc;
+  --tone-neutral-bg: #eceff3;
+  --tone-neutral-fg: #3c4b5e;
+  --tone-neutral-border: #cfd6df;
+  --tone-violet-bg: #efe9fb;
+  --tone-violet-fg: #4a2f8a;
+  --tone-violet-border: #d3c6f0;
+
+  /* ---- application-level status treatment (domain meaning -> tone; always paired with a label and an icon) ---- */
+  --status-active-bg: var(--tone-success-bg);
+  --status-active-fg: var(--tone-success-fg);
+  --status-active-border: var(--tone-success-border);
+  --status-inactive-bg: var(--tone-neutral-bg);
+  --status-inactive-fg: var(--tone-neutral-fg);
+  --status-inactive-border: var(--tone-neutral-border);
+  --status-on-duty-bg: var(--tone-success-bg);
+  --status-on-duty-fg: var(--tone-success-fg);
+  --status-on-duty-border: var(--tone-success-border);
+  --status-traveling-bg: var(--tone-info-bg);
+  --status-traveling-fg: var(--tone-info-fg);
+  --status-traveling-border: var(--tone-info-border);
+  --status-captive-bg: var(--tone-danger-bg);
+  --status-captive-fg: var(--tone-danger-fg);
+  --status-captive-border: var(--tone-danger-border);
+  --status-suspended-bg: var(--tone-warning-bg);
+  --status-suspended-fg: var(--tone-warning-fg);
+  --status-suspended-border: var(--tone-warning-border);
+  --status-unpaid-leave-bg: var(--tone-violet-bg);
+  --status-unpaid-leave-fg: var(--tone-violet-fg);
+  --status-unpaid-leave-border: var(--tone-violet-border);
+  --status-external-sick-leave-bg: var(--tone-violet-bg);
+  --status-external-sick-leave-fg: var(--tone-violet-fg);
+  --status-external-sick-leave-border: var(--tone-violet-border);
+  --status-retired-bg: var(--tone-neutral-bg);
+  --status-retired-fg: var(--tone-neutral-fg);
+  --status-retired-border: var(--tone-neutral-border);
+  --status-resigned-bg: var(--tone-neutral-bg);
+  --status-resigned-fg: var(--tone-neutral-fg);
+  --status-resigned-border: var(--tone-neutral-border);
+  --status-contract-ended-bg: var(--tone-neutral-bg);
+  --status-contract-ended-fg: var(--tone-neutral-fg);
+  --status-contract-ended-border: var(--tone-neutral-border);
+  --status-deceased-bg: var(--tone-danger-bg);
+  --status-deceased-fg: var(--tone-danger-fg);
+  --status-deceased-border: var(--tone-danger-border);
+  --status-martyr-bg: var(--tone-danger-bg);
+  --status-martyr-fg: var(--tone-danger-fg);
+  --status-martyr-border: var(--tone-danger-border);
+  --status-warning-bg: var(--tone-warning-bg);
+  --status-warning-fg: var(--tone-warning-fg);
+  --status-warning-border: var(--tone-warning-border);
+  --status-success-bg: var(--tone-success-bg);
+  --status-success-fg: var(--tone-success-fg);
+  --status-success-border: var(--tone-success-border);
+  --status-information-bg: var(--tone-info-bg);
+  --status-information-fg: var(--tone-info-fg);
+  --status-information-border: var(--tone-info-border);
+}
+
+@theme inline {
+  --font-sans: "IBM Plex Sans Arabic", "Segoe UI", Tahoma, system-ui, sans-serif;
+
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --color-card: var(--card);
+  --color-card-foreground: var(--card-foreground);
+  --color-popover: var(--popover);
+  --color-popover-foreground: var(--popover-foreground);
+  --color-primary: var(--primary);
+  --color-primary-foreground: var(--primary-foreground);
+  --color-secondary: var(--secondary);
+  --color-secondary-foreground: var(--secondary-foreground);
+  --color-muted: var(--muted);
+  --color-muted-foreground: var(--muted-foreground);
+  --color-accent: var(--accent);
+  --color-accent-foreground: var(--accent-foreground);
+  --color-destructive: var(--destructive);
+  --color-border: var(--border);
+  --color-input: var(--input);
+  --color-ring: var(--ring);
+  --color-chart-1: var(--chart-1);
+  --color-chart-2: var(--chart-2);
+  --color-chart-3: var(--chart-3);
+  --color-chart-4: var(--chart-4);
+  --color-chart-5: var(--chart-5);
+  --color-sidebar: var(--sidebar);
+  --color-sidebar-foreground: var(--sidebar-foreground);
+  --color-sidebar-primary: var(--sidebar-primary);
+  --color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
+  --color-sidebar-accent: var(--sidebar-accent);
+  --color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
+  --color-sidebar-border: var(--sidebar-border);
+  --color-sidebar-ring: var(--sidebar-ring);
+
+  --radius-sm: calc(var(--radius) - 4px);
+  --radius-md: calc(var(--radius) - 2px);
+  --radius-lg: var(--radius);
+  --radius-xl: calc(var(--radius) + 4px);
+
+  /* status-<name> (surface), status-<name>-foreground (text), status-<name>-border */
+  --color-status-active: var(--status-active-bg);
+  --color-status-active-foreground: var(--status-active-fg);
+  --color-status-active-border: var(--status-active-border);
+  --color-status-inactive: var(--status-inactive-bg);
+  --color-status-inactive-foreground: var(--status-inactive-fg);
+  --color-status-inactive-border: var(--status-inactive-border);
+  --color-status-on-duty: var(--status-on-duty-bg);
+  --color-status-on-duty-foreground: var(--status-on-duty-fg);
+  --color-status-on-duty-border: var(--status-on-duty-border);
+  --color-status-traveling: var(--status-traveling-bg);
+  --color-status-traveling-foreground: var(--status-traveling-fg);
+  --color-status-traveling-border: var(--status-traveling-border);
+  --color-status-captive: var(--status-captive-bg);
+  --color-status-captive-foreground: var(--status-captive-fg);
+  --color-status-captive-border: var(--status-captive-border);
+  --color-status-suspended: var(--status-suspended-bg);
+  --color-status-suspended-foreground: var(--status-suspended-fg);
+  --color-status-suspended-border: var(--status-suspended-border);
+  --color-status-unpaid-leave: var(--status-unpaid-leave-bg);
+  --color-status-unpaid-leave-foreground: var(--status-unpaid-leave-fg);
+  --color-status-unpaid-leave-border: var(--status-unpaid-leave-border);
+  --color-status-external-sick-leave: var(--status-external-sick-leave-bg);
+  --color-status-external-sick-leave-foreground: var(--status-external-sick-leave-fg);
+  --color-status-external-sick-leave-border: var(--status-external-sick-leave-border);
+  --color-status-retired: var(--status-retired-bg);
+  --color-status-retired-foreground: var(--status-retired-fg);
+  --color-status-retired-border: var(--status-retired-border);
+  --color-status-resigned: var(--status-resigned-bg);
+  --color-status-resigned-foreground: var(--status-resigned-fg);
+  --color-status-resigned-border: var(--status-resigned-border);
+  --color-status-contract-ended: var(--status-contract-ended-bg);
+  --color-status-contract-ended-foreground: var(--status-contract-ended-fg);
+  --color-status-contract-ended-border: var(--status-contract-ended-border);
+  --color-status-deceased: var(--status-deceased-bg);
+  --color-status-deceased-foreground: var(--status-deceased-fg);
+  --color-status-deceased-border: var(--status-deceased-border);
+  --color-status-martyr: var(--status-martyr-bg);
+  --color-status-martyr-foreground: var(--status-martyr-fg);
+  --color-status-martyr-border: var(--status-martyr-border);
+  --color-status-warning: var(--status-warning-bg);
+  --color-status-warning-foreground: var(--status-warning-fg);
+  --color-status-warning-border: var(--status-warning-border);
+  --color-status-success: var(--status-success-bg);
+  --color-status-success-foreground: var(--status-success-fg);
+  --color-status-success-border: var(--status-success-border);
+  --color-status-information: var(--status-information-bg);
+  --color-status-information-foreground: var(--status-information-fg);
+  --color-status-information-border: var(--status-information-border);
+}
+
+@layer base {
+  * {
+    @apply border-border outline-ring/50;
+  }
+
+  html {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+
+  body {
+    @apply bg-background font-sans text-foreground antialiased;
+    line-height: 1.65;
+  }
+
+  /* The main region is focused programmatically after navigation; it needs no ring. */
+  main:focus {
+    outline: none;
+  }
+
+  /* Codes, IDs and dates keep a stable left-to-right digit order inside RTL text. */
+  bdi[dir="ltr"] {
+    unicode-bidi: isolate;
+    font-variant-numeric: tabular-nums;
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    *,
+    *::before,
+    *::after {
+      animation-duration: 0.01ms !important;
+      animation-iteration-count: 1 !important;
+      transition-duration: 0.01ms !important;
+      scroll-behavior: auto !important;
+    }
+  }
+}

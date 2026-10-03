@@ -64,11 +64,19 @@ describe('Dashboard page — page-level request architecture', () => {
   })
 
   it('shows the loading state, then the canonical data', async () => {
-    stubDashboard()
+    let release!: (response: Response) => void
+    const gate = new Promise<Response>((resolve) => {
+      release = resolve
+    })
+    stubAppFetch({
+      overrides: (url) =>
+        url.includes('/auth/me') ? jsonResponse(VIEWER) : url.includes('/hr/workforce-analytics') ? gate : undefined,
+    })
     renderApp('/dashboard')
 
     expect(await screen.findByText('جارٍ تحميل مؤشرات الشهر…')).toBeInTheDocument()
-    expect(await openDashboard()).toBeInTheDocument()
+    release(jsonResponse(populatedAnalytics()))
+    expect(await screen.findByRole('heading', { level: 2, name: /القوى العاملة خلال الشهر/ })).toBeInTheDocument()
   })
 })
 
@@ -87,7 +95,7 @@ describe('Dashboard page — states', () => {
     expect(await screen.findByRole('alert')).toHaveTextContent('تعذّر تحميل مؤشرات الشهر')
     await user.click(screen.getByRole('button', { name: 'إعادة المحاولة' }))
 
-    expect(await openDashboard()).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { level: 2, name: /القوى العاملة خلال الشهر/ })).toBeInTheDocument()
     expect(analyticsCalls(fetchMock)).toHaveLength(2)
   })
 
@@ -164,7 +172,7 @@ describe('Dashboard page — semantics', () => {
     const duty = document.querySelector('[data-kpi="duty_state"]') as HTMLElement
 
     expect(within(duty).getByText('غير محدد')).toBeInTheDocument()
-    const counts = Array.from(duty.querySelectorAll('[data-bucket] .distribution__count')).map((n) => Number(n.textContent))
+    const counts = Array.from(duty.querySelectorAll('[data-bucket] [data-role="count"]')).map((n) => Number(n.textContent))
     expect(counts).toEqual([6, 3, 1])
     expect(counts.reduce((a, b) => a + b, 0)).toBe(10)
     expect(duty).toHaveAttribute('data-family', 'MUTUALLY_EXCLUSIVE_DISTRIBUTION')
@@ -188,7 +196,7 @@ describe('Dashboard page — semantics', () => {
     await openDashboard()
     const age = document.querySelector('[data-kpi="age"]') as HTMLElement
 
-    const bands = Array.from(age.querySelectorAll('.distribution__row')).map((row) => row.getAttribute('data-bucket'))
+    const bands = Array.from(age.querySelectorAll('[data-bucket]')).map((row) => row.getAttribute('data-bucket'))
     expect(bands).toEqual(['<25', '25-34', '35-44', '45-54', '55-64', '65+', 'NOT_RECORDED'])
     expect(bands).not.toContain('NOT_CALCULABLE')
     // The calculation state is informational and separate from the band distribution.
@@ -201,15 +209,17 @@ describe('Dashboard page — semantics', () => {
 
     for (const kpi of ['status_exposure', 'relationship_type', 'actual_workplace', 'employment_category']) {
       const section = document.querySelector(`[data-kpi="${kpi}"]`) as HTMLElement
-      expect(section.querySelector('.exposure-note')).toHaveTextContent('الفئات ليست تقسيماً حصرياً')
+      expect(section.querySelector('[data-role="exposure-note"]')).toHaveTextContent('الفئات ليست تقسيماً حصرياً')
       expect(section.querySelector('[data-family="MUTUALLY_EXCLUSIVE_DISTRIBUTION"]')).toBeNull()
       expect(section.querySelector('[data-family="MULTI_VALUE_EXPOSURE"]')).not.toBeNull()
     }
     const status = document.querySelector('[data-kpi="status_exposure"]') as HTMLElement
-    const persons = Array.from(status.querySelectorAll('.distribution__count')).map((n) => Number.parseInt(n.textContent ?? '0', 10))
+    const persons = Array.from(status.querySelectorAll('[data-role="count"]')).map((n) => Number.parseInt(n.textContent ?? '0', 10))
     expect(persons.reduce((a, b) => a + b, 0)).toBeGreaterThan(10) // the buckets overlap: they are not a partition…
     expect(status.textContent).not.toMatch(/المجموع|الإجمالي|100\.00%|100%/) // …and no total or full-share claim is shown
-    expect(container.querySelector('svg, canvas')).toBeNull()
+    // Decorative Lucide icons are SVG (aria-hidden); a pie/donut chart would be a canvas or a non-decorative SVG graphic.
+    expect(container.querySelector('canvas')).toBeNull()
+    expect(container.querySelector('svg:not([aria-hidden="true"])')).toBeNull()
     expect(document.body.textContent).not.toMatch(/donut|pie/i)
   })
 
@@ -305,7 +315,8 @@ describe('Dashboard page — navigation, RTL and localization', () => {
     await openDashboard()
 
     expect(document.documentElement).toHaveAttribute('dir', 'rtl')
-    expect(screen.getByRole('link', { name: 'لوحة المؤشرات' })).toHaveAttribute('href', '/dashboard')
+    const nav = screen.getByRole('navigation', { name: 'التنقل الرئيسي' })
+    expect(within(nav).getByRole('link', { name: 'لوحة المؤشرات' })).toHaveAttribute('href', '/dashboard')
   })
 
   it('renders the English locale left-to-right with the same one-request architecture', async () => {

@@ -1,6 +1,10 @@
 import { useI18n } from '../../i18n/context'
 import { describeApiError } from '../../shared/api/errorMessage'
+import { DataTable } from '../../shared/ui/DataTable'
+import { Ltr } from '../../shared/ui/Ltr'
+import { RetryButton } from '../../shared/ui/RetryButton'
 import { StatePanel } from '../../shared/ui/StatePanel'
+import { StatusBadge } from '../../shared/ui/StatusBadge'
 import { useRoles } from './hooks'
 
 export function RolesTable() {
@@ -13,47 +17,32 @@ export function RolesTable() {
 
   if (roles.status === 'error') {
     return (
-      <StatePanel
-        tone="error"
-        title={messages.securityRoles.failed}
-        action={
-          <button type="button" className="button" onClick={roles.retry}>
-            {messages.systemStatus.retry}
-          </button>
-        }
-      >
+      <StatePanel tone="error" title={messages.securityRoles.failed} action={<RetryButton onClick={roles.retry} />}>
         {describeApiError(roles.error, messages)}
       </StatePanel>
     )
   }
 
   return (
-    <table className="data-table">
-      <caption className="sr-only">{messages.securityRoles.title}</caption>
-      <thead>
-        <tr>
-          <th scope="col">{messages.securityRoles.code}</th>
-          <th scope="col">{messages.securityRoles.nameAr}</th>
-          <th scope="col">{messages.securityRoles.nameEn}</th>
-          <th scope="col">{messages.securityRoles.status}</th>
-        </tr>
-      </thead>
-      <tbody>
-        {roles.data.length === 0 ? (
-          <tr>
-            <td colSpan={4}>{messages.securityRoles.empty}</td>
-          </tr>
-        ) : null}
-
-        {roles.data.map((role) => (
-          <tr key={role.id}>
-            <td>{role.code}</td>
-            <td>{role.name_ar}</td>
-            <td>{role.name_en}</td>
-            <td>{role.is_active ? messages.securityRoles.active : messages.securityRoles.inactive}</td>
-          </tr>
-        ))}
-      </tbody>
-    </table>
+    <DataTable
+      caption={messages.securityRoles.title}
+      emptyText={messages.securityRoles.empty}
+      rows={roles.data}
+      getKey={(role) => role.id}
+      columns={[
+        { header: messages.securityRoles.code, cell: (role) => <Ltr>{role.code}</Ltr> },
+        { header: messages.securityRoles.nameAr, cell: (role) => role.name_ar },
+        { header: messages.securityRoles.nameEn, cell: (role) => <span dir="ltr">{role.name_en}</span> },
+        {
+          header: messages.securityRoles.status,
+          cell: (role) =>
+            role.is_active ? (
+              <StatusBadge status="active">{messages.securityRoles.active}</StatusBadge>
+            ) : (
+              <StatusBadge status="inactive">{messages.securityRoles.inactive}</StatusBadge>
+            ),
+        },
+      ]}
+    />
   )
 }

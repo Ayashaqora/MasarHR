@@ -1,4 +1,7 @@
+import { CalendarDays } from 'lucide-react'
 import { useState } from 'react'
+import { Card, CardContent } from '@/components/ui/card'
+import { Input } from '@/components/ui/input'
 import { PermissionGate } from '../features/auth/PermissionGate'
 import { DashboardView } from '../features/dashboard/DashboardView'
 import { useWorkforceAnalytics } from '../features/dashboard/hooks'
@@ -10,7 +13,11 @@ import {
 import { useI18n } from '../i18n/context'
 import { describeApiError } from '../shared/api/errorMessage'
 import { PERMISSIONS_HR_WORKFORCE_ANALYTICS_VIEW } from '../shared/security/permissions'
+import { FormField } from '../shared/ui/FormField'
+import { Ltr } from '../shared/ui/Ltr'
 import { PageHeader } from '../shared/ui/PageHeader'
+import { RetryButton } from '../shared/ui/RetryButton'
+import { Skeleton } from '@/components/ui/skeleton'
 import { StatePanel } from '../shared/ui/StatePanel'
 
 /**
@@ -27,35 +34,34 @@ export function DashboardPage() {
     <>
       <PageHeader title={d.title} description={d.intro} />
       <PermissionGate permission={PERMISSIONS_HR_WORKFORCE_ANALYTICS_VIEW}>
-        <div className="month-picker">
-          <label htmlFor="reporting-month" className="month-picker__label">
-            {d.monthLabel}
-          </label>
-          <input
-            id="reporting-month"
-            className="month-picker__input"
-            type="month"
-            value={reportingMonthToMonthInput(month)}
-            aria-describedby="reporting-month-help"
-            onChange={(event) => {
-              const next = monthInputToReportingMonth(event.target.value)
-              if (next === null) {
-                setInvalid(true)
-                return
-              }
-              setInvalid(false)
-              setMonth(next)
-            }}
-          />
-          <p id="reporting-month-help" className="month-picker__help">
-            {d.monthHelp}
-          </p>
-          {invalid ? (
-            <p role="alert" className="month-picker__error">
-              {d.invalidMonth}
-            </p>
-          ) : null}
-        </div>
+        <Card className="mb-6">
+          <CardContent>
+            <form noValidate onSubmit={(event) => event.preventDefault()} className="max-w-sm">
+              <FormField label={d.monthLabel} helper={d.monthHelp} error={invalid ? d.invalidMonth : null}>
+                {(field) => (
+                  <div className="relative">
+                    <CalendarDays aria-hidden="true" className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
+                    <Input
+                      {...field}
+                      type="month"
+                      className="ps-9"
+                      value={reportingMonthToMonthInput(month)}
+                      onChange={(event) => {
+                        const next = monthInputToReportingMonth(event.target.value)
+                        if (next === null) {
+                          setInvalid(true)
+                          return
+                        }
+                        setInvalid(false)
+                        setMonth(next)
+                      }}
+                    />
+                  </div>
+                )}
+              </FormField>
+            </form>
+          </CardContent>
+        </Card>
         <DashboardBody month={month} />
       </PermissionGate>
     </>
@@ -69,7 +75,15 @@ function DashboardBody({ month }: { month: string }) {
   const state = useWorkforceAnalytics(month)
 
   if (state.status === 'loading') {
-    return <StatePanel tone="loading" title={d.loading} />
+    return (
+      <div className="space-y-4" aria-hidden="false">
+        <StatePanel tone="loading" title={d.loading} className="my-0" />
+        <div className="grid gap-4 sm:grid-cols-2" aria-hidden="true">
+          <Skeleton className="h-28" />
+          <Skeleton className="h-28" />
+        </div>
+      </div>
+    )
   }
 
   if (state.status === 'error') {
@@ -79,11 +93,7 @@ function DashboardBody({ month }: { month: string }) {
         tone="error"
         title={forbidden ? d.forbiddenTitle : d.errorTitle}
         action={
-          forbidden ? undefined : (
-            <button type="button" className="button" onClick={state.retry}>
-              {d.retry}
-            </button>
-          )
+          forbidden ? undefined : <RetryButton onClick={state.retry} />
         }
       >
         {forbidden ? d.forbiddenDescription : describeApiError(state.error, messages)}
@@ -93,8 +103,8 @@ function DashboardBody({ month }: { month: string }) {
 
   return (
     <>
-      <p className="dashboard-month" data-testid="selected-month">
-        {d.selectedMonth}: {state.data.month_start} — {state.data.month_end}
+      <p className="mb-4 text-sm font-medium text-muted-foreground" data-testid="selected-month">
+        {d.selectedMonth}: <Ltr>{state.data.month_start}</Ltr> — <Ltr>{state.data.month_end}</Ltr>
       </p>
       <DashboardView data={state.data} />
     </>

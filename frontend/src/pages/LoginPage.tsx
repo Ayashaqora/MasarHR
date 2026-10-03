@@ -13,9 +13,9 @@ export function LoginPage() {
   }
 
   return (
-    <>
-      <PageHeader title={messages.auth.pageTitle} />
+    <div className="mx-auto w-full max-w-md pt-6 sm:pt-12">
+      <PageHeader title={messages.auth.pageTitle} description={messages.app.tagline} />
       <LoginForm />
-    </>
+    </div>
   )
 }

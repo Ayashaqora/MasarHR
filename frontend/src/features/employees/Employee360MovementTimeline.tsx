@@ -1,7 +1,12 @@
+import { ArrowLeftRight, Building2, ClipboardList, type LucideIcon } from 'lucide-react'
+import { Badge } from '@/components/ui/badge'
 import { useI18n } from '../../i18n/context'
 import { describeApiError } from '../../shared/api/errorMessage'
 import type { ApiResourceState } from '../../shared/hooks/useApiResource'
+import { EmptyState } from '../../shared/ui/EmptyState'
+import { SectionCard } from '../../shared/ui/SectionCard'
 import { StatePanel } from '../../shared/ui/StatePanel'
+import { Timeline } from '../../shared/ui/Timeline'
 import type { OrganizationalUnitPeriod } from './api'
 
 type MovementKind = 'placement' | 'secondment' | 'assignment'
@@ -10,6 +15,12 @@ interface MovementEntry {
   key: string
   kind: MovementKind
   period: OrganizationalUnitPeriod
+}
+
+const KIND_ICON: Record<MovementKind, LucideIcon> = {
+  placement: Building2,
+  secondment: ArrowLeftRight,
+  assignment: ClipboardList,
 }
 
 /**
@@ -24,6 +35,7 @@ interface MovementEntry {
  * record) is not derivable from period data alone and is not attempted (spec §14: "If transfer
  * has no dedicated persisted event... perform that composition in the backend read model, not by
  * guessing in React" — S18 chose not to add that backend composition; see spec §S18 gap matrix).
+ * Movement is deliberately styled as a neutral tag, never as a status badge: it is independent of employment status.
  */
 export function Employee360MovementTimeline({
   placementPeriods,
@@ -37,6 +49,7 @@ export function Employee360MovementTimeline({
   unitNames: { status: 'loading' | 'ready'; names: Record<string, string> }
 }) {
   const { messages } = useI18n()
+  const e = messages.employee360
 
   const sources: Array<{ kind: MovementKind; state: ApiResourceState<OrganizationalUnitPeriod[]> }> = [
     { kind: 'placement', state: placementPeriods },
@@ -48,7 +61,7 @@ export function Employee360MovementTimeline({
   const allErrored = sources.every(({ state }) => state.status === 'error')
 
   if (anyLoading) {
-    return <StatePanel tone="loading" title={messages.employee360.loading} />
+    return <StatePanel tone="loading" title={e.loading} />
   }
 
   if (allErrored) {
@@ -56,7 +69,7 @@ export function Employee360MovementTimeline({
     return (
       <StatePanel
         tone="error"
-        title={first.status === 'error' && first.error.status === 403 ? messages.securityShared.unauthorizedTitle : messages.employee360.loadFailed}
+        title={first.status === 'error' && first.error.status === 403 ? messages.securityShared.unauthorizedTitle : e.loadFailed}
       >
         {first.status === 'error' && first.error.status === 403
           ? messages.securityShared.unauthorizedDescription
@@ -77,50 +90,48 @@ export function Employee360MovementTimeline({
   }
 
   const partialFailures = sources.filter(({ state }) => state.status === 'error')
-
-  if (entries.length === 0) {
-    return <StatePanel tone="success" title={messages.employee360.noMovements} />
-  }
-
-  const sorted = [...entries].sort(
-    (a, b) => (b.period.effective_from ?? '').localeCompare(a.period.effective_from ?? ''),
-  )
+  const sorted = [...entries].sort((a, b) => (b.period.effective_from ?? '').localeCompare(a.period.effective_from ?? ''))
 
   const kindLabel: Record<MovementKind, string> = {
-    placement: messages.employee360.sourcePlacement,
-    secondment: messages.employee360.sourceSecondment,
-    assignment: messages.employee360.sourceAssignment,
+    placement: e.sourcePlacement,
+    secondment: e.sourceSecondment,
+    assignment: e.sourceAssignment,
   }
 
   return (
-    <div className="tab-panel-content">
+    <div className="space-y-4">
       {partialFailures.length > 0 ? (
-        <StatePanel tone="error" title={messages.employee360.partialMovementDataTitle}>
-          {messages.employee360.partialMovementDataDescription}
+        <StatePanel tone="error" title={e.partialMovementDataTitle} className="my-0">
+          {e.partialMovementDataDescription}
         </StatePanel>
       ) : null}
 
-      <table className="data-table">
-        <caption className="sr-only">{messages.employee360.tabMovementTimeline}</caption>
-        <thead>
-          <tr>
-            <th scope="col">{messages.employee360.movementType}</th>
-            <th scope="col">{messages.employee360.unit}</th>
-            <th scope="col">{messages.employees.effectiveFrom}</th>
-            <th scope="col">{messages.employee360.effectiveTo}</th>
-          </tr>
-        </thead>
-        <tbody>
-          {sorted.map((entry) => (
-            <tr key={entry.key}>
-              <td>{kindLabel[entry.kind]}</td>
-              <td>{unitNames.names[entry.period.organizational_unit_id] ?? entry.period.organizational_unit_id}</td>
-              <td>{entry.period.effective_from ?? '—'}</td>
-              <td>{entry.period.effective_to ?? messages.employee360.openEnded}</td>
-            </tr>
-          ))}
-        </tbody>
-      </table>
+      <SectionCard level={3} headingId="movement-timeline-heading" title={e.tabMovementTimeline}>
+        {sorted.length === 0 ? (
+          <EmptyState title={e.noMovements} />
+        ) : (
+          <Timeline
+            label={e.movementTimelineLabel}
+            fromLabel={e.periodFrom}
+            toLabel={e.periodTo}
+            entries={sorted.map((entry) => {
+              const Icon = KIND_ICON[entry.kind]
+              return {
+                key: entry.key,
+                title: (
+                  <Badge variant="secondary" className="gap-1.5">
+                    <Icon aria-hidden="true" className="size-3.5" />
+                    {kindLabel[entry.kind]}
+                  </Badge>
+                ),
+                detail: unitNames.names[entry.period.organizational_unit_id] ?? entry.period.organizational_unit_id,
+                from: entry.period.effective_from ?? '—',
+                to: entry.period.effective_to ?? e.openEnded,
+              }
+            })}
+          />
+        )}
+      </SectionCard>
     </div>
   )
 }

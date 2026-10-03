@@ -1,3 +1,5 @@
+import { Alert, AlertDescription, AlertTitle } from '@/components/ui/alert'
+import { CircleCheck } from 'lucide-react'
 import { useI18n } from '../../i18n/context'
 import type { DataQualityEntry, MultiValueSection, PlacementUnit, WorkforceAnalytics } from './api'
 import {
@@ -14,10 +16,14 @@ import {
 } from './labels'
 import { usePercentText } from './usePercentText'
 import {
+  CountList,
   DistributionList,
   ExposureList,
+  ExposureNote,
   KpiSection,
+  QualityFinding,
   ScalarCard,
+  SubHeading,
   type DistributionRow,
   type ExposureRow,
 } from './widgets'
@@ -86,23 +92,24 @@ export function DashboardView({ data }: { data: WorkforceAnalytics }) {
   const flows = data.workforce_flows
 
   return (
-    <div className="dashboard" data-reporting-month={data.reporting_month}>
+    <div className="space-y-6" data-reporting-month={data.reporting_month}>
       {zero ? (
-        <div className="state-panel state-panel--success" role="status" data-testid="zero-population">
-          <p className="state-panel__title">{d.zeroTitle}</p>
-          <div className="state-panel__body">{d.zeroDescription}</div>
-        </div>
+        <Alert role="status" data-testid="zero-population" className="border-status-information-border bg-status-information text-status-information-foreground">
+          <CircleCheck aria-hidden="true" />
+          <AlertTitle>{d.zeroTitle}</AlertTitle>
+          <AlertDescription className="text-status-information-foreground">{d.zeroDescription}</AlertDescription>
+        </Alert>
       ) : null}
 
       <KpiSection kpi="overall_headcount" title={d.populationTitle}>
-        <div className="kpi-grid">
+        <div className="grid gap-4 sm:grid-cols-2">
           <ScalarCard kpi="overall_headcount" label={d.headcountLabel} value={data.population.overall_headcount} hint={d.headcountHint} />
           <ScalarCard kpi="relationship_count" label={d.relationshipsLabel} value={data.population.relationship_count} hint={d.relationshipsHint} />
         </div>
       </KpiSection>
 
       {zero ? null : (
-        <>
+        <div className="grid gap-4 lg:grid-cols-2">
           <KpiSection kpi="duty_state" title={d.dutyTitle} hint={d.dutyHint}>
             <DistributionList rows={duty} />
           </KpiSection>
@@ -113,27 +120,31 @@ export function DashboardView({ data }: { data: WorkforceAnalytics }) {
 
           <KpiSection kpi="age" title={d.ageTitle} hint={d.ageHint}>
             <DistributionList rows={age} />
-            <h3 className="dashboard-section__subtitle">{d.ageCalculationStates}</h3>
-            <ul className="plain-list" data-testid="age-calculation-states">
-              {data.demographics.age.calculation_states.map((s) => (
-                <li key={s.state}>
-                  {ageStateLabel(d, s.state)}: {s.person_count}
-                </li>
-              ))}
-            </ul>
+            <SubHeading>{d.ageCalculationStates}</SubHeading>
+            <CountList
+              testId="age-calculation-states"
+              items={data.demographics.age.calculation_states.map((s) => ({
+                key: s.state,
+                text: (
+                  <>
+                    {ageStateLabel(d, s.state)}: {s.person_count}
+                  </>
+                ),
+              }))}
+            />
           </KpiSection>
 
           <KpiSection kpi="service" title={d.serviceTitle} hint={d.serviceHint}>
             <DistributionList rows={service} />
           </KpiSection>
 
-          <KpiSection kpi="primary_qualification" title={d.qualificationTitle} hint={d.qualificationHint}>
+          <KpiSection kpi="primary_qualification" title={d.qualificationTitle} hint={d.qualificationHint} wide>
             <DistributionList rows={qualification} />
           </KpiSection>
 
           <KpiSection kpi="specialty" title={d.specialtyTitle}>
             {exposure(data.qualifications.specialty.specialties)}
-            <h3 className="dashboard-section__subtitle">{d.cadreMappingTitle}</h3>
+            <SubHeading>{d.cadreMappingTitle}</SubHeading>
             {exposure(data.qualifications.specialty.cadre_mapping)}
           </KpiSection>
 
@@ -143,7 +154,7 @@ export function DashboardView({ data }: { data: WorkforceAnalytics }) {
 
           <KpiSection kpi="contract_dimension" title={d.contractTitle}>
             {exposure(data.employment.contract_dimension.contract_types)}
-            <h3 className="dashboard-section__subtitle">{d.contractMappingTitle}</h3>
+            <SubHeading>{d.contractMappingTitle}</SubHeading>
             {exposure(data.employment.contract_dimension.population_mapping)}
           </KpiSection>
 
@@ -151,34 +162,32 @@ export function DashboardView({ data }: { data: WorkforceAnalytics }) {
             {exposure(data.employment.relationship_type)}
           </KpiSection>
 
-          <KpiSection kpi="organizational_placement" title={d.organizationTitle} hint={d.organizationHint}>
-            <p className="exposure-note" role="note">
-              {d.exposureNote}
-            </p>
-            <ul className="hierarchy" data-family="HIERARCHY">
+          <KpiSection kpi="organizational_placement" title={d.organizationTitle} hint={d.organizationHint} wide>
+            <ExposureNote />
+            <ul className="divide-y rounded-md border" data-family="HIERARCHY">
               {placement.units.map((unit: PlacementUnit) => (
                 <li
                   key={unit.unit_id}
-                  className="hierarchy__row"
+                  className="grid gap-x-4 gap-y-1 px-3 py-2 text-sm sm:grid-cols-[minmax(0,1fr)_auto_auto] sm:items-baseline"
                   data-unit={unit.unit_id}
-                  style={{ paddingInlineStart: `${unit.depth * 1.25}rem` }}
+                  style={{ paddingInlineStart: `${0.75 + unit.depth * 1.25}rem` }}
                 >
-                  <span className="hierarchy__name">{unit.name}</span>
-                  <span>
+                  <span className="font-medium">{unit.name}</span>
+                  <span className="tabular-nums text-muted-foreground">
                     {d.organizationDirect}: {unit.direct_person_count} ({percentText(unit.direct_exposure_share)})
                   </span>
-                  <span>
+                  <span className="tabular-nums text-muted-foreground">
                     {d.organizationSubtree}: {unit.subtree_person_count} ({percentText(unit.subtree_exposure_share)})
                   </span>
                 </li>
               ))}
             </ul>
-            <p className="dashboard-section__hint" data-testid="placement-not-recorded">
+            <p className="text-sm text-muted-foreground" data-testid="placement-not-recorded">
               {d.organizationNotRecorded}: {placement.not_recorded_person_count} ({percentText(placement.not_recorded_exposure_share)})
             </p>
           </KpiSection>
 
-          <KpiSection kpi="actual_workplace" title={d.workplaceTitle} hint={d.workplaceHint}>
+          <KpiSection kpi="actual_workplace" title={d.workplaceTitle} hint={d.workplaceHint} wide>
             <ExposureList
               rows={workplaces.workplaces.map((w) => ({
                 key: w.unit_id,
@@ -197,47 +206,57 @@ export function DashboardView({ data }: { data: WorkforceAnalytics }) {
               }))}
             />
             {workplaces.non_determinable.length > 0 ? (
-              <ul className="plain-list" data-testid="workplace-non-determinable">
-                {workplaces.non_determinable.map((n) => (
-                  <li key={n.state}>
-                    {d.workplaceNonDeterminable} — {nonDeterminableLabel(d, n.state)}: {n.person_count} ({percentText(n.exposure_share)})
-                  </li>
-                ))}
-              </ul>
+              <CountList
+                testId="workplace-non-determinable"
+                items={workplaces.non_determinable.map((n) => ({
+                  key: n.state,
+                  text: (
+                    <>
+                      {d.workplaceNonDeterminable} — {nonDeterminableLabel(d, n.state)}: {n.person_count} ({percentText(n.exposure_share)})
+                    </>
+                  ),
+                }))}
+              />
             ) : null}
           </KpiSection>
 
-          <KpiSection kpi="status_exposure" title={d.statusTitle}>
+          <KpiSection kpi="status_exposure" title={d.statusTitle} wide>
             {exposure(data.employment_status.status_exposure)}
           </KpiSection>
-        </>
+        </div>
       )}
 
-      <KpiSection kpi="relationship_starts" title={d.flowsTitle}>
-        <div className="kpi-grid">
-          <ScalarCard kpi="relationship_starts" label={d.startsLabel} value={flows.relationship_starts.event_count} hint={d.startsHint} />
-          <ScalarCard kpi="relationship_ends" label={d.endsLabel} value={flows.relationship_ends.event_count} hint={d.endsHint} />
-        </div>
-        {flows.relationship_ends.event_only_event_count > 0 ? (
-          <p className="dashboard-section__hint" data-testid="ends-event-only">
-            {d.endsEventOnly}: {flows.relationship_ends.event_only_event_count}
-          </p>
-        ) : null}
-        {flows.relationship_ends.by_reason.length > 0 ? (
-          <>
-            <h3 className="dashboard-section__subtitle">{d.endsByReason}</h3>
-            <ul className="plain-list" data-testid="ends-by-reason">
-              {flows.relationship_ends.by_reason.map((r) => (
-                <li key={r.reason}>
-                  {reasonLabel(d, r.reason)}: {r.event_count}
-                </li>
-              ))}
-            </ul>
-          </>
-        ) : null}
-      </KpiSection>
+      <div className="grid gap-4 lg:grid-cols-2">
+        <KpiSection kpi="relationship_starts" title={d.flowsTitle}>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <ScalarCard kpi="relationship_starts" label={d.startsLabel} value={flows.relationship_starts.event_count} hint={d.startsHint} />
+            <ScalarCard kpi="relationship_ends" label={d.endsLabel} value={flows.relationship_ends.event_count} hint={d.endsHint} />
+          </div>
+          {flows.relationship_ends.event_only_event_count > 0 ? (
+            <p className="text-sm text-muted-foreground" data-testid="ends-event-only">
+              {d.endsEventOnly}: {flows.relationship_ends.event_only_event_count}
+            </p>
+          ) : null}
+          {flows.relationship_ends.by_reason.length > 0 ? (
+            <>
+              <SubHeading>{d.endsByReason}</SubHeading>
+              <CountList
+                testId="ends-by-reason"
+                items={flows.relationship_ends.by_reason.map((r) => ({
+                  key: r.reason,
+                  text: (
+                    <>
+                      {reasonLabel(d, r.reason)}: {r.event_count}
+                    </>
+                  ),
+                }))}
+              />
+            </>
+          ) : null}
+        </KpiSection>
 
-      <DataQualityPanel entries={data.data_quality} />
+        <DataQualityPanel entries={data.data_quality} />
+      </div>
     </div>
   )
 }
@@ -251,17 +270,18 @@ function DataQualityPanel({ entries }: { entries: DataQualityEntry[] }) {
   return (
     <KpiSection kpi="data_quality" title={d.dataQualityTitle} hint={d.dataQualityHint}>
       {findings.length === 0 ? (
-        <p data-testid="dq-none">{d.dataQualityNone}</p>
+        <p className="text-sm text-muted-foreground" data-testid="dq-none">
+          {d.dataQualityNone}
+        </p>
       ) : (
-        <ul className="dq-list" role="list">
+        <ul className="space-y-2" role="list">
           {findings.map((entry) => (
-            <li key={entry.code} className="dq-list__item" data-dq={entry.code}>
-              <span className="dq-list__label">{dataQualityLabel(d, entry.code)}</span>
-              <span>
-                {entry.person_count} {d.persons}
-                {entry.relationship_count !== null ? ` · ${entry.relationship_count} ${d.relationships}` : ''}
-              </span>
-            </li>
+            <QualityFinding
+              key={entry.code}
+              code={entry.code}
+              label={dataQualityLabel(d, entry.code)}
+              counts={`${entry.person_count} ${d.persons}${entry.relationship_count !== null ? ` · ${entry.relationship_count} ${d.relationships}` : ''}`}
+            />
           ))}
         </ul>
       )}
