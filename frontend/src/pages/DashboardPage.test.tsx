@@ -60,7 +60,7 @@ describe('Dashboard page — page-level request architecture', () => {
 
     await waitFor(() => expect(analyticsCalls(fetchMock)).toHaveLength(2))
     expect(analyticsCalls(fetchMock)[1]).toContain('month=2026-03-01')
-    expect(await screen.findByTestId('selected-month')).toHaveTextContent('2026-11-01 — 2026-11-30')
+    expect(await screen.findByTestId('selected-month')).toHaveTextContent('01/11/2026 — 30/11/2026')
   })
 
   it('shows the loading state, then the canonical data', async () => {
@@ -151,6 +151,26 @@ describe('Dashboard page — states', () => {
 
     expect(await screen.findByRole('alert')).toHaveTextContent('اختر شهراً صالحاً.')
     expect(analyticsCalls(fetchMock)).toHaveLength(1)
+  })
+
+  it('never silently fetches a nonsense year (0000) typed into the visible MonthInput segments, and keeps the request on the last valid month', async () => {
+    vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-11-15T10:00:00') })
+    const fetchMock = stubDashboard()
+    const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime })
+    await openDashboard()
+
+    // Typed via the real visible segments (not the hidden input a parent test exercises above), touching only
+    // the year so the already-valid month segment ("11") never passes through its own separately-valid
+    // intermediate state. A year of "0000" is not emitted by MonthInput at all (see MonthInput.test.tsx), so
+    // the component's own hidden value — and so monthInputToReportingMonth — never sees "2026-11" replaced by
+    // "0000-11"; it only ever sees ''.
+    await user.clear(screen.getByLabelText('شهر التقرير — السنة'))
+    await user.type(screen.getByLabelText('شهر التقرير — السنة'), '0000')
+
+    expect(await screen.findByRole('alert')).toHaveTextContent('اختر شهراً صالحاً.')
+    // Still exactly the one request made for the page's initial (last valid) month — never one for "0000-11".
+    expect(analyticsCalls(fetchMock)).toHaveLength(1)
+    expect(analyticsCalls(fetchMock)[0]).toContain('month=2026-11-01')
   })
 })
 

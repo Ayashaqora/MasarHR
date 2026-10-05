@@ -17,9 +17,9 @@ export const PERMISSIONS = {
 
 /**
  * Mirrors App\Modules\HumanResources\Infrastructure\Authorization\HumanResourcesPermissionCatalog
- * on the backend. S18 (Employee 360) is read-only, so only the *_VIEW codes are used by any S18
- * component — the write codes are listed for parity with the backend catalog but nothing in S18
- * checks them (spec §S18 write-action boundary §16/§25).
+ * on the backend (exact codes, none invented). S18 used only the *_VIEW codes; S46 (Employee 360
+ * operations) also checks the write codes below to decide which actions to offer. Read permission never
+ * implies write permission, and the backend re-checks every code (plus organizational scope) on every request.
  */
 export const HR_PERMISSIONS = {
   personsView: 'hr.persons.view',
@@ -38,6 +38,12 @@ export const HR_PERMISSIONS = {
   workplaceAssignmentPeriodsView: 'hr.workplace_assignment_periods.view',
   workplaceAssignmentPeriodsStart: 'hr.workplace_assignment_periods.start',
   workplaceAssignmentPeriodsEnd: 'hr.workplace_assignment_periods.end',
+  partialSecondmentPeriodsView: 'hr.partial_secondment_periods.view',
+  partialSecondmentPeriodsRecord: 'hr.partial_secondment_periods.record',
+  workSchedulePeriodsView: 'hr.work_schedule_periods.view',
+  workSchedulePeriodsRecord: 'hr.work_schedule_periods.record',
+  returnIntentionPeriodsView: 'hr.return_intention_periods.view',
+  returnIntentionPeriodsRecord: 'hr.return_intention_periods.record',
 } as const
 
 /**

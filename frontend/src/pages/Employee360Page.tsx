@@ -11,6 +11,9 @@ import { Employee360MovementTimeline } from '../features/employees/Employee360Mo
 import { Employee360Overview } from '../features/employees/Employee360Overview'
 import { Employee360ReturnIntentionHistory } from '../features/employees/Employee360ReturnIntention'
 import { Employee360StatusHistory } from '../features/employees/Employee360StatusHistory'
+import { MovementOperations } from '../features/employees/operations/MovementOperations'
+import { EndRelationshipOperations, WorkScheduleOperations } from '../features/employees/operations/ScheduleAndEndOperations'
+import { ReturnIntentionOperations, StatusOperations } from '../features/employees/operations/StatusOperations'
 import { Employee360WorkArrangements } from '../features/employees/Employee360WorkArrangements'
 import { Employee360Workplace } from '../features/employees/Employee360Workplace'
 import {
@@ -38,6 +41,8 @@ import {
 import { useI18n } from '../i18n/context'
 import { describeApiError } from '../shared/api/errorMessage'
 import { HR_PERMISSIONS } from '../shared/security/permissions'
+import { FeedbackContext } from '../shared/ui/feedbackContext'
+import { OperationFeedback } from '../shared/ui/Operation'
 import { PageHeader } from '../shared/ui/PageHeader'
 import { RetryButton } from '../shared/ui/RetryButton'
 import { StatePanel } from '../shared/ui/StatePanel'
@@ -77,9 +82,10 @@ const TAB_LABEL_KEY: Record<
 }
 
 /**
- * S18 Employee 360 page (spec §S18 flow §7/§12). Read-only (spec §16): no transfer, secondment,
- * assignment, status-transition or employment-termination controls are offered here even though
- * the backend commands exist — those operational workflows are explicitly out of S18 scope.
+ * S18 Employee 360 page (spec §S18 flow §7/§12). S46 adds the operational actions that wire the EXISTING backend
+ * commands (status, return intention, transfer, secondment, assignment, partial secondment, work schedule,
+ * relationship end); each is offered only to a caller holding its write permission, and the backend remains the
+ * authority (permission + organizational scope) for every request.
  * Deep-linking works: every resource is fetched from the route params themselves (spec §20), not
  * from state handed down by the Employees search screen, so a bookmarked or shared URL resolves
  * the same way a search-driven navigation does.
@@ -90,6 +96,8 @@ export function Employee360Page() {
   const personId = params.personId ?? ''
   const relationshipId = params.relationshipId ?? ''
   const [tab, setTab] = useState<TabKey>('status-history')
+  // S46: the success announcement lives here, above every data-dependent branch, so a refetch cannot erase it.
+  const [feedback, setFeedback] = useState<string | null>(null)
 
   const person = usePerson(personId || null)
   const relationships = useEmploymentRelationships(personId || null)
@@ -210,8 +218,42 @@ export function Employee360Page() {
     )
   }
 
+  // S46 operations. The backend stays the authority: after any accepted write the canonical reads are re-fetched
+  // (never patched locally), and the relationship-ended state comes from the relationship read itself.
+  const ended = relationship.end_knowledge_state === 'KNOWN'
+  const context = {
+    personId,
+    relationshipId,
+    employeeLabel: person.status === 'success' ? person.data.full_name_ar || person.data.national_id : relationshipId,
+  }
+  const refetchStatus = () => {
+    effectiveStatus.retry()
+    statusPeriods.retry()
+  }
+  const refetchIntention = () => {
+    effectiveIntention.retry()
+    returnIntentionPeriods.retry()
+  }
+  const refetchMovements = () => {
+    placementPeriods.retry()
+    secondmentPeriods.retry()
+    assignmentPeriods.retry()
+    partialSecondments.retry()
+    actualWorkplace.retry()
+  }
+  const refetchAfterRelationshipChange = () => {
+    relationships.retry()
+    refetchStatus()
+    refetchIntention()
+    refetchMovements()
+    workSchedules.retry()
+  }
+  const hasOpenSecondment = secondmentPeriods.status === 'success' && secondmentPeriods.data.some((period) => period.effective_to === null)
+  const hasOpenAssignment = assignmentPeriods.status === 'success' && assignmentPeriods.data.some((period) => period.effective_to === null)
+
   return (
     <PermissionGate permission={HR_PERMISSIONS.employmentRelationshipsView}>
+     <FeedbackContext.Provider value={setFeedback}>
       <PageHeader
         title={messages.employee360.title}
         actions={
@@ -223,6 +265,8 @@ export function Employee360Page() {
           </Button>
         }
       />
+
+      <OperationFeedback message={feedback} onDismiss={() => setFeedback(null)} />
 
       <div className="space-y-6">
         <Employee360Header
@@ -252,25 +296,63 @@ export function Employee360Page() {
           showing, so this costs nothing extra in data-fetching, only in DOM nodes.
         */}
         <Tabs value={tab} onValueChange={(value) => setTab(value as TabKey)}>
-          <TabsList aria-label={messages.employee360.tabsLabel} className="h-auto w-full flex-wrap justify-start gap-1 p-1">
-            {TAB_ORDER.map((key) => (
-              <TabsTrigger key={key} value={key} className="flex-none px-3 py-1.5">
-                {messages.employee360[TAB_LABEL_KEY[key]]}
-              </TabsTrigger>
-            ))}
-          </TabsList>
+          {/*
+            S46-BF02 RC2: one row, always. A wrapped list (RC1) was rejected in the real browser, so the strip never wraps.
+            The scroll container is a plain wrapper around the list (not the list itself): the list keeps the shared 36px
+            height, `w-max min-w-full` makes it exactly as wide as its tabs (full width when they fit, so desktop is
+            unchanged), and the wrapper alone scrolls horizontally when they do not. `justify-start` matters: the shared
+            default `justify-center` would push the overflowing end of the strip out of reach. The scrollbar renders in the
+            wrapper's own bottom padding, below the list, so it can never cover a tab or the content under it. Direction
+            follows the document (the start edge is right in Arabic, left in English), and every tab scrolls fully into view when focused.
+          */}
+          <div className="max-w-full overflow-x-auto overflow-y-hidden pb-2 [scrollbar-width:thin]">
+            <TabsList aria-label={messages.employee360.tabsLabel} className="w-max min-w-full flex-nowrap justify-start gap-1 p-1">
+              {TAB_ORDER.map((key) => (
+                <TabsTrigger
+                  key={key}
+                  value={key}
+                  className="flex-none px-3 py-1.5"
+                  // Browsers only scroll a focused element into view when it is wholly hidden; a half-clipped tab stayed half-clipped.
+                  onFocus={(event) => event.currentTarget.scrollIntoView({ block: 'nearest', inline: 'nearest' })}
+                >
+                  {messages.employee360[TAB_LABEL_KEY[key]]}
+                </TabsTrigger>
+              ))}
+            </TabsList>
+          </div>
 
-          <TabsContent value="employment" forceMount hidden={tab !== 'employment'} className="mt-4">
+          <TabsContent value="employment" forceMount hidden={tab !== 'employment'} className="mt-4 space-y-4">
             <Employee360Employment relationship={relationship} />
+            <EndRelationshipOperations
+              context={context}
+              relationship={relationship}
+              onChanged={refetchAfterRelationshipChange}
+              onRefresh={refetchAfterRelationshipChange}
+            />
           </TabsContent>
           <TabsContent value="workplace" forceMount hidden={tab !== 'workplace'} className="mt-4">
             <Employee360Workplace actualWorkplace={actualWorkplace} placementPeriods={placementPeriods} unitNames={unitNames} />
           </TabsContent>
           <TabsContent value="status-history" forceMount hidden={tab !== 'status-history'} className="mt-4 space-y-4">
+            <StatusOperations
+              context={context}
+              statusCatalog={statusCatalog}
+              ended={ended}
+              onChanged={refetchStatus}
+              onRelationshipEnded={refetchAfterRelationshipChange}
+            />
             <Employee360StatusHistory statusPeriods={statusPeriods} statusCatalog={statusCatalog} />
+            <ReturnIntentionOperations context={context} ended={ended} onChanged={refetchIntention} />
             <Employee360ReturnIntentionHistory returnIntentionPeriods={returnIntentionPeriods} />
           </TabsContent>
-          <TabsContent value="movement-timeline" forceMount hidden={tab !== 'movement-timeline'} className="mt-4">
+          <TabsContent value="movement-timeline" forceMount hidden={tab !== 'movement-timeline'} className="mt-4 space-y-4">
+            <MovementOperations
+              context={context}
+              ended={ended}
+              hasOpenSecondment={hasOpenSecondment}
+              hasOpenAssignment={hasOpenAssignment}
+              onChanged={refetchMovements}
+            />
             <Employee360MovementTimeline
               placementPeriods={placementPeriods}
               secondmentPeriods={secondmentPeriods}
@@ -278,7 +360,8 @@ export function Employee360Page() {
               unitNames={unitNames}
             />
           </TabsContent>
-          <TabsContent value="work-arrangements" forceMount hidden={tab !== 'work-arrangements'} className="mt-4">
+          <TabsContent value="work-arrangements" forceMount hidden={tab !== 'work-arrangements'} className="mt-4 space-y-4">
+            <WorkScheduleOperations context={context} ended={ended} onChanged={() => workSchedules.retry()} />
             <Employee360WorkArrangements partialSecondments={partialSecondments} workSchedules={workSchedules} unitNames={unitNames} />
           </TabsContent>
           <TabsContent value="career-history" forceMount hidden={tab !== 'career-history'} className="mt-4">
@@ -298,6 +381,7 @@ export function Employee360Page() {
           </TabsContent>
         </Tabs>
       </div>
+     </FeedbackContext.Provider>
     </PermissionGate>
   )
 }

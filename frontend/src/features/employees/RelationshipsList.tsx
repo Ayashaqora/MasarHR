@@ -4,6 +4,7 @@ import { Button } from '@/components/ui/button'
 import { useI18n } from '../../i18n/context'
 import { describeApiError } from '../../shared/api/errorMessage'
 import { DataTable } from '../../shared/ui/DataTable'
+import { DateText } from '../../shared/ui/DateText'
 import { EmptyState } from '../../shared/ui/EmptyState'
 import { Ltr } from '../../shared/ui/Ltr'
 import { RetryButton } from '../../shared/ui/RetryButton'
@@ -63,7 +64,7 @@ export function RelationshipsList({ person }: { person: Person }) {
         },
         {
           header: messages.employees.effectiveFrom,
-          cell: (relationship) => (relationship.effective_from ? <Ltr>{relationship.effective_from}</Ltr> : '—'),
+          cell: (relationship) => <DateText value={relationship.effective_from} />,
         },
         {
           header: messages.employees.relationshipState,

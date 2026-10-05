@@ -1,6 +1,6 @@
 import { useI18n } from '../../i18n/context'
 import type { ApiResourceState } from '../../shared/hooks/useApiResource'
-import { Ltr } from '../../shared/ui/Ltr'
+import { DateText } from '../../shared/ui/DateText'
 import type { EffectiveReturnIntention, ReturnIntentionPeriod, ReturnIntentionValue } from './api'
 import { Employee360HistorySection } from './Employee360HistorySection'
 
@@ -32,7 +32,7 @@ export function ReturnIntentionText({
       <span>{label(current.intention)}</span>
       {current.effective_from ? (
         <span className="text-xs font-normal text-muted-foreground">
-          {messages.employee360.since} <Ltr>{current.effective_from}</Ltr>
+          {messages.employee360.since} <DateText value={current.effective_from} />
         </span>
       ) : null}
     </span>
@@ -59,8 +59,8 @@ export function Employee360ReturnIntentionHistory({
       sortKey={(row) => row.effective_from}
       columns={[
         { header: e.returnIntention, cell: (row) => label(row.intention) },
-        { header: messages.employees.effectiveFrom, cell: (row) => <Ltr>{row.effective_from ?? '—'}</Ltr> },
-        { header: e.effectiveTo, cell: (row) => (row.effective_to ? <Ltr>{row.effective_to}</Ltr> : e.openEnded) },
+        { header: messages.employees.effectiveFrom, cell: (row) => <DateText value={row.effective_from} /> },
+        { header: e.effectiveTo, cell: (row) => <DateText value={row.effective_to} fallback={e.openEnded} /> },
       ]}
     />
   )

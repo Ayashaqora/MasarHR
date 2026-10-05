@@ -22,6 +22,24 @@ describe('SystemStatusCard', () => {
     expect(await screen.findByText('الخادم يعمل')).toBeInTheDocument()
   })
 
+  it('shows the checked-at date as dd/MM/yyyy (UI-DATE-001 item 3) while keeping the original ISO instant and the time portion unchanged', async () => {
+    stubFetch(() => jsonResponse(HEALTH_BODY))
+    renderCard()
+
+    await screen.findByText('الخادم يعمل')
+    const time = screen.getByText((_, element) => element?.tagName === 'TIME')
+    // HEALTH_BODY.timestamp is '2026-01-15T10:30:00+00:00' — the date part must render dd/MM/yyyy regardless of
+    // the runtime's local time zone shifting the clock time, and the element must still carry the exact ISO
+    // instant for assistive tech / machine reading, unchanged by the display reformat.
+    expect(time).toHaveAttribute('dateTime', HEALTH_BODY.timestamp)
+    expect(time.textContent).toMatch(/^\d{2}\/\d{2}\/\d{4}, /)
+    const localDatePart = new Intl.DateTimeFormat('en-u-nu-latn-ca-gregory', { day: '2-digit', month: '2-digit', year: 'numeric' }).format(
+      new Date(HEALTH_BODY.timestamp),
+    )
+    const [mm, dd, yyyy] = localDatePart.split('/')
+    expect(time.textContent).toContain(`${dd}/${mm}/${yyyy}`)
+  })
+
   it('shows an accessible error with a working retry', async () => {
     let calls = 0
     stubFetch(() => {

@@ -2,13 +2,13 @@ import { Briefcase, MapPin, Undo2 } from 'lucide-react'
 import { useI18n } from '../../i18n/context'
 import { describeApiError } from '../../shared/api/errorMessage'
 import type { ApiResourceState } from '../../shared/hooks/useApiResource'
+import { DateText } from '../../shared/ui/DateText'
 import { DefinitionItem, DefinitionList } from '../../shared/ui/DefinitionList'
 import { SectionCard } from '../../shared/ui/SectionCard'
 import { StatePanel } from '../../shared/ui/StatePanel'
 import type { ActualWorkplace, EffectiveEmploymentStatus, EffectiveReturnIntention, EmploymentStatusDetail, OrganizationalUnitPeriod } from './api'
 import { EffectiveStatusText } from './EffectiveStatusText'
 import { ReturnIntentionText } from './Employee360ReturnIntention'
-import { Ltr } from '../../shared/ui/Ltr'
 
 const SOURCE_LABEL_KEY = {
   secondment: 'sourceSecondment',
@@ -91,7 +91,7 @@ export function Employee360Overview({
                 <EffectiveStatusText effectiveStatus={effectiveStatus} statusCatalog={statusCatalog} withSince />
               </p>
               <p className="text-xs text-muted-foreground">
-                {messages.employee360.asOf} <Ltr>{effectiveStatus.data.as_of}</Ltr>
+                {messages.employee360.asOf} <DateText value={effectiveStatus.data.as_of} />
               </p>
             </div>
           )}

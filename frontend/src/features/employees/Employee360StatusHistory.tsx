@@ -1,6 +1,7 @@
 import { useI18n } from '../../i18n/context'
 import { describeApiError } from '../../shared/api/errorMessage'
 import type { ApiResourceState } from '../../shared/hooks/useApiResource'
+import { formatDisplayDate } from '../../shared/lib/date'
 import { EmptyState } from '../../shared/ui/EmptyState'
 import { RetryButton } from '../../shared/ui/RetryButton'
 import { SectionCard } from '../../shared/ui/SectionCard'
@@ -9,9 +10,8 @@ import { StatusBadge } from '../../shared/ui/StatusBadge'
 import { statusKeyFromCode } from '../../shared/ui/status'
 import { Timeline } from '../../shared/ui/Timeline'
 import type { EmploymentStatusDetail, EmploymentStatusPeriod } from './api'
+import { TERMINAL_STATUS_CODES } from './statusCodes'
 
-/** Catalog codes whose behavior ends the relationship (seeded by S06): shown as a terminal EVENT, never as a temporary status. */
-const TERMINAL_CODES = new Set(['retired', 'resigned', 'contract_ended', 'deceased', 'martyred'])
 
 /**
  * Status History tab (spec §S18 §15): renders S10's authoritative employment-status periods
@@ -65,7 +65,7 @@ export function Employee360StatusHistory({
             .map((period) => {
               const detail = catalog.find((item) => item.id === period.status_detail_id)
               const label = detail ? (locale === 'ar' ? detail.name_ar : detail.name_en) : period.status_detail_id
-              const terminal = detail ? TERMINAL_CODES.has(detail.code) : false
+              const terminal = detail ? TERMINAL_STATUS_CODES.has(detail.code) : false
               return {
                 key: period.id,
                 title: (
@@ -74,8 +74,14 @@ export function Employee360StatusHistory({
                     {terminal ? <span className="text-xs font-medium text-muted-foreground">{e.terminalEvent}</span> : null}
                   </>
                 ),
-                from: period.effective_from ?? '—',
-                to: period.effective_to ?? e.openEnded,
+                from: formatDisplayDate(period.effective_from),
+                to: formatDisplayDate(period.effective_to, e.openEnded),
+                detail: period.travel_pay_status ? (
+                  <span>
+                    {messages.operations.travelPayLabel}:{' '}
+                    {period.travel_pay_status === 'PAID' ? messages.operations.travelPayPaid : messages.operations.travelPayUnpaid}
+                  </span>
+                ) : undefined,
               }
             })}
         />

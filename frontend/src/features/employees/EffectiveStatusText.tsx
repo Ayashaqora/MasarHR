@@ -1,6 +1,6 @@
 import { useI18n } from '../../i18n/context'
 import type { ApiResourceState } from '../../shared/hooks/useApiResource'
-import { Ltr } from '../../shared/ui/Ltr'
+import { DateText } from '../../shared/ui/DateText'
 import { StatusBadge } from '../../shared/ui/StatusBadge'
 import { statusKeyFromCode } from '../../shared/ui/status'
 import type { EffectiveEmploymentStatus, EmploymentStatusDetail } from './api'
@@ -37,7 +37,7 @@ export function EffectiveStatusText({
       {status.derived ? <span className="text-xs font-normal text-muted-foreground">({messages.employee360.derivedStatusNote})</span> : null}
       {withSince && status.effective_from ? (
         <span className="text-xs font-normal text-muted-foreground">
-          {messages.employee360.since} <Ltr>{status.effective_from}</Ltr>
+          {messages.employee360.since} <DateText value={status.effective_from} />
         </span>
       ) : null}
     </span>

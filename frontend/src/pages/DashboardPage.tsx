@@ -1,7 +1,5 @@
-import { CalendarDays } from 'lucide-react'
 import { useState } from 'react'
 import { Card, CardContent } from '@/components/ui/card'
-import { Input } from '@/components/ui/input'
 import { PermissionGate } from '../features/auth/PermissionGate'
 import { DashboardView } from '../features/dashboard/DashboardView'
 import { useWorkforceAnalytics } from '../features/dashboard/hooks'
@@ -13,8 +11,8 @@ import {
 import { useI18n } from '../i18n/context'
 import { describeApiError } from '../shared/api/errorMessage'
 import { PERMISSIONS_HR_WORKFORCE_ANALYTICS_VIEW } from '../shared/security/permissions'
-import { FormField } from '../shared/ui/FormField'
-import { Ltr } from '../shared/ui/Ltr'
+import { DateText } from '../shared/ui/DateText'
+import { MonthInput } from '../shared/ui/MonthInput'
 import { PageHeader } from '../shared/ui/PageHeader'
 import { RetryButton } from '../shared/ui/RetryButton'
 import { Skeleton } from '@/components/ui/skeleton'
@@ -37,28 +35,21 @@ export function DashboardPage() {
         <Card className="mb-6">
           <CardContent>
             <form noValidate onSubmit={(event) => event.preventDefault()} className="max-w-sm">
-              <FormField label={d.monthLabel} helper={d.monthHelp} error={invalid ? d.invalidMonth : null}>
-                {(field) => (
-                  <div className="relative">
-                    <CalendarDays aria-hidden="true" className="pointer-events-none absolute start-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground" />
-                    <Input
-                      {...field}
-                      type="month"
-                      className="ps-9"
-                      value={reportingMonthToMonthInput(month)}
-                      onChange={(event) => {
-                        const next = monthInputToReportingMonth(event.target.value)
-                        if (next === null) {
-                          setInvalid(true)
-                          return
-                        }
-                        setInvalid(false)
-                        setMonth(next)
-                      }}
-                    />
-                  </div>
-                )}
-              </FormField>
+              <MonthInput
+                label={d.monthLabel}
+                helper={d.monthHelp}
+                error={invalid ? d.invalidMonth : null}
+                value={reportingMonthToMonthInput(month)}
+                onChange={(next) => {
+                  const parsed = monthInputToReportingMonth(next)
+                  if (parsed === null) {
+                    setInvalid(true)
+                    return
+                  }
+                  setInvalid(false)
+                  setMonth(parsed)
+                }}
+              />
             </form>
           </CardContent>
         </Card>
@@ -104,7 +95,7 @@ function DashboardBody({ month }: { month: string }) {
   return (
     <>
       <p className="mb-4 text-sm font-medium text-muted-foreground" data-testid="selected-month">
-        {d.selectedMonth}: <Ltr>{state.data.month_start}</Ltr> — <Ltr>{state.data.month_end}</Ltr>
+        {d.selectedMonth}: <DateText value={state.data.month_start} /> — <DateText value={state.data.month_end} />
       </p>
       <DashboardView data={state.data} />
     </>

@@ -3,6 +3,7 @@ import { Badge } from '@/components/ui/badge'
 import { useI18n } from '../../i18n/context'
 import { describeApiError } from '../../shared/api/errorMessage'
 import type { ApiResourceState } from '../../shared/hooks/useApiResource'
+import { formatDisplayDate } from '../../shared/lib/date'
 import { EmptyState } from '../../shared/ui/EmptyState'
 import { SectionCard } from '../../shared/ui/SectionCard'
 import { StatePanel } from '../../shared/ui/StatePanel'
@@ -125,8 +126,8 @@ export function Employee360MovementTimeline({
                   </Badge>
                 ),
                 detail: unitNames.names[entry.period.organizational_unit_id] ?? entry.period.organizational_unit_id,
-                from: entry.period.effective_from ?? '—',
-                to: entry.period.effective_to ?? e.openEnded,
+                from: formatDisplayDate(entry.period.effective_from),
+                to: formatDisplayDate(entry.period.effective_to, e.openEnded),
               }
             })}
           />

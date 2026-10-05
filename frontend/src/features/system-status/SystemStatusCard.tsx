@@ -1,6 +1,8 @@
 import { Activity } from 'lucide-react'
 import { useI18n } from '../../i18n/context'
 import { describeApiError } from '../../shared/api/errorMessage'
+import { formatDateOnly } from '../../shared/lib/date'
+import { Ltr } from '../../shared/ui/Ltr'
 import { RetryButton } from '../../shared/ui/RetryButton'
 import { SectionCard } from '../../shared/ui/SectionCard'
 import { StatePanel } from '../../shared/ui/StatePanel'
@@ -28,9 +30,11 @@ export function SystemStatusCard() {
         <StatePanel tone="success" title={text.ok} className="my-0">
           {text.checkedAt}:{' '}
           <time dateTime={health.data.timestamp}>
-            {new Intl.DateTimeFormat(intlLocale, { dateStyle: 'medium', timeStyle: 'medium' }).format(
-              new Date(health.data.timestamp),
-            )}
+            {/* Only the date part changes format (dd/MM/yyyy, UI-DATE-001 item 3); the time and time zone are
+                preserved exactly as before, via the same locale-aware Intl formatting, now scoped to time only. */}
+            <Ltr>{formatDateOnly(new Date(health.data.timestamp))}</Ltr>
+            {', '}
+            {new Intl.DateTimeFormat(intlLocale, { timeStyle: 'medium' }).format(new Date(health.data.timestamp))}
           </time>
         </StatePanel>
       ) : null}

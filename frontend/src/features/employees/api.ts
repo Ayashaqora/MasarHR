@@ -40,6 +40,8 @@ export interface EmploymentStatusPeriod {
   status_detail_id: string
   effective_from: string | null
   effective_to: string | null
+  /** S41: meaningful only for the `traveling` status; null when not applicable or not recorded. */
+  travel_pay_status: 'PAID' | 'UNPAID' | null
 }
 
 /** Shared shape of OrganizationalPlacementPeriodResource/FullSecondmentPeriodResource/WorkplaceAssignmentPeriodResource. */

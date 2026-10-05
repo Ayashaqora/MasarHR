@@ -19,3 +19,6 @@ export function weekdayLabel(code: string, messages: Messages): string {
 export function weekdaysLabel(codes: readonly string[], messages: Messages): string {
   return codes.map((code) => weekdayLabel(code, messages)).join('، ')
 }
+
+/** The backend's own weekday codes (ref.weekdays), sent exactly as the API stores/returns them (Sunday-first week). */
+export const WEEKDAY_CODES = ['SUNDAY', 'MONDAY', 'TUESDAY', 'WEDNESDAY', 'THURSDAY', 'FRIDAY', 'SATURDAY'] as const

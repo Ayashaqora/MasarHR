@@ -248,7 +248,7 @@ describe('Employee360Page', () => {
 
     const panel = await screen.findByRole('tabpanel')
     expect(within(panel).getByText('سارية')).toBeInTheDocument()
-    expect(within(panel).getByText('2020-01-01')).toBeInTheDocument()
+    expect(within(panel).getByText('01/01/2020')).toBeInTheDocument()
   })
 
   it('shows an unauthorized state for a section the principal cannot view, without blanking the rest of the page', async () => {
@@ -311,7 +311,7 @@ describe('Employee360Page', () => {
       const statusCard = (await screen.findByRole('heading', { level: 3, name: 'الحالة الوظيفية الحالية' })).closest('section')
       if (!statusCard) throw new Error('current status card expected')
       expect(await within(statusCard).findByText('إجازة بدون راتب')).toBeInTheDocument()
-      expect(within(statusCard).getByText('2026-10-01')).toBeInTheDocument()
+      expect(within(statusCard).getByText('01/10/2026')).toBeInTheDocument()
     })
 
     it('shows the derived on_duty after an expired bounded status, labelled derived, and never as a history row', async () => {
@@ -381,7 +381,7 @@ describe('Employee360Page', () => {
       const panel = await screen.findByRole('tabpanel')
       expect(await within(panel).findByText('وحدة الانتداب الجزئي')).toBeInTheDocument()
       expect(within(panel).getByText('الاثنين، الأربعاء')).toBeInTheDocument()
-      expect(within(panel).getByText('2026-06-01')).toBeInTheDocument()
+      expect(within(panel).getByText('01/06/2026')).toBeInTheDocument()
       expect(within(panel).getByText('الأحد، الاثنين، الثلاثاء')).toBeInTheDocument()
     })
 
@@ -395,10 +395,10 @@ describe('Employee360Page', () => {
       const panel = await screen.findByRole('tabpanel')
       expect(await within(panel).findByText('فئة اختبار')).toBeInTheDocument()
       expect(await within(panel).findByText('عقد اختبار')).toBeInTheDocument()
-      expect(within(panel).getByText('2027-01-01')).toBeInTheDocument()
+      expect(within(panel).getByText('01/01/2027')).toBeInTheDocument()
       expect(await within(panel).findByText('مسمى اختبار')).toBeInTheDocument()
       expect(await within(panel).findByText('تخصص اختبار')).toBeInTheDocument()
-      expect(within(panel).getByText('2024-01-01')).toBeInTheDocument()
+      expect(within(panel).getByText('01/01/2024')).toBeInTheDocument()
       expect(await within(panel).findByText('درجة اختبار')).toBeInTheDocument()
       expect(await within(panel).findByText('نوع مؤهل اختبار')).toBeInTheDocument()
       // History timelines are labelled as history and no supervisory concept appears.
@@ -465,9 +465,9 @@ describe('Employee360Page', () => {
       const full = rows.find((row) => within(row).queryByText('انتداب كلي'))
       const assignment = rows.find((row) => within(row).queryByText('تكليف'))
       if (!full || !assignment) throw new Error('both movement rows expected')
-      expect(within(full).getByText('2026-10-01')).toBeInTheDocument()
-      expect(within(full).getByText('2026-11-01')).toBeInTheDocument()
-      expect(within(assignment).getByText('2026-12-01')).toBeInTheDocument()
+      expect(within(full).getByText('01/10/2026')).toBeInTheDocument()
+      expect(within(full).getByText('01/11/2026')).toBeInTheDocument()
+      expect(within(assignment).getByText('01/12/2026')).toBeInTheDocument()
       // The timeline is history: it is never labelled as the current/actual workplace.
       expect(within(timeline).queryByText(/الحالي|الفعلي/)).not.toBeInTheDocument()
     })
@@ -507,7 +507,7 @@ describe('Employee360Page', () => {
       const rows = header.getAllByRole('term').map((term) => term.textContent)
       expect(rows).toContain('الرغبة في العودة')
       expect(await header.findByText('يرغب في العودة')).toBeInTheDocument()
-      expect(header.getByText('2026-10-05')).toBeInTheDocument()
+      expect(header.getByText('05/10/2026')).toBeInTheDocument()
       // The status text never carries the intention and vice versa.
       expect(header.queryByText(/مسافر.*يرغب/)).not.toBeInTheDocument()
     })
@@ -533,7 +533,7 @@ describe('Employee360Page', () => {
       if (!intentionSection) throw new Error('intention history section expected')
       const intention = within(intentionSection)
       expect(await intention.findByText('لا يرغب في العودة')).toBeInTheDocument()
-      expect(intention.getAllByText('2026-10-05', { selector: 'bdi' })).toHaveLength(2)
+      expect(intention.getAllByText('05/10/2026', { selector: 'bdi' })).toHaveLength(2)
       // The status timeline contains no return-intention entry and the section states independence.
       const statusTimeline = within(panel).getByRole('list', { name: 'الخط الزمني للحالات الوظيفية' })
       expect(within(statusTimeline).queryByText(/يرغب في العودة/)).not.toBeInTheDocument()
@@ -568,7 +568,7 @@ describe('Employee360Page', () => {
       renderApp(ROUTE, 'en')
       const headerSection = await findHeaderSection()
       expect(await within(headerSection).findByText('Wants to return')).toBeInTheDocument()
-      expect(within(headerSection).getByText('2026-10-05')).toBeInTheDocument()
+      expect(within(headerSection).getByText('05/10/2026')).toBeInTheDocument()
     })
   })
 })
