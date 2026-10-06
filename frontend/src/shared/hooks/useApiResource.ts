@@ -53,7 +53,18 @@ export function useApiResource<T>(
     const controller = new AbortController()
 
     fetcher(controller.signal)
-      .then((data) => setSettled({ attempt, data }))
+      .then((data) => {
+        // Mirrors the .catch guard below: a stale request can still resolve WITH data after this
+        // effect's own cleanup already called controller.abort() (e.g. the response had already
+        // arrived before abort() took effect) — not every environment rejects a cancelled fetch
+        // in time. Without this check that late resolution would silently overwrite a newer
+        // request's already-rendered result, since `attempt` alone does not distinguish between
+        // two fetches triggered by a deps change (only retry() changes it) — a real race caught
+        // by the consolidated S47 review and reproduced in FollowUpsPage.test.tsx.
+        if (!controller.signal.aborted) {
+          setSettled({ attempt, data })
+        }
+      })
       .catch((error: unknown) => {
         if (!controller.signal.aborted) {
           setSettled({ attempt, error: normalizeApiError(error) })

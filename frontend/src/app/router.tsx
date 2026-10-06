@@ -28,6 +28,9 @@ export const routes: RouteObject[] = [
       },
       // S45: the aggregate Dashboard Foundation — one authenticated, read-only page over the S44 analytics response.
       { path: 'dashboard', element: <RequireAuth />, children: [{ index: true, lazy: async () => ({ Component: (await import('../pages/DashboardPage')).DashboardPage }) }] },
+      // S47: Expiry Follow-up Read UI (docs/expiry-followups-ui-specification.md) — an independent,
+      // read-only area, never embedded in the Dashboard or a report.
+      { path: 'follow-ups', element: <RequireAuth />, children: [{ index: true, lazy: async () => ({ Component: (await import('../pages/FollowUpsPage')).FollowUpsPage }) }] },
       { path: 'organization', element: <PlaceholderPage navKey="organization" /> },
       { path: 'reports', element: <PlaceholderPage navKey="reports" /> },
       { path: 'settings', element: <PlaceholderPage navKey="settings" /> },

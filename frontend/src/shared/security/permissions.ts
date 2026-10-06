@@ -44,6 +44,11 @@ export const HR_PERMISSIONS = {
   workSchedulePeriodsRecord: 'hr.work_schedule_periods.record',
   returnIntentionPeriodsView: 'hr.return_intention_periods.view',
   returnIntentionPeriodsRecord: 'hr.return_intention_periods.record',
+  // S47: the two S31/S38 expiry follow-up read permissions (read-only; the system scanner writes, never a
+  // principal). Exact backend codes, verified by reading HumanResourcesPermissionCatalog.php directly
+  // (docs/expiry-followups-ui-specification.md §2.2) — the two are independent and neither implies the other.
+  movementExpiryFollowupsView: 'hr.movement_expiry_followups.view',
+  employmentStatusExpiryFollowupsView: 'hr.employment_status_expiry_followups.view',
 } as const
 
 /**

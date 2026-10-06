@@ -1,4 +1,4 @@
-import { Building2, FileBarChart, House, LayoutDashboard, Settings, ShieldCheck, Users, type LucideIcon } from 'lucide-react'
+import { Building2, CalendarClock, FileBarChart, House, LayoutDashboard, Settings, ShieldCheck, Users, type LucideIcon } from 'lucide-react'
 import { HR_PERMISSIONS, PERMISSIONS, PERMISSIONS_HR_WORKFORCE_ANALYTICS_VIEW } from '../shared/security/permissions'
 import type { Messages } from '../i18n/messages/types'
 
@@ -34,6 +34,16 @@ export const NAV_ITEMS: readonly NavItem[] = [
     anyPermission: [PERMISSIONS_HR_WORKFORCE_ANALYTICS_VIEW],
   },
   { to: '/employees', labelKey: 'employees', icon: Users, requiresAuth: true, anyPermission: [HR_PERMISSIONS.personsView] },
+  // S47: visible to a principal holding EITHER of the two independent expiry-followup read permissions
+  // (docs/expiry-followups-ui-specification.md §5.1). UX only; the backend re-checks each permission on its
+  // own endpoint, and the page itself still gates each tab independently (PermissionGate-equivalent).
+  {
+    to: '/follow-ups',
+    labelKey: 'followUps',
+    icon: CalendarClock,
+    requiresAuth: true,
+    anyPermission: [HR_PERMISSIONS.movementExpiryFollowupsView, HR_PERMISSIONS.employmentStatusExpiryFollowupsView],
+  },
   { to: '/organization', labelKey: 'organization', icon: Building2 },
   { to: '/reports', labelKey: 'reports', icon: FileBarChart },
   {
