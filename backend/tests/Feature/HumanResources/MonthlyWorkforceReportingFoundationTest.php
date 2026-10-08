@@ -114,12 +114,21 @@ class MonthlyWorkforceReportingFoundationTest extends HumanResourcesTestCase
         return $id;
     }
 
+    /**
+     * S48 (§S48.3): identity (hr.person_qualifications, carrying created_at) and fact value
+     * (hr.person_qualification_versions) are now separate tables.
+     */
     private function qualification(Person $person, ?string $degreeId, ?string $typeId, string $createdAt, ?string $id = null): string
     {
         $id ??= (string) Str::uuid7();
         DB::table('hr.person_qualifications')->insert([
-            'id' => $id, 'person_id' => $person->id, 'academic_degree_id' => $degreeId,
-            'qualification_type_id' => $typeId, 'created_at' => $createdAt,
+            'id' => $id, 'person_id' => $person->id, 'is_primary' => false, 'created_at' => $createdAt,
+        ]);
+        DB::table('hr.person_qualification_versions')->insert([
+            'id' => (string) Str::uuid7(), 'person_qualification_id' => $id, 'person_id' => $person->id,
+            'version_number' => 1, 'academic_degree_id' => $degreeId, 'qualification_type_id' => $typeId,
+            'obtained_on' => null, 'is_current' => true, 'reason' => null,
+            'created_by_principal_id' => null, 'created_at' => $createdAt,
         ]);
 
         return $id;
@@ -955,11 +964,20 @@ class MonthlyWorkforceReportingFoundationTest extends HumanResourcesTestCase
             '2026_10_19_000001_seed_security_monthly_administrative_report_permission.php',
             '2026_10_20_000001_seed_security_monthly_employment_status_report_permission.php',
             '2026_10_21_000001_seed_security_workforce_analytics_permission.php',
+            // S48 (docs/person-qualification-history-foundation-specification.md §S48.3): none of
+            // these are S37/monthly-population schema objects — they are the versioned qualification
+            // history foundation (table, backfill, permission seed, legacy-column drop).
+            '2026_10_22_000001_create_hr_person_qualification_versions_table.php',
+            '2026_10_22_000002_backfill_hr_person_qualification_versions.php',
+            '2026_10_22_000003_seed_security_person_qualification_correction_permission.php',
+            '2026_10_22_000004_drop_legacy_identity_columns_from_hr_person_qualifications.php',
         ], $afterS34, 'no S37 migration exists');
-        $this->assertCount(92, glob(base_path('database/migrations/*.php')));
+        $this->assertCount(96, glob(base_path('database/migrations/*.php')));
         $this->assertSame(0, DB::table('information_schema.tables')->whereIn('table_schema', ['hr', 'ref', 'org', 'automation', 'reporting'])->where('table_name', 'like', '%monthly_population%')->count());
         $this->assertSame(0, (int) DB::selectOne('select count(*) as c from pg_matviews')->c);
-        $this->assertSame(0, DB::table('information_schema.views')->whereIn('table_schema', ['hr', 'ref', 'org', 'automation', 'reporting'])->count(), 'no view');
+        // S48 added exactly one view, hr.person_qualifications_current (§S48.3) — not a monthly-population
+        // reporting object; S37 itself still exposes none.
+        $this->assertSame(['person_qualifications_current'], DB::table('information_schema.views')->whereIn('table_schema', ['hr', 'ref', 'org', 'automation', 'reporting'])->pluck('table_name')->all(), 'no view other than S48\'s person_qualifications_current');
     }
 
     public function test_as_no_route_or_api_exposes_the_monthly_foundation(): void

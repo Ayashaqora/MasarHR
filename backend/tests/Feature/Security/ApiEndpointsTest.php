@@ -55,7 +55,7 @@ class ApiEndpointsTest extends SecurityTestCase
                 'hr.person_qualifications.view', 'hr.person_qualifications.record',
                 'hr.employment_specialty_periods.view',
                 'hr.employment_status_expiry_followups.view',
-                'hr.monthly_not_on_duty.view', 'hr.human_cadre.view', 'hr.monthly_administrative_report.view', 'hr.monthly_employment_status_report.view', 'hr.workforce_analytics.view', 'hr.person_qualifications.designate_primary', 'hr.employment_specialty_periods.record',
+                'hr.monthly_not_on_duty.view', 'hr.human_cadre.view', 'hr.monthly_administrative_report.view', 'hr.monthly_employment_status_report.view', 'hr.workforce_analytics.view', 'hr.person_qualifications.designate_primary', 'hr.person_qualifications.correct', 'hr.employment_specialty_periods.record',
                 'hr.work_schedule_periods.view', 'hr.work_schedule_periods.record',
                 'hr.partial_secondment_periods.view', 'hr.partial_secondment_periods.record',
                 'hr.movement_expiry_followups.view',

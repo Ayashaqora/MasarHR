@@ -79,9 +79,13 @@ final class BuildHumanCadreResult
 
         $primary = [];
         foreach (DB::select(
+            // S48 (docs/person-qualification-history-foundation-specification.md §S48.13, D13):
+            // repointed to the CURRENT version of each qualification; the join target is the only
+            // change — HumanCadrePersonRecord's shape and DQ_PRIMARY_QUALIFICATION_REQUIRED are
+            // unchanged.
             'SELECT pq.person_id, pq.id, pq.academic_degree_id, ad.code AS degree_code, ad.name_ar AS degree_name_ar, ad.name_en AS degree_name_en,
                     pq.qualification_type_id, qt.code AS type_code, qt.name_ar AS type_name_ar, qt.name_en AS type_name_en
-             FROM hr.person_qualifications pq
+             FROM hr.person_qualifications_current pq
              LEFT JOIN ref.academic_degrees ad ON ad.id = pq.academic_degree_id
              LEFT JOIN ref.qualification_types qt ON qt.id = pq.qualification_type_id
              WHERE pq.is_primary AND pq.person_id = ANY(CAST(? AS uuid[]))',

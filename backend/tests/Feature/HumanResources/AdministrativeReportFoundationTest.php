@@ -777,10 +777,13 @@ class AdministrativeReportFoundationTest extends HumanResourcesTestCase
 
     public function test_s42_adds_no_schema_object_and_no_frontend_or_output_file(): void
     {
-        $this->assertCount(92, glob(base_path('database/migrations/*.php')), 'S42 adds exactly one migration (the permission seed); S43 and S44 add one more permission seed each');
+        // 92 before S48; S48 adds 4 more migrations (§S48.3/§S48.14/§S48.18), so 96.
+        $this->assertCount(96, glob(base_path('database/migrations/*.php')), 'S42 adds exactly one migration (the permission seed); S43 and S44 add one more permission seed each');
         $this->assertSame('2026_10_19_000001_seed_security_monthly_administrative_report_permission.php', collect(glob(base_path('database/migrations/*.php')))->map('basename')->sort()->filter(fn ($name) => $name < '2026_10_20')->last(), 'S42 migration is the last one before S43');
         $this->assertSame(0, (int) DB::selectOne('select count(*) as c from pg_matviews')->c);
-        $this->assertSame(0, DB::table('information_schema.views')->whereIn('table_schema', ['hr', 'ref', 'org', 'automation', 'reporting'])->count());
+        // S48 (§S48.3) adds the one view the whole application reads qualifications through going
+        // forward — unrelated to S42, which still adds no view/schema object of its own.
+        $this->assertSame(['person_qualifications_current'], DB::table('information_schema.views')->whereIn('table_schema', ['hr', 'ref', 'org', 'automation', 'reporting'])->pluck('table_name')->all());
         foreach (glob(base_path('../frontend/src/*/*.ts*')) ?: [] as $file) {
             $this->assertStringNotContainsString('administrative-report', (string) file_get_contents($file), 'no frontend consumer');
         }

@@ -123,6 +123,13 @@ final class HumanResourcesPermissionCatalog
     /** S41 (R1-D49): the explicit Primary Qualification designation — separate from `record`. */
     public const PERSON_QUALIFICATIONS_DESIGNATE_PRIMARY = 'hr.person_qualifications.designate_primary';
 
+    /**
+     * S48 (docs/person-qualification-history-foundation-specification.md §S48.14, D07):
+     * independent of record/view/designate_primary — correcting a previously recorded
+     * qualification's degree/type/obtained-on never implies any of the other three.
+     */
+    public const PERSON_QUALIFICATIONS_CORRECT = 'hr.person_qualifications.correct';
+
     /** S26 (docs/employee-specialty-history-foundation-specification.md §S26.13). */
     public const EMPLOYMENT_SPECIALTY_PERIODS_VIEW = 'hr.employment_specialty_periods.view';
 
@@ -191,6 +198,7 @@ final class HumanResourcesPermissionCatalog
         self::PERSON_QUALIFICATIONS_VIEW,
         self::PERSON_QUALIFICATIONS_RECORD,
         self::PERSON_QUALIFICATIONS_DESIGNATE_PRIMARY,
+        self::PERSON_QUALIFICATIONS_CORRECT,
         self::EMPLOYMENT_SPECIALTY_PERIODS_VIEW,
         self::EMPLOYMENT_SPECIALTY_PERIODS_RECORD,
         self::WORK_SCHEDULE_PERIODS_VIEW,

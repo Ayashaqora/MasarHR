@@ -354,16 +354,16 @@ class WorkforceAnalyticsFoundationTest extends HumanResourcesTestCase
     public function test_primary_qualification_is_the_current_primary_never_guessed(): void
     {
         [$withPrimary] = $this->emp();
-        $first = app(RecordPersonQualification::class)->handle($withPrimary, $this->createSyntheticAcademicDegree(), null);
+        $first = app(RecordPersonQualification::class)->handle($withPrimary, $this->createSyntheticAcademicDegree(), null, null, $this->syntheticActorPrincipalId());
         [$none] = $this->emp();
         [$twoNoPrimary] = $this->emp();
-        app(RecordPersonQualification::class)->handle($twoNoPrimary, $this->createSyntheticAcademicDegree(), null);
-        app(RecordPersonQualification::class)->handle($twoNoPrimary, $this->createSyntheticAcademicDegree(), null);
+        app(RecordPersonQualification::class)->handle($twoNoPrimary, $this->createSyntheticAcademicDegree(), null, null, $this->syntheticActorPrincipalId());
+        app(RecordPersonQualification::class)->handle($twoNoPrimary, $this->createSyntheticAcademicDegree(), null, null, $this->syntheticActorPrincipalId());
         DB::table('hr.person_qualifications')->where('person_id', $twoNoPrimary->id)->update(['is_primary' => false]);
         [$designated] = $this->emp();
-        app(RecordPersonQualification::class)->handle($designated, $this->createSyntheticAcademicDegree(), null);
-        $second = app(RecordPersonQualification::class)->handle($designated, $this->createSyntheticAcademicDegree(), null);
-        app(DesignateQualificationAsPrimary::class)->handle($designated, $second);
+        app(RecordPersonQualification::class)->handle($designated, $this->createSyntheticAcademicDegree(), null, null, $this->syntheticActorPrincipalId());
+        $second = app(RecordPersonQualification::class)->handle($designated, $this->createSyntheticAcademicDegree(), null, null, $this->syntheticActorPrincipalId());
+        app(DesignateQualificationAsPrimary::class)->handle($designated, $second->qualification);
 
         $r = $this->analytics();
         $section = $r->sections['qualifications']['primary_qualification'];
@@ -373,8 +373,8 @@ class WorkforceAnalyticsFoundationTest extends HumanResourcesTestCase
         $this->assertSame('NOT_RECORDED', $this->record($twoNoPrimary)->primaryQualification['state'], 'several qualifications without a Primary: no latest/highest guess');
         $this->assertContains($twoNoPrimary->id, $this->dq($r, HumanCadreResult::DQ_PRIMARY_QUALIFICATION_REQUIRED)['affected_person_ids']);
         $this->assertNotContains($none->id, $this->dq($r, HumanCadreResult::DQ_PRIMARY_QUALIFICATION_REQUIRED)['affected_person_ids'], 'no qualification at all is not "required"');
-        $this->assertSame($second->academic_degree_id, $this->record($designated)->primaryQualification['academic_degree']['id'], 'the designated Primary, not the first');
-        $this->assertSame($first->academic_degree_id, $this->record($withPrimary)->primaryQualification['academic_degree']['id'], 'the first qualification is the application-level auto Primary');
+        $this->assertSame($second->version->academic_degree_id, $this->record($designated)->primaryQualification['academic_degree']['id'], 'the designated Primary, not the first');
+        $this->assertSame($first->version->academic_degree_id, $this->record($withPrimary)->primaryQualification['academic_degree']['id'], 'the first qualification is the application-level auto Primary');
         $this->assertSame($r->overallHeadcount, array_sum(array_column($section['buckets'], 'person_count')));
         $this->assertTrue($section['reconciles_to_overall_headcount']);
     }
@@ -966,7 +966,7 @@ class WorkforceAnalyticsFoundationTest extends HumanResourcesTestCase
             [$p, $rel] = $this->emp('2026-01-01', $i % 2 === 0 ? 'permanent' : 'contract');
             $unit = $this->createUnit('م'.$i);
             $this->recordPlacement($rel, $unit, '2026-02-01');
-            app(RecordPersonQualification::class)->handle($p, $this->createSyntheticAcademicDegree(), null);
+            app(RecordPersonQualification::class)->handle($p, $this->createSyntheticAcademicDegree(), null, null, $this->syntheticActorPrincipalId());
             $this->setStatus($p, $rel, 'traveling', '2026-11-05', '2026-11-08');
             app(StartFullSecondment::class)->handle($rel->refresh(), $this->createUnit('و'.$i), '2026-11-10');
             $this->setStatus($p, $rel, 'resigned', '2026-11-25');
@@ -991,7 +991,8 @@ class WorkforceAnalyticsFoundationTest extends HumanResourcesTestCase
             'SELECT r.id, r.person_id, r.employment_type_id' => 1, // the one S37 population statement
             'FROM hr.employment_job_title_periods p' => 1, // S40 ran once, on the precomputed population
             'SELECT g.id, g.code, g.name_ar, g.name_en FROM ref.genders g' => 1,
-            'FROM hr.person_qualifications pq' => 2, // S37's qualifications + the Primary Qualification batch
+            // S48 (§S48.3, D13): this consumer now reads the current-version view, not the identity table directly.
+            'FROM hr.person_qualifications_current pq' => 2, // S37's qualifications + the Primary Qualification batch
             'FROM hr.organizational_placement_periods pp' => 1,
             'WITH RECURSIVE tree AS' => 1,
             'LEFT JOIN hr.employment_status_periods sp ON' => 1,
@@ -1048,9 +1049,13 @@ class WorkforceAnalyticsFoundationTest extends HumanResourcesTestCase
 
     public function test_s44_adds_no_business_schema_and_no_frontend_or_output_file(): void
     {
-        $this->assertSame('2026_10_21_000001_seed_security_workforce_analytics_permission.php', collect(glob(base_path('database/migrations/*.php')))->map('basename')->sort()->last(), 'the only S44 migration is the permission seed');
+        // S48 (docs/person-qualification-history-foundation-specification.md) added its own later
+        // migrations and one view (hr.person_qualifications_current, §S48.3); neither is an S44
+        // business-schema addition, so this asserts S44's OWN migration footprint by name rather
+        // than by "nothing was ever added after it" (which S48 legitimately does).
+        $this->assertSame(['2026_10_21_000001_seed_security_workforce_analytics_permission.php'], collect(glob(base_path('database/migrations/*.php')))->map('basename')->filter(fn ($f) => str_contains($f, 'workforce_analytics'))->values()->all(), 'the only S44 migration is the permission seed');
         $this->assertSame(0, (int) DB::selectOne('select count(*) as c from pg_matviews')->c);
-        $this->assertSame(0, DB::table('information_schema.views')->whereIn('table_schema', ['hr', 'ref', 'org', 'automation', 'reporting'])->count());
+        $this->assertSame(['person_qualifications_current'], DB::table('information_schema.views')->whereIn('table_schema', ['hr', 'ref', 'org', 'automation', 'reporting'])->pluck('table_name')->all(), 'no view other than S48\'s person_qualifications_current');
         $this->assertSame(0, DB::table('information_schema.tables')->whereIn('table_schema', ['hr', 'ref', 'org', 'automation', 'reporting'])->where('table_name', 'like', '%analytic%')->count(), 'no analytics table');
         foreach (glob(base_path('../frontend/src/*/*.ts*')) ?: [] as $file) {
             // S45 (Dashboard Foundation) is the authorized consumer of this endpoint: its page test is the ONE exact-path exception.

@@ -33,7 +33,9 @@ class PrimaryQualificationAndTravelPayTest extends HumanResourcesTestCase
 
     private function record(Person $person, bool $degree = true): PersonQualification
     {
-        return app(RecordPersonQualification::class)->handle($person, $degree ? $this->createSyntheticAcademicDegree() : null, $degree ? null : $this->createSyntheticQualificationType());
+        // S48 (§S48.4/§S48.13): the command now returns a PersonQualificationRecording (identity +
+        // its version_number = 1 row). This file only ever needs the identity, never a value field.
+        return app(RecordPersonQualification::class)->handle($person, $degree ? $this->createSyntheticAcademicDegree() : null, $degree ? null : $this->createSyntheticQualificationType(), null, $this->syntheticActorPrincipalId())->qualification;
     }
 
     private function primaryIds(Person $person): array

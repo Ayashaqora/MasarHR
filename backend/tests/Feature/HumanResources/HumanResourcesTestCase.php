@@ -79,6 +79,19 @@ abstract class HumanResourcesTestCase extends AuditTestCase
     }
 
     /**
+     * S48 (D43): a real, synthetic security.principals id for tests that call
+     * RecordPersonQualification/CorrectPersonQualification directly (bypassing HTTP/
+     * ResolveCommandContext, which always supplies a real principal id itself). Both commands now
+     * reject a missing actorPrincipalId before any write — createPrincipal() (AuditTestCase/
+     * SecurityTestCase) already creates a real, synthetic security.principals row, so this just
+     * exposes its id for that one purpose.
+     */
+    protected function syntheticActorPrincipalId(): string
+    {
+        return $this->createPrincipal()->getKey();
+    }
+
+    /**
      * Creates a NEW Person through CreatePerson. Since S24 every new Person requires a profile
      * (docs/person-profile-foundation-specification.md §S24.6), so this supplies synthetic,
      * obviously-test values using the two S05-seeded reference catalogs.

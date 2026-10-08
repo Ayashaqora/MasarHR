@@ -2,7 +2,13 @@
 
 namespace Tests\Feature\Database;
 
+use App\Modules\HumanResources\Application\Commands\CorrectPersonQualification;
+use App\Modules\HumanResources\Application\Commands\RecordPersonQualification;
+use App\Modules\HumanResources\Domain\Exceptions\PersonQualificationActorRequiredException;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\Person;
+use App\Modules\HumanResources\Infrastructure\Persistence\Eloquent\PersonQualification;
 use App\Modules\Platform\Infrastructure\Persistence\Postgres\PostgresErrorClassifier as Errors;
+use App\Modules\Reference\Infrastructure\Persistence\Eloquent\AcademicDegree;
 use Illuminate\Database\Migrations\Migration;
 use Illuminate\Support\Facades\Artisan;
 use Illuminate\Support\Facades\DB;
@@ -308,6 +314,22 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
      */
     private const S44_MIGRATIONS = [
         'database/migrations/2026_10_21_000001_seed_security_workforce_analytics_permission.php',
+    ];
+
+    /**
+     * S48 migrations, in up() order (2026_10_22): the versioned-history table/view/five triggers,
+     * the version-1 backfill with its mandatory verify-before-drop check, the correction permission
+     * seed, and the legacy-column drop from hr.person_qualifications (docs/
+     * person-qualification-history-foundation-specification.md §S48.3/§S48.18). Reverse order rolls
+     * the legacy-column drop back first (restoring academic_degree_id/qualification_type_id,
+     * resolved from each qualification's current version), then the permission, then the backfill,
+     * then the versioned-history foundation itself.
+     */
+    private const S48_MIGRATIONS = [
+        'database/migrations/2026_10_22_000001_create_hr_person_qualification_versions_table.php',
+        'database/migrations/2026_10_22_000002_backfill_hr_person_qualification_versions.php',
+        'database/migrations/2026_10_22_000003_seed_security_person_qualification_correction_permission.php',
+        'database/migrations/2026_10_22_000004_drop_legacy_identity_columns_from_hr_person_qualifications.php',
     ];
 
     protected function tearDown(): void
@@ -697,9 +719,74 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
         DB::table('migrations')->where('migration', 'like', '2026_10_08%')->delete();
     }
 
-    /** S23's one table plus its permission seed (2026_10_09 — see S23_MIGRATIONS). */
+    /**
+     * S48 (docs/person-qualification-history-foundation-specification.md §S48.3) added
+     * hr.person_qualifications_current, a view that SELECTs pq.is_primary — the one column S41's
+     * add_is_primary migration drops directly (via ALTER TABLE, no CASCADE), so wherever that
+     * migration's down() is called directly, this view must be dropped first and recreated
+     * (verbatim per §S48.3) once is_primary is restored. Used ONLY where hr.person_qualifications
+     * itself survives (S41 rolls back alone or alongside unrelated stages) — nothing else in the
+     * S48 stack (the versions table, its functions, its permission) is touched, since none of
+     * those depend on is_primary.
+     */
+    private function dropPersonQualificationsCurrentView(): void
+    {
+        $this->pg()->statement('drop view if exists hr.person_qualifications_current');
+    }
+
+    private function recreatePersonQualificationsCurrentView(): void
+    {
+        $this->pg()->statement(<<<'SQL'
+            CREATE VIEW hr.person_qualifications_current AS
+            SELECT pq.id, pq.person_id, pq.is_primary, pq.created_at,
+                   v.academic_degree_id, v.qualification_type_id, v.obtained_on, v.version_number
+            FROM hr.person_qualifications pq
+            JOIN hr.person_qualification_versions v
+              ON v.person_qualification_id = pq.id AND v.is_current
+            SQL);
+    }
+
+    /**
+     * S48's entire versioned-history foundation on top of hr.person_qualifications (2026_10_22 —
+     * §S48.3): the view, the hr.person_qualification_versions table (a RESTRICT FK to
+     * hr.person_qualifications) and all five trigger functions — CASCADE on the two whose
+     * triggers live ON hr.person_qualifications itself (person_qualifications_identity_immutable,
+     * person_qualifications_has_current_version), since hr.person_qualifications's own drop, a few
+     * statements later, is not guaranteed to have happened yet when this runs. Used ONLY where
+     * hr.person_qualifications itself is about to be (or already was) dropped directly via S23's
+     * table-creation migration's own down() — the whole S48 stack goes with it, so this also
+     * clears S48's permission and migration tracking rows. Must run before any direct down() call
+     * on S23's table-creation migration.
+     */
+    private function dropPersonQualificationHistorySchemaObjects(): void
+    {
+        $this->pg()->statement('drop view if exists hr.person_qualifications_current');
+        $this->pg()->statement('drop table if exists hr.person_qualification_versions cascade');
+        $this->pg()->statement('drop function if exists hr.enforce_person_qualification_identity_immutable() cascade');
+        $this->pg()->statement('drop function if exists hr.check_new_qualification_has_current_version() cascade');
+        $this->pg()->statement('drop function if exists hr.check_qualification_has_current_version()');
+        $this->pg()->statement('drop function if exists hr.enforce_qualification_version_immutability()');
+        $this->pg()->statement('drop function if exists hr.enforce_qualification_version_person_match()');
+        DB::table('security.permissions')->where('code', 'hr.person_qualifications.correct')->delete();
+        DB::table('migrations')->where('migration', 'like', '2026_10_22%')->delete();
+        // hr.person_qualifications is about to be (or already was) dropped, which destroys the
+        // is_primary column S41's add_is_primary migration added — un-record that one migration
+        // (without calling its down(), same "un-record without a matching down()" pattern
+        // dropHumanCadreSchemaObjects() uses above) so migrateTestDatabase() replays it and
+        // restores is_primary before S48's view is recreated. Harmless where S41 is ALSO being
+        // rolled back via its own down() elsewhere in the same test (that loop deletes the same
+        // row itself) or was already un-recorded by dropHumanCadreSchemaObjects().
+        DB::table('migrations')->where('migration', 'like', '2026_10_18_000002%')->delete();
+    }
+
+    /**
+     * S23's one table plus its permission seed (2026_10_09 — see S23_MIGRATIONS), and S48's
+     * versioned-history foundation on top of it — all must go before the hr schema can be
+     * considered empty.
+     */
     private function dropPersonQualificationSchemaObjects(): void
     {
+        $this->dropPersonQualificationHistorySchemaObjects();
         $this->pg()->statement('drop table if exists hr.person_qualifications cascade');
         DB::table('migrations')->where('migration', 'like', '2026_10_09%')->delete();
     }
@@ -896,6 +983,10 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
         // down() deletes exactly its own permission rows. migrateTestDatabase() at the end
         // reapplies the S16/S12/S11 migrations along with S07's and S08's. S30's
         // hr.partial_secondment_periods carries the same RESTRICT FK, so it is rolled back first.
+        // S48's view SELECTs S41's is_primary column, so it must go before this loop calls S41's
+        // own down() directly (which drops that column without CASCADE) — recreated below once
+        // migrateTestDatabase() restores the column.
+        $this->dropPersonQualificationsCurrentView();
         foreach (array_reverse(array_merge(self::S16_MIGRATIONS, self::S30_MIGRATIONS, self::S31_MIGRATIONS, self::S34_MIGRATIONS, self::S38_MIGRATIONS, self::S39_MIGRATIONS, self::S41_MIGRATIONS, self::S42_MIGRATIONS, self::S43_MIGRATIONS, self::S44_MIGRATIONS)) as $path) {
             DB::transaction(function () use ($path): void {
                 $this->migration($path)->down();
@@ -954,6 +1045,7 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
         $this->assertSame(4, (int) $this->scalar('select count(*) from ref.marital_statuses'));
 
         $this->migrateTestDatabase();
+        $this->recreatePersonQualificationsCurrentView();
 
         $this->assertSame($organizationPermissionsBefore, (int) $this->scalar("select count(*) from security.permissions where module = 'organization'"));
         $this->assertSame(0, (int) $this->scalar('select count(*) from org.organizational_units'), 'S07 seeds zero organizational_units rows (spec §24)');
@@ -1020,17 +1112,20 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
         // S12's three, S14's one, S16's three, and S20's two (S10/S11/S12/S14/S16/S20 spec
         // §13/§16/§17/§13/§S16.14/§S20.12: none adds a new module name, since all extend the same
         // HumanResources module S09 owns), plus S21's, S22's and S23's two each, so the fixture
-        // assumption below is 24, plus S24's one, S26's two, S29's two and S30's two, so 31, plus S31's one, so 32, plus S34's two, so 34.
+        // assumption below is 24, plus S24's one, S26's two, S29's two and S30's two, so 31, plus S31's one, so 32, plus S34's two, so 34, plus S48's one (§S48.14), so 42.
         $hrPermissionsBefore = (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'");
         $employmentTypesBefore = (int) $this->scalar("select count(*) from ref.employment_types where code in ('permanent', 'contract')");
 
-        $this->assertSame(41, $hrPermissionsBefore, 'fixture assumption: the S09, S10, S11, S12, S14, S16, S20, S21, S22, S23, S24, S26, S29, S30, S31, S34, S38, and S39 permission seeds already ran');
+        $this->assertSame(42, $hrPermissionsBefore, 'fixture assumption: the S09, S10, S11, S12, S14, S16, S20, S21, S22, S23, S24, S26, S29, S30, S31, S34, S38, S39, and S48 permission seeds already ran');
         $this->assertSame(2, $employmentTypesBefore, 'fixture assumption: the S09 employment-type seed already ran');
 
         // S30 (RESTRICT FKs to hr.employment_relationships and ref.weekdays), S29 and S26 first
         // (RESTRICT FKs to hr.employment_relationships), then S24 (columns on hr.persons), then
         // S23 (RESTRICT FK to hr.persons), then S22, S21 and S20 (each a RESTRICT FK to
-        // hr.employment_relationships).
+        // hr.employment_relationships). S48's view/versions table depend on S41's is_primary
+        // column and on S23's table, so they must go before this loop (which calls S41's own
+        // down() directly) and before the S23 loop further below.
+        $this->dropPersonQualificationHistorySchemaObjects();
         foreach (array_reverse(array_merge(self::S30_MIGRATIONS, self::S31_MIGRATIONS, self::S34_MIGRATIONS, self::S38_MIGRATIONS, self::S39_MIGRATIONS, self::S41_MIGRATIONS, self::S42_MIGRATIONS, self::S43_MIGRATIONS, self::S44_MIGRATIONS)) as $path) {
             DB::transaction(function () use ($path): void {
                 $this->migration($path)->down();
@@ -1254,8 +1349,8 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
         $this->assertSame(1, (int) $this->scalar(
             "select count(*) from information_schema.tables where table_schema = 'hr' and table_name = 'workplace_assignment_periods'"
         ), "hr.workplace_assignment_periods (S16) must still exist, untouched by S10's rollback");
-        // 22: the 14 above plus S20's, S21's, S22's and S23's two permissions each.
-        $this->assertSame(37, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources' and code not like '%status_periods%'"));
+        // 22: the 14 above plus S20's, S21's, S22's and S23's two permissions each, plus S48's one (§S48.14).
+        $this->assertSame(38, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources' and code not like '%status_periods%'"));
 
         $this->migrateTestDatabase();
 
@@ -1314,8 +1409,8 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
         $this->assertSame(1, (int) $this->scalar(
             "select count(*) from information_schema.tables where table_schema = 'hr' and table_name = 'workplace_assignment_periods'"
         ), "hr.workplace_assignment_periods (S16) must still exist, untouched by S11's rollback");
-        // 22: plus S20's, S21's, S22's and S23's two permissions each.
-        $this->assertSame(39, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources' and code not like '%organizational_placement_periods%'"));
+        // 22: plus S20's, S21's, S22's and S23's two permissions each, plus S48's one (§S48.14).
+        $this->assertSame(40, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources' and code not like '%organizational_placement_periods%'"));
 
         $this->migrateTestDatabase();
 
@@ -1382,8 +1477,8 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
         // S14 adds no table of its own at all (§16), only the one permission row counted here — the
         // total below (13, not 9 or 10) is S09's five permissions plus S10's two plus S11's two
         // plus S14's one plus S16's three.
-        // 21: the 13 above plus S20's, S21's, S22's and S23's two permissions each.
-        $this->assertSame(37, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources' and code not like '%full_secondment_periods%'"));
+        // 21: the 13 above plus S20's, S21's, S22's and S23's two permissions each, plus S48's one (§S48.14).
+        $this->assertSame(38, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources' and code not like '%full_secondment_periods%'"));
 
         $this->migrateTestDatabase();
 
@@ -1567,8 +1662,8 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
                 "select count(*) from information_schema.tables where table_schema = 'hr' and table_name = ?", [$table]
             ), "hr.{$table} must still exist, untouched by S20's rollback");
         }
-        // 22: the 16 pre-S20 hr permissions plus S21's, S22's and S23's two each.
-        $this->assertSame(39, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'"), 'every non-S20 hr permission survives');
+        // 22: the 16 pre-S20 hr permissions plus S21's, S22's and S23's two each, plus S48's one (§S48.14).
+        $this->assertSame(40, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'"), 'every non-S20 hr permission survives');
 
         $this->migrateTestDatabase();
 
@@ -1614,8 +1709,8 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
                 "select count(*) from information_schema.tables where table_schema = 'hr' and table_name = ?", [$table]
             ), "hr.{$table} must still exist, untouched by S21's rollback");
         }
-        // 22: every hr permission except S21's own two.
-        $this->assertSame(39, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'"), 'every non-S21 hr permission survives');
+        // 22: every hr permission except S21's own two, plus S48's one (§S48.14).
+        $this->assertSame(40, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'"), 'every non-S21 hr permission survives');
 
         $this->migrateTestDatabase();
 
@@ -1659,8 +1754,8 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
             }
         }
         $this->assertSame($jobTitlesBefore, (int) $this->scalar('select count(*) from ref.job_titles'));
-        // 22: every hr permission except S22's own two (S23's are independent of S22's table).
-        $this->assertSame(39, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'"), 'every non-S22 hr permission survives');
+        // 22: every hr permission except S22's own two (S23's are independent of S22's table), plus S48's one (§S48.14).
+        $this->assertSame(40, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'"), 'every non-S22 hr permission survives');
 
         $this->migrateTestDatabase();
 
@@ -1682,6 +1777,10 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
         $before = (int) $this->scalar("select count(*) from security.permissions where code in {$permissionCodes}");
         $this->assertSame(2, $before, 'fixture assumption: the S23 permission seed already ran');
 
+        // S48's view/versions table depend on S23's table (§S48.3), so they must go before this
+        // loop can call S23's table-creation migration's down() directly.
+        $this->dropPersonQualificationHistorySchemaObjects();
+
         foreach (array_reverse(self::S23_MIGRATIONS) as $path) {
             DB::transaction(function () use ($path): void {
                 $this->migration($path)->down();
@@ -1701,14 +1800,25 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
                 ), "{$schema}.{$table} must survive S23's rollback untouched");
             }
         }
+        // S48's own permission is also gone at this point (dropped above alongside its structural objects).
         $this->assertSame(39, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'"), 'every non-S23 hr permission survives');
 
         $this->migrateTestDatabase();
 
         $this->assertSame($before, (int) $this->scalar("select count(*) from security.permissions where code in {$permissionCodes}"));
         $this->assertSame(0, (int) $this->scalar('select count(*) from hr.person_qualifications'), 'S23 seeds zero rows');
-        $this->assertSame(1, (int) $this->scalar(
+        // S48's 2026_10_22_000004 migration (§S48.3/§S48.18, D20) permanently drops this legacy
+        // constraint in its up() — restoring it only in down(), for legacy-rollback compatibility —
+        // in favour of hr.person_qualification_versions's own uniqueness mechanism
+        // (person_qualification_versions_current_identity_unique, a partial unique index per
+        // §S48.8/D14/D23/D40, not a table constraint). Since this test's forward replay via
+        // migrateTestDatabase() runs every migration up() in filename order, including
+        // 2026_10_22_000004, the old constraint is correctly and permanently absent here.
+        $this->assertSame(0, (int) $this->scalar(
             "select count(*) from pg_constraint where conname = 'person_qualifications_identity_unique' and contype = 'u'"
+        ));
+        $this->assertSame(1, (int) $this->scalar(
+            "select count(*) from pg_indexes where schemaname = 'hr' and tablename = 'person_qualification_versions' and indexname = 'person_qualification_versions_current_identity_unique'"
         ));
     }
 
@@ -1739,7 +1849,8 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
             }
             $this->assertSame(0, (int) $this->scalar("select count(*) from security.permissions where code = 'hr.persons.update_profile'"));
             $this->assertSame(1, (int) $this->scalar('select count(*) from hr.persons where id = ?', [$legacyId]), 'the legacy person survives S24 rollback');
-            $this->assertSame(40, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'"), 'every non-S24 hr permission survives');
+            // +1 vs. the pre-S48 baseline for S48's own permission (§S48.14).
+            $this->assertSame(41, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'"), 'every non-S24 hr permission survives');
 
             $this->migrateTestDatabase();
 
@@ -1791,7 +1902,8 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
             }
         }
         $this->assertSame($specialtiesBefore, (int) $this->scalar('select count(*) from ref.specialties'));
-        $this->assertSame(39, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'"), 'every non-S26 hr permission survives');
+        // +1 vs. the pre-S48 baseline for S48's own permission (§S48.14).
+        $this->assertSame(40, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'"), 'every non-S26 hr permission survives');
 
         $this->migrateTestDatabase();
 
@@ -1815,7 +1927,10 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
         $this->assertSame(2, $before, 'fixture assumption: the S29 permission seed already ran');
         $this->assertSame(7, (int) $this->scalar('select count(*) from ref.weekdays'), 'fixture assumption: the S29 weekday seed already ran');
 
-        // S30 first: its weekday membership table holds a RESTRICT FK to ref.weekdays.
+        // S30 first: its weekday membership table holds a RESTRICT FK to ref.weekdays. S48's view
+        // SELECTs S41's is_primary column, so it must go before this loop calls S41's own down()
+        // directly (recreated below once migrateTestDatabase() restores the column).
+        $this->dropPersonQualificationsCurrentView();
         foreach (array_reverse(array_merge(self::S29_MIGRATIONS, self::S30_MIGRATIONS, self::S31_MIGRATIONS, self::S34_MIGRATIONS, self::S38_MIGRATIONS, self::S39_MIGRATIONS, self::S41_MIGRATIONS, self::S42_MIGRATIONS, self::S43_MIGRATIONS, self::S44_MIGRATIONS)) as $path) {
             DB::transaction(function () use ($path): void {
                 $this->migration($path)->down();
@@ -1835,9 +1950,11 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
                 ), "{$schema}.{$table} must survive S29's rollback untouched");
             }
         }
-        $this->assertSame(27, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'"), 'every non-S29/S30 hr permission survives');
+        // +1 vs. the pre-S48 baseline for S48's own permission (§S48.14) — untouched by this test.
+        $this->assertSame(28, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'"), 'every non-S29/S30 hr permission survives');
 
         $this->migrateTestDatabase();
+        $this->recreatePersonQualificationsCurrentView();
 
         $this->assertSame($before, (int) $this->scalar("select count(*) from security.permissions where code in {$permissionCodes}"));
         $this->assertSame(0, (int) $this->scalar('select count(*) from hr.work_schedule_periods'), 'S29 seeds zero schedule rows');
@@ -1891,7 +2008,8 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
             }
         }
         $this->assertSame(7, (int) $this->scalar('select count(*) from ref.weekdays'));
-        $this->assertSame(38, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'"), 'every non-S30 hr permission survives');
+        // +1 vs. the pre-S48 baseline for S48's own permission (§S48.14).
+        $this->assertSame(39, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'"), 'every non-S30 hr permission survives');
 
         $this->migrateTestDatabase();
 
@@ -2173,6 +2291,9 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
         $this->assertSame(1, $column('employment_status_periods', 'travel_pay_status'));
         $this->assertSame(1, $column('person_qualifications', 'is_primary'));
 
+        // S48's view SELECTs is_primary, so it must go before this loop can drop that column
+        // directly (recreated below once migrateTestDatabase() restores it).
+        $this->dropPersonQualificationsCurrentView();
         foreach (array_reverse(self::S41_MIGRATIONS) as $path) {
             DB::transaction(function () use ($path): void {
                 $this->migration($path)->down();
@@ -2187,6 +2308,7 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
         $this->assertSame($hrBefore - 2, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'"), 'only the two S41 permissions were removed');
 
         $this->migrateTestDatabase();
+        $this->recreatePersonQualificationsCurrentView();
 
         $this->assertSame(1, $column('employment_status_periods', 'travel_pay_status'));
         $this->assertSame(1, $column('person_qualifications', 'is_primary'));
@@ -2200,6 +2322,509 @@ class MigrationLifecycleTest extends PostgresIntegrationTestCase
         $this->assertSame(0, (int) $this->scalar('select count(*) from (select person_id from hr.person_qualifications group by person_id having count(*) = 1 and not bool_or(is_primary)) x'), 'a Person with exactly one qualification has it as Primary');
         $this->assertSame($hrBefore, (int) $this->scalar("select count(*) from security.permissions where module = 'human_resources'"));
         $this->assertSame(0, (int) $this->scalar("select count(*) from security.role_permissions rp join security.permissions p on p.id = rp.permission_id where p.code in ('hr.human_cadre.view', 'hr.person_qualifications.designate_primary')"), 'granted to no role');
+    }
+
+    /**
+     * S48 §S48.18 ("migration rollback/reapply", legacy compatibility) — and, unlike
+     * test_s23_migrations_roll_back_and_reapply_cleanly() above (which only ever replays the
+     * backfill against S23's always-empty fixture), this is the one test that runs the real
+     * verify-before-drop VALUE comparison (§S48.18 step 4, 2026_10_22_000002's own up()) against
+     * actual legacy-shaped rows: three hr.person_qualifications rows inserted directly with
+     * academic_degree_id/qualification_type_id ON THE PARENT ROW — the pre-S48 shape, restored by
+     * first rolling the whole S48 stack back — simulating data that already existed when S48
+     * shipped. One of the three has a genuine matching audit.audit_entries row, exercising the
+     * backfill's actor-resolution LEFT JOIN LATERAL for real (provenance RECORDED); the other two
+     * take the BACKFILLED_UNKNOWN_ACTOR path. All three must survive the forward replay (backfill,
+     * permission seed, legacy-column drop) with their degree/type/is_primary values preserved
+     * exactly, readable afterwards only through hr.person_qualifications_current.
+     */
+    public function test_s48_migrations_roll_back_and_reapply_cleanly_with_legacy_data(): void
+    {
+        $this->assertSame(1, (int) $this->scalar("select count(*) from security.permissions where code = 'hr.person_qualifications.correct'"), 'fixture assumption: the S48 permission seed already ran');
+
+        // Roll back the whole S48 stack first, restoring the pre-S48 shape of hr.person_qualifications
+        // (academic_degree_id/qualification_type_id live on the parent row again, no versions table)
+        // so legacy-shaped data can be inserted directly, exactly as it would have existed before
+        // S48 ever shipped.
+        foreach (array_reverse(self::S48_MIGRATIONS) as $path) {
+            DB::transaction(function () use ($path): void {
+                $this->migration($path)->down();
+                DB::table('migrations')->where('migration', pathinfo($path, PATHINFO_FILENAME))->delete();
+            });
+        }
+
+        $columnsBefore = DB::table('information_schema.columns')->where('table_schema', 'hr')->where('table_name', 'person_qualifications')->pluck('column_name')->all();
+        $this->assertContains('academic_degree_id', $columnsBefore, "down() restores S23's legacy column");
+        $this->assertContains('qualification_type_id', $columnsBefore, "down() restores S23's legacy column");
+        $this->assertSame(0, (int) $this->scalar("select count(*) from information_schema.tables where table_schema = 'hr' and table_name = 'person_qualification_versions'"));
+        $this->assertSame(0, (int) $this->scalar("select count(*) from security.permissions where code = 'hr.person_qualifications.correct'"));
+
+        $personId = (string) Str::uuid();
+        $degreeA = (string) Str::uuid();
+        $degreeB = (string) Str::uuid();
+        $typeA = (string) Str::uuid();
+        $principalId = (string) Str::uuid();
+        $q1 = (string) Str::uuid();
+        $q2 = (string) Str::uuid();
+        $q3 = (string) Str::uuid();
+        $auditEntryId = (string) Str::uuid();
+
+        DB::table('hr.persons')->insert(['id' => $personId, 'national_id' => 'S48-LEGACY-PROBE-1', 'version' => 1, 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('ref.academic_degrees')->insert(['id' => $degreeA, 'code' => 's48_legacy_a', 'name_ar' => 'درجة قديمة أ', 'name_en' => null, 'is_active' => true, 'display_order' => 99, 'version' => 1, 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('ref.academic_degrees')->insert(['id' => $degreeB, 'code' => 's48_legacy_b', 'name_ar' => 'درجة قديمة ب', 'name_en' => null, 'is_active' => true, 'display_order' => 99, 'version' => 1, 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('ref.qualification_types')->insert(['id' => $typeA, 'code' => 's48_legacy_t', 'name_ar' => 'نوع قديم', 'name_en' => null, 'is_active' => true, 'display_order' => 99, 'version' => 1, 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('security.principals')->insert(['id' => $principalId, 'username' => 's48.legacy.probe', 'username_normalized' => 's48.legacy.probe', 'display_name' => 'S48 Legacy Probe', 'status' => 'ACTIVE', 'version' => 1, 'created_at' => now(), 'updated_at' => now()]);
+
+        // q1: degree only, Primary, WITH a genuine matching audit entry (resolved actor).
+        DB::table('hr.person_qualifications')->insert(['id' => $q1, 'person_id' => $personId, 'academic_degree_id' => $degreeA, 'qualification_type_id' => null, 'is_primary' => true, 'created_at' => now()]);
+        // q2: type only, not Primary, no audit trail at all (unknown actor).
+        DB::table('hr.person_qualifications')->insert(['id' => $q2, 'person_id' => $personId, 'academic_degree_id' => null, 'qualification_type_id' => $typeA, 'is_primary' => false, 'created_at' => now()]);
+        // q3: both degree and type, not Primary, no audit trail (unknown actor).
+        DB::table('hr.person_qualifications')->insert(['id' => $q3, 'person_id' => $personId, 'academic_degree_id' => $degreeB, 'qualification_type_id' => $typeA, 'is_primary' => false, 'created_at' => now()]);
+
+        DB::table('audit.audit_entries')->insert([
+            'id' => $auditEntryId, 'occurred_at' => now(), 'category' => 'MUTATION',
+            'action' => 'hr.person_qualification.record', 'actor_type' => 'HUMAN', 'actor_principal_id' => $principalId,
+            'actor_label' => null, 'source' => 'HTTP', 'correlation_id' => (string) Str::uuid(),
+            'target_type' => 'hr_person_qualification', 'target_id' => $q1, 'outcome' => 'SUCCEEDED',
+            'changes' => json_encode([]), 'metadata' => json_encode([]),
+        ]);
+
+        // The parent rows' own values exactly as they stand pre-migration, for later comparison.
+        $before = DB::table('hr.person_qualifications')->whereIn('id', [$q1, $q2, $q3])->get()->keyBy('id');
+
+        try {
+            // Re-applies, in order: 000001 (versioned-history table/view/triggers), 000002 (the
+            // backfill — its verify-before-drop value comparison runs for real against this legacy
+            // data, not S23's empty fixture), 000003 (correction permission), 000004 (drops the
+            // legacy columns again, now that the backfill verified cleanly).
+            $this->migrateTestDatabase();
+
+            $columnsAfter = DB::table('information_schema.columns')->where('table_schema', 'hr')->where('table_name', 'person_qualifications')->pluck('column_name')->all();
+            $this->assertNotContains('academic_degree_id', $columnsAfter, 'the legacy column is dropped again once the backfill verified cleanly');
+            $this->assertNotContains('qualification_type_id', $columnsAfter);
+            $this->assertSame(1, (int) $this->scalar("select count(*) from security.permissions where code = 'hr.person_qualifications.correct'"));
+
+            foreach ([$q1, $q2, $q3] as $id) {
+                $version = DB::table('hr.person_qualification_versions')->where('person_qualification_id', $id)->first();
+                $this->assertNotNull($version, "qualification {$id} has a backfilled version row");
+                $this->assertSame(1, $version->version_number);
+                $this->assertTrue((bool) $version->is_current);
+                $this->assertSame($before[$id]->academic_degree_id, $version->academic_degree_id, 'the backfill copies the parent row\'s own value exactly');
+                $this->assertSame($before[$id]->qualification_type_id, $version->qualification_type_id);
+                $this->assertNull($version->obtained_on, 'never fabricated — the pre-S48 schema never recorded it');
+                $this->assertNull($version->reason);
+
+                $current = DB::table('hr.person_qualifications_current')->where('id', $id)->first();
+                $this->assertNotNull($current);
+                $this->assertSame($before[$id]->academic_degree_id, $current->academic_degree_id, 'the view reproduces the legacy value faithfully');
+                $this->assertSame($before[$id]->qualification_type_id, $current->qualification_type_id);
+            }
+
+            $version1 = DB::table('hr.person_qualification_versions')->where('person_qualification_id', $q1)->first();
+            $this->assertSame($principalId, $version1->created_by_principal_id, 'q1 resolves its genuine matching audit entry — provenance RECORDED, even though backfilled (D43)');
+            foreach ([$q2, $q3] as $id) {
+                $version = DB::table('hr.person_qualification_versions')->where('person_qualification_id', $id)->first();
+                $this->assertNull($version->created_by_principal_id, 'no matching audit entry — provenance BACKFILLED_UNKNOWN_ACTOR, never fabricated');
+            }
+
+            $this->assertTrue((bool) DB::table('hr.person_qualifications')->where('id', $q1)->value('is_primary'), 'is_primary is untouched by S48 — lives on the parent row throughout');
+            $this->assertFalse((bool) DB::table('hr.person_qualifications')->where('id', $q2)->value('is_primary'));
+            $this->assertFalse((bool) DB::table('hr.person_qualifications')->where('id', $q3)->value('is_primary'));
+        } finally {
+            // audit.audit_entries is permanently immutable (audit_entries_immutable trigger) —
+            // disabled only for this one test-fixture cleanup delete, exactly as
+            // forceDeletePersonQualificationFixtures() does for S48's own versions table elsewhere.
+            DB::statement('ALTER TABLE audit.audit_entries DISABLE TRIGGER audit_entries_immutable');
+            try {
+                DB::table('audit.audit_entries')->where('id', $auditEntryId)->delete();
+            } finally {
+                DB::statement('ALTER TABLE audit.audit_entries ENABLE TRIGGER audit_entries_immutable');
+            }
+            // hr.person_qualification_versions may or may not exist depending on where this test
+            // stopped; the forward migration above already dropped the legacy columns, so deleting
+            // by id (never by academic_degree_id/qualification_type_id) is schema-shape-agnostic.
+            if ((int) $this->scalar("select count(*) from information_schema.tables where table_schema = 'hr' and table_name = 'person_qualification_versions'") === 1) {
+                $this->forceDeletePersonQualificationFixtures([$personId]);
+            } else {
+                DB::table('hr.person_qualifications')->whereIn('id', [$q1, $q2, $q3])->delete();
+            }
+            DB::table('hr.persons')->where('id', $personId)->delete();
+            DB::table('security.principals')->where('id', $principalId)->delete();
+            DB::table('ref.academic_degrees')->whereIn('id', [$degreeA, $degreeB])->delete();
+            DB::table('ref.qualification_types')->where('id', $typeA)->delete();
+            // Leaves the test database fully forward-migrated regardless of where this test stopped
+            // (the class tearDown() does this too, redundantly but harmlessly).
+            $this->migrateTestDatabase();
+        }
+    }
+
+    /**
+     * Review-round-2 defect fix: the test above never exercises a SECOND rollback after a REAL,
+     * non-empty backfill — its own down() calls at the very top run before any S48 data exists, so
+     * the DELETE inside 2026_10_22_000002's down() affects zero rows and the unconditional
+     * immutability trigger (person_qualification_versions_immutable) never actually fires, hiding
+     * the defect. This test forces exactly that: a real backfill of unknown-actor rows (both
+     * triggers confirmed ENABLED — not left disabled by an earlier test — before the rollback is
+     * attempted), then a full rollback of the same four-migration chain, which must now succeed
+     * (not raise MA004), restore the old parent-row values, and reapply cleanly a second time.
+     */
+    public function test_s48_rollback_of_a_non_empty_unknown_actor_backfill_succeeds_with_protections_active_and_reapplies_cleanly(): void
+    {
+        $this->assertSame('O', (string) $this->scalar("select tgenabled from pg_trigger where tgname = 'person_qualification_versions_immutable'"), 'the immutability trigger is enabled at the start of this test, not left disabled by an earlier one');
+        $this->assertSame('O', (string) $this->scalar("select tgenabled from pg_trigger where tgname = 'person_qualification_versions_at_least_one_current'"), 'the deferred guarantee trigger is enabled at the start of this test');
+
+        // Roll back to the pre-S48 shape first, exactly like the test above, so legacy-shaped rows
+        // with NO audit trail at all can be inserted directly.
+        foreach (array_reverse(self::S48_MIGRATIONS) as $path) {
+            DB::transaction(function () use ($path): void {
+                $this->migration($path)->down();
+                DB::table('migrations')->where('migration', pathinfo($path, PATHINFO_FILENAME))->delete();
+            });
+        }
+
+        $personId = (string) Str::uuid();
+        $degreeA = (string) Str::uuid();
+        $typeA = (string) Str::uuid();
+        $q1 = (string) Str::uuid();
+        $q2 = (string) Str::uuid();
+
+        DB::table('hr.persons')->insert(['id' => $personId, 'national_id' => 'S48-ROLLBACK-PROBE-1', 'version' => 1, 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('ref.academic_degrees')->insert(['id' => $degreeA, 'code' => 's48_rb_a', 'name_ar' => 'درجة اختبار', 'name_en' => null, 'is_active' => true, 'display_order' => 99, 'version' => 1, 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('ref.qualification_types')->insert(['id' => $typeA, 'code' => 's48_rb_t', 'name_ar' => 'نوع اختبار', 'name_en' => null, 'is_active' => true, 'display_order' => 99, 'version' => 1, 'created_at' => now(), 'updated_at' => now()]);
+        // No audit.audit_entries row for either — the real backfill resolves both to
+        // BACKFILLED_UNKNOWN_ACTOR (created_by_principal_id = NULL), the only case the rollback
+        // gate is meant to let through.
+        DB::table('hr.person_qualifications')->insert(['id' => $q1, 'person_id' => $personId, 'academic_degree_id' => $degreeA, 'qualification_type_id' => null, 'is_primary' => true, 'created_at' => now()]);
+        DB::table('hr.person_qualifications')->insert(['id' => $q2, 'person_id' => $personId, 'academic_degree_id' => null, 'qualification_type_id' => $typeA, 'is_primary' => false, 'created_at' => now()]);
+
+        $before = DB::table('hr.person_qualifications')->whereIn('id', [$q1, $q2])->get()->keyBy('id');
+
+        try {
+            // The REAL backfill migration runs here, producing real version_number = 1 rows — not
+            // a hand-written fixture standing in for it.
+            $this->migrateTestDatabase();
+
+            foreach ([$q1, $q2] as $id) {
+                $this->assertNull(
+                    DB::table('hr.person_qualification_versions')->where('person_qualification_id', $id)->value('created_by_principal_id'),
+                    'both rows resolve to an unknown actor — neither has a matching audit entry, so the rollback gate must let this through',
+                );
+            }
+            $this->assertSame(2, (int) DB::table('hr.person_qualification_versions')->whereIn('person_qualification_id', [$q1, $q2])->count());
+
+            // The previously-untested, critical step: roll the WHOLE S48 chain back again, now
+            // that the backfill it is reverting is real and non-empty, with both triggers active.
+            foreach (array_reverse(self::S48_MIGRATIONS) as $path) {
+                DB::transaction(function () use ($path): void {
+                    $this->migration($path)->down();
+                    DB::table('migrations')->where('migration', pathinfo($path, PATHINFO_FILENAME))->delete();
+                });
+            }
+
+            $this->assertSame(0, (int) $this->scalar("select count(*) from information_schema.tables where table_schema = 'hr' and table_name = 'person_qualification_versions'"), "2026_10_22_000001's down() dropped the table as the last step of this rollback chain — confirms the rollback actually completed, not merely that no exception happened to surface");
+
+            $after = DB::table('hr.person_qualifications')->whereIn('id', [$q1, $q2])->get()->keyBy('id');
+            $this->assertSame($before[$q1]->academic_degree_id, $after[$q1]->academic_degree_id, 'old value restored onto the parent row');
+            $this->assertNull($after[$q1]->qualification_type_id);
+            $this->assertNull($after[$q2]->academic_degree_id);
+            $this->assertSame($before[$q2]->qualification_type_id, $after[$q2]->qualification_type_id, 'old value restored onto the parent row');
+            $this->assertSame(0, (int) $this->scalar("select count(*) from security.permissions where code = 'hr.person_qualifications.correct'"));
+
+            // Reapply cleanly a second time.
+            $this->migrateTestDatabase();
+
+            $this->assertSame('O', (string) $this->scalar("select tgenabled from pg_trigger where tgname = 'person_qualification_versions_immutable'"), 'the re-created trigger is enabled, not left disabled by the rollback');
+            $this->assertSame('O', (string) $this->scalar("select tgenabled from pg_trigger where tgname = 'person_qualification_versions_at_least_one_current'"));
+
+            foreach ([$q1, $q2] as $id) {
+                $version = DB::table('hr.person_qualification_versions')->where('person_qualification_id', $id)->first();
+                $this->assertNotNull($version, "qualification {$id} has a backfilled version row again after reapplying");
+                $this->assertSame(1, $version->version_number);
+                $this->assertTrue((bool) $version->is_current);
+                $this->assertNull($version->created_by_principal_id);
+            }
+            $this->assertSame($before[$q1]->academic_degree_id, DB::table('hr.person_qualification_versions')->where('person_qualification_id', $q1)->value('academic_degree_id'), 'reapplying reproduces the same value');
+            $this->assertSame(1, (int) $this->scalar("select count(*) from security.permissions where code = 'hr.person_qualifications.correct'"));
+        } finally {
+            if ((int) $this->scalar("select count(*) from information_schema.tables where table_schema = 'hr' and table_name = 'person_qualification_versions'") === 1) {
+                $this->forceDeletePersonQualificationFixtures([$personId]);
+            } else {
+                DB::table('hr.person_qualifications')->whereIn('id', [$q1, $q2])->delete();
+            }
+            DB::table('hr.persons')->where('id', $personId)->delete();
+            DB::table('ref.academic_degrees')->where('id', $degreeA)->delete();
+            DB::table('ref.qualification_types')->where('id', $typeA)->delete();
+            $this->migrateTestDatabase();
+        }
+    }
+
+    /**
+     * Review-round-2 fix: the gate must refuse the ENTIRE rollback chain before ANY of its three
+     * migrations changes anything — schema (000004), security.permissions (000003), or version
+     * data (000002) — not only once the chain happens to reach 000002. These three tests set up a
+     * known actor by three different, realistic routes (a backfill that resolved one, a brand-new
+     * record, a brand-new correction) and confirm both the refusal and, by exact before/after
+     * snapshot comparison, that nothing changed anywhere in the guarded chain.
+     */
+    private function captureS48GuardedSnapshot(array $qualificationIds): array
+    {
+        return [
+            'columns' => DB::table('information_schema.columns')
+                ->where('table_schema', 'hr')->where('table_name', 'person_qualifications')
+                ->orderBy('column_name')->pluck('column_name')->all(),
+            'permission_exists' => (int) $this->scalar("select count(*) from security.permissions where code = 'hr.person_qualifications.correct'"),
+            'parent_rows' => DB::table('hr.person_qualifications')->whereIn('id', $qualificationIds)->orderBy('id')->get()->map(fn ($r) => (array) $r)->all(),
+            'version_rows' => DB::table('hr.person_qualification_versions')->whereIn('person_qualification_id', $qualificationIds)->orderBy('id')->get()->map(fn ($r) => (array) $r)->all(),
+            'migrations' => DB::table('migrations')->whereIn('migration', array_map(fn ($p) => pathinfo($p, PATHINFO_FILENAME), self::S48_MIGRATIONS))->orderBy('migration')->pluck('migration')->all(),
+        ];
+    }
+
+    /** Runs the full S48 rollback chain and returns the exception it raises, or fails the test if it completes without one. */
+    private function attemptFullS48RollbackExpectingRefusal(): \Throwable
+    {
+        try {
+            foreach (array_reverse(self::S48_MIGRATIONS) as $path) {
+                DB::transaction(function () use ($path): void {
+                    $this->migration($path)->down();
+                    DB::table('migrations')->where('migration', pathinfo($path, PATHINFO_FILENAME))->delete();
+                });
+            }
+        } catch (\Throwable $e) {
+            return $e;
+        }
+
+        $this->fail('expected the S48 rollback chain to be refused by the gate, but it completed without error.');
+    }
+
+    public function test_rollback_chain_is_refused_before_any_change_when_the_backfill_resolved_a_known_actor(): void
+    {
+        $personId = (string) Str::uuid();
+        $degreeA = (string) Str::uuid();
+        $principalId = (string) Str::uuid();
+        $q1 = (string) Str::uuid();
+
+        DB::table('hr.persons')->insert(['id' => $personId, 'national_id' => 'S48-GATE-PROBE-1', 'version' => 1, 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('ref.academic_degrees')->insert(['id' => $degreeA, 'code' => 's48_gate_a', 'name_ar' => 'درجة اختبار', 'name_en' => null, 'is_active' => true, 'display_order' => 99, 'version' => 1, 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('security.principals')->insert(['id' => $principalId, 'username' => 's48.gate.probe.1', 'username_normalized' => 's48.gate.probe.1', 'display_name' => 'S48 Gate Probe 1', 'status' => 'ACTIVE', 'version' => 1, 'created_at' => now(), 'updated_at' => now()]);
+
+        // Directly against the current (post-S48) shape: a version row carrying a resolved actor,
+        // the same shape 2026_10_22_000002's own backfill produces for a qualification whose audit
+        // trail matches (already proven correct by the test above and by the earlier legacy-data
+        // test) — this test is about the GATE's reaction to that row existing, not about re-proving
+        // the backfill's own resolution logic. This class extends PostgresIntegrationTestCase
+        // directly (no ambient test transaction), so the parent row and its version row must be
+        // inserted inside ONE explicit transaction — otherwise the parent row's own deferred
+        // "has a current version" constraint trigger (MA005) evaluates at the first insert's own
+        // implicit auto-commit, before the version row below ever exists.
+        DB::transaction(function () use ($q1, $personId, $degreeA, $principalId): void {
+            DB::table('hr.person_qualifications')->insert(['id' => $q1, 'person_id' => $personId, 'is_primary' => true, 'created_at' => now()]);
+            DB::table('hr.person_qualification_versions')->insert([
+                'id' => (string) Str::uuid(), 'person_qualification_id' => $q1, 'person_id' => $personId,
+                'version_number' => 1, 'academic_degree_id' => $degreeA, 'qualification_type_id' => null,
+                'obtained_on' => null, 'is_current' => true, 'reason' => null,
+                'created_by_principal_id' => $principalId, 'created_at' => now(),
+            ]);
+        });
+
+        $before = $this->captureS48GuardedSnapshot([$q1]);
+
+        try {
+            $error = $this->attemptFullS48RollbackExpectingRefusal();
+            $this->assertInstanceOf(RuntimeException::class, $error);
+            $this->assertStringContainsString('S48 rollback refused', $error->getMessage());
+
+            $after = $this->captureS48GuardedSnapshot([$q1]);
+            $this->assertSame($before, $after, 'schema, security.permissions, version data, and the migrations table are all exactly as they were before the refused attempt');
+        } finally {
+            $this->forceDeletePersonQualificationFixtures([$personId]);
+            DB::table('hr.persons')->where('id', $personId)->delete();
+            DB::table('security.principals')->where('id', $principalId)->delete();
+            DB::table('ref.academic_degrees')->where('id', $degreeA)->delete();
+            $this->migrateTestDatabase();
+        }
+    }
+
+    public function test_rollback_chain_is_refused_before_any_change_when_a_new_record_exists(): void
+    {
+        $personId = (string) Str::uuid();
+        $degreeA = (string) Str::uuid();
+        $principalId = (string) Str::uuid();
+
+        DB::table('hr.persons')->insert(['id' => $personId, 'national_id' => 'S48-GATE-PROBE-2', 'version' => 1, 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('ref.academic_degrees')->insert(['id' => $degreeA, 'code' => 's48_gate_b', 'name_ar' => 'درجة اختبار', 'name_en' => null, 'is_active' => true, 'display_order' => 99, 'version' => 1, 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('security.principals')->insert(['id' => $principalId, 'username' => 's48.gate.probe.2', 'username_normalized' => 's48.gate.probe.2', 'display_name' => 'S48 Gate Probe 2', 'status' => 'ACTIVE', 'version' => 1, 'created_at' => now(), 'updated_at' => now()]);
+
+        // A genuinely NEW record, through RecordPersonQualification itself — not a hand-written
+        // row — with a real principal, exactly as the fixed command now requires.
+        $person = Person::query()->findOrFail($personId);
+        $recording = app(RecordPersonQualification::class)->handle($person, AcademicDegree::query()->find($degreeA), null, null, $principalId);
+        $q1 = $recording->qualification->getKey();
+
+        $before = $this->captureS48GuardedSnapshot([$q1]);
+
+        try {
+            $error = $this->attemptFullS48RollbackExpectingRefusal();
+            $this->assertInstanceOf(RuntimeException::class, $error);
+            $this->assertStringContainsString('S48 rollback refused', $error->getMessage());
+
+            $after = $this->captureS48GuardedSnapshot([$q1]);
+            $this->assertSame($before, $after, 'schema, security.permissions, version data, and the migrations table are all exactly as they were before the refused attempt');
+        } finally {
+            $this->forceDeletePersonQualificationFixtures([$personId]);
+            DB::table('hr.persons')->where('id', $personId)->delete();
+            DB::table('security.principals')->where('id', $principalId)->delete();
+            DB::table('ref.academic_degrees')->where('id', $degreeA)->delete();
+            $this->migrateTestDatabase();
+        }
+    }
+
+    public function test_rollback_chain_is_refused_before_any_change_when_a_new_correction_exists(): void
+    {
+        $personId = (string) Str::uuid();
+        $degreeA = (string) Str::uuid();
+        $degreeB = (string) Str::uuid();
+        $principalId = (string) Str::uuid();
+        $q1 = (string) Str::uuid();
+
+        DB::table('hr.persons')->insert(['id' => $personId, 'national_id' => 'S48-GATE-PROBE-3', 'version' => 1, 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('ref.academic_degrees')->insert(['id' => $degreeA, 'code' => 's48_gate_c1', 'name_ar' => 'درجة اختبار', 'name_en' => null, 'is_active' => true, 'display_order' => 99, 'version' => 1, 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('ref.academic_degrees')->insert(['id' => $degreeB, 'code' => 's48_gate_c2', 'name_ar' => 'درجة اختبار أخرى', 'name_en' => null, 'is_active' => true, 'display_order' => 99, 'version' => 1, 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('security.principals')->insert(['id' => $principalId, 'username' => 's48.gate.probe.3', 'username_normalized' => 's48.gate.probe.3', 'display_name' => 'S48 Gate Probe 3', 'status' => 'ACTIVE', 'version' => 1, 'created_at' => now(), 'updated_at' => now()]);
+
+        // version 1: a pre-existing, unknown-actor row (as a real backfill would have left it). One
+        // explicit transaction, same reason as the sibling test above: this class has no ambient
+        // test transaction, and the parent row's deferred "has a current version" trigger (MA005)
+        // would otherwise fire at the first insert's own implicit auto-commit.
+        DB::transaction(function () use ($q1, $personId, $degreeA): void {
+            DB::table('hr.person_qualifications')->insert(['id' => $q1, 'person_id' => $personId, 'is_primary' => true, 'created_at' => now()]);
+            DB::table('hr.person_qualification_versions')->insert([
+                'id' => (string) Str::uuid(), 'person_qualification_id' => $q1, 'person_id' => $personId,
+                'version_number' => 1, 'academic_degree_id' => $degreeA, 'qualification_type_id' => null,
+                'obtained_on' => null, 'is_current' => true, 'reason' => null,
+                'created_by_principal_id' => null, 'created_at' => now(),
+            ]);
+        });
+
+        // A genuinely NEW correction, through CorrectPersonQualification itself, with a real
+        // principal — produces version 2 with a known actor.
+        $person = Person::query()->findOrFail($personId);
+        $qualification = PersonQualification::query()->findOrFail($q1);
+        app(CorrectPersonQualification::class)->handle(
+            $person, $qualification, 1, AcademicDegree::query()->find($degreeB), null, null, 'سبب الاختبار', $principalId,
+        );
+
+        $before = $this->captureS48GuardedSnapshot([$q1]);
+
+        try {
+            $error = $this->attemptFullS48RollbackExpectingRefusal();
+            $this->assertInstanceOf(RuntimeException::class, $error);
+            $this->assertStringContainsString('S48 rollback refused', $error->getMessage());
+
+            $after = $this->captureS48GuardedSnapshot([$q1]);
+            $this->assertSame($before, $after, 'schema, security.permissions, version data, and the migrations table are all exactly as they were before the refused attempt');
+        } finally {
+            $this->forceDeletePersonQualificationFixtures([$personId]);
+            DB::table('hr.persons')->where('id', $personId)->delete();
+            DB::table('security.principals')->where('id', $principalId)->delete();
+            DB::table('ref.academic_degrees')->whereIn('id', [$degreeA, $degreeB])->delete();
+            $this->migrateTestDatabase();
+        }
+    }
+
+    public function test_record_and_correct_reject_a_missing_actor_before_any_write(): void
+    {
+        $personId = (string) Str::uuid();
+        $degreeA = (string) Str::uuid();
+        $degreeB = (string) Str::uuid();
+
+        DB::table('hr.persons')->insert(['id' => $personId, 'national_id' => 'S48-ACTOR-PROBE-1', 'version' => 1, 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('ref.academic_degrees')->insert(['id' => $degreeA, 'code' => 's48_actor_a', 'name_ar' => 'درجة اختبار', 'name_en' => null, 'is_active' => true, 'display_order' => 99, 'version' => 1, 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('ref.academic_degrees')->insert(['id' => $degreeB, 'code' => 's48_actor_b', 'name_ar' => 'درجة اختبار أخرى', 'name_en' => null, 'is_active' => true, 'display_order' => 99, 'version' => 1, 'created_at' => now(), 'updated_at' => now()]);
+
+        try {
+            $person = Person::query()->findOrFail($personId);
+
+            // RecordPersonQualification rejects a missing actor before writing anything — not
+            // the default NULL it used to accept silently.
+            $this->expectException(PersonQualificationActorRequiredException::class);
+            try {
+                app(RecordPersonQualification::class)->handle($person, AcademicDegree::query()->find($degreeA), null);
+            } finally {
+                $this->assertSame(0, (int) DB::table('hr.person_qualifications')->where('person_id', $personId)->count(), 'the rejected record left no trace');
+            }
+        } finally {
+            DB::table('ref.academic_degrees')->whereIn('id', [$degreeA, $degreeB])->delete();
+            DB::table('hr.persons')->where('id', $personId)->delete();
+        }
+    }
+
+    public function test_correct_rejects_a_missing_actor_before_any_write(): void
+    {
+        $personId = (string) Str::uuid();
+        $degreeA = (string) Str::uuid();
+        $degreeB = (string) Str::uuid();
+        $q1 = (string) Str::uuid();
+
+        DB::table('hr.persons')->insert(['id' => $personId, 'national_id' => 'S48-ACTOR-PROBE-2', 'version' => 1, 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('ref.academic_degrees')->insert(['id' => $degreeA, 'code' => 's48_actor_c', 'name_ar' => 'درجة اختبار', 'name_en' => null, 'is_active' => true, 'display_order' => 99, 'version' => 1, 'created_at' => now(), 'updated_at' => now()]);
+        DB::table('ref.academic_degrees')->insert(['id' => $degreeB, 'code' => 's48_actor_d', 'name_ar' => 'درجة اختبار أخرى', 'name_en' => null, 'is_active' => true, 'display_order' => 99, 'version' => 1, 'created_at' => now(), 'updated_at' => now()]);
+        // One explicit transaction: this class has no ambient test transaction, and the parent
+        // row's own deferred "has a current version" trigger (MA005) would otherwise fire at the
+        // first insert's own implicit auto-commit, before the version row below ever exists.
+        DB::transaction(function () use ($q1, $personId, $degreeA): void {
+            DB::table('hr.person_qualifications')->insert(['id' => $q1, 'person_id' => $personId, 'is_primary' => true, 'created_at' => now()]);
+            DB::table('hr.person_qualification_versions')->insert([
+                'id' => (string) Str::uuid(), 'person_qualification_id' => $q1, 'person_id' => $personId,
+                'version_number' => 1, 'academic_degree_id' => $degreeA, 'qualification_type_id' => null,
+                'obtained_on' => null, 'is_current' => true, 'reason' => null,
+                'created_by_principal_id' => null, 'created_at' => now(),
+            ]);
+        });
+
+        try {
+            $person = Person::query()->findOrFail($personId);
+            $qualification = PersonQualification::query()->findOrFail($q1);
+
+            $this->expectException(PersonQualificationActorRequiredException::class);
+            try {
+                app(CorrectPersonQualification::class)->handle(
+                    $person, $qualification, 1, AcademicDegree::query()->find($degreeB), null, null, 'سبب الاختبار', null,
+                );
+            } finally {
+                $this->assertSame(
+                    1,
+                    (int) DB::table('hr.person_qualification_versions')->where('person_qualification_id', $q1)->count(),
+                    'the rejected correction left no trace — still only the original version',
+                );
+                $this->assertSame(1, (int) $this->scalar('select version_number from hr.person_qualification_versions where person_qualification_id = ? and is_current', [$q1]));
+            }
+        } finally {
+            $this->forceDeletePersonQualificationFixtures([$personId]);
+            DB::table('hr.persons')->where('id', $personId)->delete();
+            DB::table('ref.academic_degrees')->whereIn('id', [$degreeA, $degreeB])->delete();
+        }
+    }
+
+    /**
+     * Test-only real cleanup of S48 qualification fixtures, mirroring
+     * ConcurrencyTest::forceDeletePersonQualificationFixtures() exactly:
+     * hr.person_qualification_versions rows are permanently immutable (MA004 — DELETE is
+     * unconditionally rejected by person_qualification_versions_immutable), and the deferred "at
+     * least one current version" constraint trigger fires on every DELETE regardless of the
+     * parent row's own fate — both must be disabled for the duration of this one cleanup delete.
+     */
+    private function forceDeletePersonQualificationFixtures(array $personIds): void
+    {
+        DB::statement('ALTER TABLE hr.person_qualification_versions DISABLE TRIGGER person_qualification_versions_immutable');
+        DB::statement('ALTER TABLE hr.person_qualification_versions DISABLE TRIGGER person_qualification_versions_at_least_one_current');
+        try {
+            DB::table('hr.person_qualification_versions')->whereIn('person_id', $personIds)->delete();
+        } finally {
+            DB::statement('ALTER TABLE hr.person_qualification_versions ENABLE TRIGGER person_qualification_versions_immutable');
+            DB::statement('ALTER TABLE hr.person_qualification_versions ENABLE TRIGGER person_qualification_versions_at_least_one_current');
+        }
+        DB::table('hr.person_qualifications')->whereIn('person_id', $personIds)->delete();
     }
 
     public function test_extension_rollback_refuses_while_an_index_depends_on_it(): void

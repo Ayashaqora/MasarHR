@@ -25,6 +25,7 @@ use App\Modules\HumanResources\Domain\Exceptions\InvalidPartialSecondmentPeriodD
 use App\Modules\HumanResources\Domain\Exceptions\InvalidPartialSecondmentWeekdaysException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidPersonProfileException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidPersonQualificationAcademicDegreeException;
+use App\Modules\HumanResources\Domain\Exceptions\InvalidPersonQualificationObtainedOnException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidPersonQualificationTypeException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidPlacementPeriodDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidReturnIntentionPeriodDateException;
@@ -41,14 +42,17 @@ use App\Modules\HumanResources\Domain\Exceptions\InvalidWorkSchedulePeriodDateEx
 use App\Modules\HumanResources\Domain\Exceptions\InvalidWorkScheduleWeekdaysException;
 use App\Modules\HumanResources\Domain\Exceptions\NoActiveFullSecondmentException;
 use App\Modules\HumanResources\Domain\Exceptions\NoActiveWorkplaceAssignmentException;
+use App\Modules\HumanResources\Domain\Exceptions\NoOpQualificationCorrectionException;
 use App\Modules\HumanResources\Domain\Exceptions\OverlappingEmploymentRelationshipException;
 use App\Modules\HumanResources\Domain\Exceptions\PartialSecondmentOutsideWorkScheduleException;
 use App\Modules\HumanResources\Domain\Exceptions\PartialSecondmentWeekdayConflictException;
 use App\Modules\HumanResources\Domain\Exceptions\PersonIsTerminalException;
+use App\Modules\HumanResources\Domain\Exceptions\PersonQualificationActorRequiredException;
 use App\Modules\HumanResources\Domain\Exceptions\PersonQualificationIdentityMissingException;
 use App\Modules\HumanResources\Domain\Exceptions\PersonStaleVersionException;
 use App\Modules\HumanResources\Domain\Exceptions\PrimaryQualificationConflictException;
 use App\Modules\HumanResources\Domain\Exceptions\RetiredEmploymentStatusCodeException;
+use App\Modules\HumanResources\Domain\Exceptions\StaleQualificationVersionException;
 use App\Modules\HumanResources\Domain\Exceptions\UnresolvedEmploymentStatusBehaviorException;
 use App\Modules\HumanResources\Domain\Exceptions\WorkScheduleChangeInvalidatesPartialSecondmentException;
 use App\Modules\HumanResources\Presentation\Console\ScanEmploymentStatusExpiryFollowUpsCommand;
@@ -182,6 +186,10 @@ return Application::configure(basePath: dirname(__DIR__))
             PersonQualificationIdentityMissingException::class,
             InvalidPersonProfileException::class,
             PersonStaleVersionException::class,
+            StaleQualificationVersionException::class,
+            NoOpQualificationCorrectionException::class,
+            InvalidPersonQualificationObtainedOnException::class,
+            PersonQualificationActorRequiredException::class,
         ]);
 
         // §22 of the S03 authorization: preserve stated HTTP semantics for Security domain
@@ -436,6 +444,16 @@ return Application::configure(basePath: dirname(__DIR__))
             'message' => $e->getMessage(),
             'errors' => ['academic_degree_id' => [$e->getMessage()], 'qualification_type_id' => [$e->getMessage()]],
         ], 422));
+
+        // S48 HumanResources-module domain failures
+        // (docs/person-qualification-history-foundation-specification.md §S48.14).
+        $exceptions->render(fn (StaleQualificationVersionException $e) => response()->json(['message' => $e->getMessage()], 409));
+        $exceptions->render(fn (NoOpQualificationCorrectionException $e) => response()->json(['message' => $e->getMessage()], 422));
+        $exceptions->render(fn (InvalidPersonQualificationObtainedOnException $e) => response()->json([
+            'message' => $e->getMessage(),
+            'errors' => ['obtained_on' => [$e->getMessage()]],
+        ], 422));
+        $exceptions->render(fn (PersonQualificationActorRequiredException $e) => response()->json(['message' => $e->getMessage()], 422));
 
         $exceptions->render(fn (DuplicateUsernameException $e) => response()->json([
             'message' => $e->getMessage(),

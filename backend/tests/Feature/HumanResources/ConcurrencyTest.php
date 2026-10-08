@@ -2,6 +2,7 @@
 
 namespace Tests\Feature\HumanResources;
 
+use App\Modules\HumanResources\Application\Commands\CorrectPersonQualification;
 use App\Modules\HumanResources\Application\Commands\DesignateQualificationAsPrimary;
 use App\Modules\HumanResources\Application\Commands\EndEmploymentRelationship;
 use App\Modules\HumanResources\Application\Commands\EndFullSecondment;
@@ -16,10 +17,12 @@ use App\Modules\HumanResources\Application\Commands\StartFullSecondment;
 use App\Modules\HumanResources\Application\Commands\StartWorkplaceAssignment;
 use App\Modules\HumanResources\Application\Queries\Reporting\ListReportingPopulationAsOf;
 use App\Modules\HumanResources\Application\Queries\ResolveActualWorkplaceForRelationshipAsOf;
+use App\Modules\HumanResources\Domain\Exceptions\DuplicatePersonQualificationException;
 use App\Modules\HumanResources\Domain\Exceptions\EmploymentRelationshipAlreadyEndedException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidEndDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidReturnIntentionPeriodDateException;
 use App\Modules\HumanResources\Domain\Exceptions\InvalidWorkSchedulePeriodDateException;
+use App\Modules\HumanResources\Domain\Exceptions\StaleQualificationVersionException;
 use App\Modules\HumanResources\Domain\ExpiryFollowUpEmission;
 use App\Modules\HumanResources\Domain\FollowUpSuppressionReason;
 use App\Modules\HumanResources\Domain\StatusExpiryFollowUpEmission;
@@ -110,13 +113,24 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
             DB::table('hr.return_intention_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
             DB::table('hr.employment_status_periods')->whereIn('employment_relationship_id', $relationshipIds)->delete();
             DB::table('hr.employment_relationships')->whereIn('person_id', $this->personIds)->delete();
-            // person_qualifications (S23) carries a RESTRICT FK to hr.persons.
-            DB::table('hr.person_qualifications')->whereIn('person_id', $this->personIds)->delete();
+            // person_qualifications (S23) carries a RESTRICT FK to hr.persons; S48's
+            // person_qualification_versions carries its own RESTRICT FK to person_qualifications, so
+            // it must go first — and its own immutability trigger (MA004) forbids DELETE
+            // unconditionally, so it must be disabled for this test-only real cleanup (this class
+            // commits for real, unlike the DatabaseTransactions-based test cases elsewhere, which
+            // never need this because a rollback never fires the trigger at all).
+            $this->forceDeletePersonQualificationFixtures($this->personIds);
             DB::table('hr.persons')->whereIn('id', $this->personIds)->delete();
         }
 
         if ($this->organizationalUnitIds !== []) {
             DB::table('org.organizational_units')->whereIn('id', $this->organizationalUnitIds)->delete();
+        }
+
+        if ($this->principalIds !== []) {
+            // S48 (D43): principalId()'s own fixtures — no FK from any table this class touches
+            // points to security.principals, so this is a plain, unordered cleanup delete.
+            DB::table('security.principals')->whereIn('id', $this->principalIds)->delete();
         }
 
         DB::purge(self::SECOND);
@@ -163,9 +177,70 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
         return $id;
     }
 
+    /**
+     * Test-only real cleanup of S48 qualification fixtures committed by this class (it extends
+     * PostgresIntegrationTestCase directly — not the DatabaseTransactions-based hierarchy — because
+     * a real cross-session race needs a real commit, visible to a genuinely independent second
+     * session, not a savepoint). hr.person_qualification_versions rows are permanently immutable in
+     * normal operation (MA004: DELETE is unconditionally rejected by
+     * person_qualification_versions_immutable), which is correct for the application but would
+     * leave every committed fixture in this file stuck forever, so the trigger is disabled for the
+     * duration of this one cleanup delete and re-enabled immediately after — nothing in normal
+     * request handling ever does this.
+     */
+    private function forceDeletePersonQualificationFixtures(array $personIds): void
+    {
+        if ($personIds === []) {
+            return;
+        }
+
+        // Both the plain immutability trigger (blocks every DELETE unconditionally) and the
+        // deferred "at least one current version" constraint trigger (fires per deleted row,
+        // checking only sibling rows in this same table — indifferent to the parent row's own
+        // fate) must be disabled for this cleanup to succeed at all.
+        DB::statement('ALTER TABLE hr.person_qualification_versions DISABLE TRIGGER person_qualification_versions_immutable');
+        DB::statement('ALTER TABLE hr.person_qualification_versions DISABLE TRIGGER person_qualification_versions_at_least_one_current');
+        try {
+            DB::table('hr.person_qualification_versions')->whereIn('person_id', $personIds)->delete();
+        } finally {
+            DB::statement('ALTER TABLE hr.person_qualification_versions ENABLE TRIGGER person_qualification_versions_immutable');
+            DB::statement('ALTER TABLE hr.person_qualification_versions ENABLE TRIGGER person_qualification_versions_at_least_one_current');
+        }
+        DB::table('hr.person_qualifications')->whereIn('person_id', $personIds)->delete();
+    }
+
     private function permanentEmploymentTypeId(): string
     {
         return (string) DB::table('ref.employment_types')->where('code', 'permanent')->value('id');
+    }
+
+    /** @var list<string> security.principals ids created by principalId(), cleaned up in tearDown(). */
+    private array $principalIds = [];
+
+    /**
+     * S48 (D43): a real, committed security.principals row for this class's own direct
+     * RecordPersonQualification/CorrectPersonQualification calls, now that both commands reject a
+     * missing actorPrincipalId before any write. This class extends PostgresIntegrationTestCase
+     * directly (not HumanResourcesTestCase/SecurityTestCase), so it has no createPrincipal()
+     * helper — it inserts the row itself, matching this file's own person()/raw-insert style.
+     */
+    private function principalId(): string
+    {
+        $id = (string) Str::uuid7();
+        $username = 's48.concurrency.'.Str::lower(Str::random(12));
+        DB::table('security.principals')->insert([
+            'id' => $id,
+            'username' => $username,
+            'username_normalized' => $username,
+            'display_name' => 'S48 Concurrency Test Principal',
+            'status' => 'ACTIVE',
+            'version' => 1,
+            'created_at' => now(),
+            'updated_at' => now(),
+        ]);
+        $this->principalIds[] = $id;
+
+        return $id;
     }
 
     private function statusDetailId(string $code): string
@@ -1633,11 +1708,16 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
     }
 
     /**
-     * S23 (docs/person-qualification-foundation-specification.md §S23.8): two real, independent
-     * sessions recording the exact same qualification identity for the same Person cannot both
-     * commit — person_qualifications_identity_unique (UNIQUE NULLS NOT DISTINCT) makes the second
-     * wait, then reject it, with no application-level pre-check involved. The academic degree is
-     * committed here (the catalog is deliberately empty) and removed in cleanup.
+     * S48 (docs/person-qualification-history-foundation-specification.md §S48.8, D14/D23/D40): two
+     * real, independent sessions recording the exact same qualification identity for the same
+     * Person cannot both commit a current version — person_qualification_versions_current_identity_unique
+     * (a partial UNIQUE index, NULLS NOT DISTINCT, scoped to is_current) makes the second wait, then
+     * reject it, with no application-level pre-check involved. Identity moved off the parent table
+     * in S48 (migration 2026_10_22_000004 drops it there), so each attempt is now the two-row
+     * parent+version write RecordPersonQualification itself performs (§S48.3) — the race is on the
+     * version insert, never on the parent insert, which carries no identity of its own any more.
+     * The academic degree is committed here (the catalog is deliberately empty) and removed in
+     * cleanup.
      */
     public function test_concurrent_duplicate_person_qualifications_are_serialised_and_rejected_by_the_unique_constraint(): void
     {
@@ -1647,32 +1727,39 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
             'id' => $degreeId, 'code' => 's23_race_'.Str::lower(Str::random(8)), 'name_ar' => 'درجة اختبار', 'name_en' => null,
             'is_active' => true, 'display_order' => 99, 'version' => 1, 'created_at' => now(), 'updated_at' => now(),
         ]);
-        $insertSql = 'insert into hr.person_qualifications (id, person_id, academic_degree_id, qualification_type_id, created_at) values (?, ?, ?, null, now())';
+        $insertParent = 'insert into hr.person_qualifications (id, person_id, created_at) values (?, ?, now())';
+        $insertVersion = 'insert into hr.person_qualification_versions (id, person_qualification_id, person_id, academic_degree_id, qualification_type_id, version_number, is_current, created_at) values (?, ?, ?, ?, null, 1, true, now())';
+        $attempt = function (Connection $connection) use ($insertParent, $insertVersion, $personId, $degreeId): void {
+            $parentId = (string) Str::uuid7();
+            $connection->insert($insertParent, [$parentId, $personId]);
+            $connection->insert($insertVersion, [(string) Str::uuid7(), $parentId, $personId, $degreeId]);
+        };
 
         $first = $this->pg();
         $second = $this->second();
 
         try {
             $first->beginTransaction();
-            $first->insert($insertSql, [(string) Str::uuid7(), $personId, $degreeId]); // not committed yet
+            $attempt($first); // not committed yet
 
             $second->statement("set lock_timeout = '300ms'");
-            $blocked = $this->databaseError(fn () => $second->transaction(fn () => $second->insert($insertSql, [(string) Str::uuid7(), $personId, $degreeId])));
+            $blocked = $this->databaseError(fn () => $second->transaction(fn () => $attempt($second)));
             $this->assertTrue(Errors::isLockNotAvailable($blocked), 'the second session waits on the first (lock_timeout fired)');
 
             $first->commit();
 
-            $rejected = $this->databaseError(fn () => $second->transaction(fn () => $second->insert($insertSql, [(string) Str::uuid7(), $personId, $degreeId])));
+            $rejected = $this->databaseError(fn () => $second->transaction(fn () => $attempt($second)));
             $this->assertTrue(Errors::isUniqueViolation($rejected), 'once committed, the duplicate is rejected by PostgreSQL itself');
 
             $this->assertSame(1, (int) $this->scalar('select count(*) from hr.person_qualifications where person_id = ?', [$personId]));
+            $this->assertSame(1, (int) $this->scalar('select count(*) from hr.person_qualification_versions where person_id = ? and is_current', [$personId]));
         } finally {
             foreach ([DB::connection(), $this->hasSecond() ? $this->second() : null] as $connection) {
                 while ($connection !== null && $connection->transactionLevel() > 0) {
                     $connection->rollBack();
                 }
             }
-            DB::table('hr.person_qualifications')->where('person_id', $personId)->delete();
+            $this->forceDeletePersonQualificationFixtures([$personId]);
             DB::table('ref.academic_degrees')->where('id', $degreeId)->delete();
         }
     }
@@ -2674,33 +2761,71 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
             }
         }
         DB::statement('set lock_timeout = 0');
-        DB::table('hr.person_qualifications')->where('person_id', $personId)->delete();
+        $this->forceDeletePersonQualificationFixtures([$personId]);
         DB::table('ref.academic_degrees')->where('id', $degreeId)->delete();
         DB::table('ref.qualification_types')->where('id', $typeId)->delete();
+    }
+
+    /**
+     * Inserts one parent row plus its version-1 row (§S48.3) in a single statement pair, exactly
+     * as RecordPersonQualification itself does. is_primary stays on the parent table untouched by
+     * S48; only the identity columns (academic_degree_id/qualification_type_id) moved to the
+     * version row.
+     *
+     * Both inserts run inside $connection->transaction(): the parent-table deferred trigger
+     * (MA005, D32) checks "has a current version" at COMMIT, so the two statements must share one
+     * real commit or the first insert's own implicit auto-commit would trip it before the version
+     * row exists. When $connection already has an open transaction (the callers that need the
+     * parent row to stay uncommitted while a second session blocks on it), this nests as an
+     * ordinary savepoint — PostgreSQL only evaluates a DEFERRED constraint trigger at the real
+     * COMMIT, never at RELEASE SAVEPOINT, so the outer transaction is left exactly as open as
+     * before.
+     *
+     * This design note also explains forceDeletePersonQualificationFixtures() below: the SAME
+     * deferred trigger (person_qualification_versions_at_least_one_current, running
+     * check_qualification_has_current_version()) fires on every row DELETED from
+     * hr.person_qualification_versions too, and it checks only that table's own remaining rows for
+     * the deleted row's person_qualification_id — it is indifferent to whether the parent row is
+     * also deleted in the same transaction, so an unconditional DELETE of every version row always
+     * trips it unless it, too, is disabled for the cleanup.
+     */
+    private function insertQualification(Connection $connection, string $personId, ?string $degreeId, ?string $typeId, bool $isPrimary): string
+    {
+        $parentId = (string) Str::uuid7();
+
+        $connection->transaction(function () use ($connection, $parentId, $personId, $degreeId, $typeId, $isPrimary): void {
+            $connection->insert('insert into hr.person_qualifications (id, person_id, is_primary, created_at) values (?, ?, ?, now())', [$parentId, $personId, $isPrimary]);
+            $connection->insert(
+                'insert into hr.person_qualification_versions (id, person_qualification_id, person_id, academic_degree_id, qualification_type_id, version_number, is_current, created_at) values (?, ?, ?, ?, ?, 1, true, now())',
+                [(string) Str::uuid7(), $parentId, $personId, $degreeId, $typeId]
+            );
+        });
+
+        return $parentId;
     }
 
     public function test_two_concurrent_first_qualifications_never_commit_two_primary_rows(): void
     {
         $personId = $this->person();
         [$degreeId, $typeId] = $this->primaryRaceCatalog();
-        $insertPrimary = 'insert into hr.person_qualifications (id, person_id, academic_degree_id, qualification_type_id, is_primary, created_at) values (?, ?, ?, ?, true, now())';
 
         $first = $this->pg();
         $second = $this->second();
 
         try {
             // Without any application lock, two writers that both saw "no qualification" would both insert a Primary: the partial
-            // unique index makes the second wait, then rejects it once the first commits.
+            // unique index makes the second wait, then rejects it once the first commits. The race is on the parent-row insert
+            // itself (is_primary lives there, untouched by S48), before either side reaches its version insert.
             $first->beginTransaction();
-            $first->insert($insertPrimary, [(string) Str::uuid7(), $personId, $degreeId, null]);
+            $this->insertQualification($first, $personId, $degreeId, null, true);
 
             $second->statement("set lock_timeout = '300ms'");
-            $blocked = $this->databaseError(fn () => $second->transaction(fn () => $second->insert($insertPrimary, [(string) Str::uuid7(), $personId, null, $typeId])));
+            $blocked = $this->databaseError(fn () => $second->transaction(fn () => $this->insertQualification($second, $personId, null, $typeId, true)));
             $this->assertTrue(Errors::isLockNotAvailable($blocked), 'the second Primary waits on the first (lock_timeout fired)');
 
             $first->commit();
 
-            $rejected = $this->databaseError(fn () => $second->transaction(fn () => $second->insert($insertPrimary, [(string) Str::uuid7(), $personId, null, $typeId])));
+            $rejected = $this->databaseError(fn () => $second->transaction(fn () => $this->insertQualification($second, $personId, null, $typeId, true)));
             $this->assertTrue(Errors::isUniqueViolation($rejected), 'the second Primary is rejected by PostgreSQL itself');
             $this->assertStringContainsString('person_qualifications_one_primary_unique', $rejected->getMessage());
             $this->assertSame(1, (int) $this->scalar('select count(*) from hr.person_qualifications where person_id = ? and is_primary', [$personId]), 'never two Primary rows');
@@ -2725,15 +2850,16 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
             $holder->selectOne('select id from hr.persons where id = ? for no key update', [$personId]);
 
             DB::statement("set lock_timeout = '300ms'");
-            $blocked = $this->databaseError(fn () => app(RecordPersonQualification::class)->handle($person, $degree, null));
+            $actorPrincipalId = $this->principalId();
+            $blocked = $this->databaseError(fn () => app(RecordPersonQualification::class)->handle($person, $degree, null, null, $actorPrincipalId));
             $this->assertTrue(Errors::isLockNotAvailable($blocked), 'RecordPersonQualification waits on the Person row lock (R1-D49)');
             $this->assertSame(0, (int) $this->scalar('select count(*) from hr.person_qualifications where person_id = ?', [$personId]), 'nothing was written while blocked');
 
             $holder->commit();
             DB::statement('set lock_timeout = 0');
 
-            $firstQualification = app(RecordPersonQualification::class)->handle($person, $degree, null);
-            $secondQualification = app(RecordPersonQualification::class)->handle($person, null, $type);
+            $firstQualification = app(RecordPersonQualification::class)->handle($person, $degree, null, null, $actorPrincipalId)->qualification;
+            $secondQualification = app(RecordPersonQualification::class)->handle($person, null, $type, null, $actorPrincipalId)->qualification;
 
             $this->assertTrue($firstQualification->is_primary, 'the first qualification is Primary');
             $this->assertFalse($secondQualification->is_primary, 'a later one never replaces it');
@@ -2747,12 +2873,8 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
     {
         $personId = $this->person();
         [$degreeId, $typeId] = $this->primaryRaceCatalog();
-        $a = (string) Str::uuid7();
-        $b = (string) Str::uuid7();
-        DB::table('hr.person_qualifications')->insert([
-            ['id' => $a, 'person_id' => $personId, 'academic_degree_id' => $degreeId, 'qualification_type_id' => null, 'is_primary' => true, 'created_at' => now()],
-            ['id' => $b, 'person_id' => $personId, 'academic_degree_id' => null, 'qualification_type_id' => $typeId, 'is_primary' => false, 'created_at' => now()],
-        ]);
+        $a = $this->insertQualification($this->pg(), $personId, $degreeId, null, true);
+        $b = $this->insertQualification($this->pg(), $personId, null, $typeId, false);
         $person = Person::query()->findOrFail($personId);
         $target = PersonQualification::query()->findOrFail($b);
         $holder = $this->second();
@@ -2780,5 +2902,398 @@ class ConcurrencyTest extends PostgresIntegrationTestCase
         } finally {
             $this->dropPrimaryRaceCatalog($personId, $degreeId, $typeId);
         }
+    }
+
+    // ------------------------------------------------------------------------------------------------------------
+    // S48 — Correction concurrency (§S48.16, D25/D39/D40): the five required rows the acceptance
+    // matrix lists beyond the above (which predate S48 and were updated in place, not duplicated
+    // here): two qualifications of the same Person racing to one combination, two different
+    // Persons sharing a combination (a non-event, not a race), record-vs-correct, designate-vs-
+    // correct, and two corrections of the very same qualification.
+    // ------------------------------------------------------------------------------------------------------------
+
+    /** A committed synthetic academic degree id, independent of primaryRaceCatalog()'s pair. */
+    private function syntheticAcademicDegreeId(): string
+    {
+        $id = (string) Str::uuid7();
+        DB::table('ref.academic_degrees')->insert([
+            'id' => $id, 'code' => 's48_race_'.Str::lower(Str::random(8)), 'name_ar' => 'درجة اختبار', 'name_en' => null,
+            'is_active' => true, 'display_order' => 99, 'version' => 1, 'created_at' => now(), 'updated_at' => now(),
+        ]);
+
+        return $id;
+    }
+
+    /**
+     * Performs one correction entirely with raw SQL on a given connection, mirroring
+     * CorrectPersonQualification::handle()'s own steps 1/6 exactly (lock Person, then the
+     * qualification row, both "for update"; close the current version; insert the next one) —
+     * used to hold the real locks a concurrent application-level call would wait behind, and/or to
+     * commit a real competing correction without going through the command itself.
+     */
+    private function correctRaw(Connection $connection, string $personId, string $qualificationId, int $newVersionNumber, ?string $degreeId, ?string $typeId): void
+    {
+        $connection->selectOne('select id from hr.persons where id = ? for update', [$personId]);
+        $connection->selectOne('select id from hr.person_qualifications where id = ? for update', [$qualificationId]);
+        $currentId = $connection->selectOne('select id from hr.person_qualification_versions where person_qualification_id = ? and is_current = true', [$qualificationId])->id;
+        $connection->update('update hr.person_qualification_versions set is_current = false where id = ?', [$currentId]);
+        $connection->insert(
+            'insert into hr.person_qualification_versions (id, person_qualification_id, person_id, academic_degree_id, qualification_type_id, version_number, is_current, created_at) values (?, ?, ?, ?, ?, ?, true, now())',
+            [(string) Str::uuid7(), $qualificationId, $personId, $degreeId, $typeId, $newVersionNumber]
+        );
+    }
+
+    /**
+     * Required test 1 (D40): two DIFFERENT qualifications of the SAME Person, corrected
+     * concurrently to the identical combination — one succeeds, the other is rejected with
+     * DuplicatePersonQualificationException (409) and its transaction fully rolled back. The
+     * Person lock only orders the two attempts; it is the current-identity index's own INSERT
+     * check (§S48.5 step 7) that actually rejects the second, now-redundant one.
+     */
+    public function test_two_qualifications_of_the_same_person_corrected_concurrently_to_the_same_combination_one_is_rejected(): void
+    {
+        $personId = $this->person();
+        $degreeA = $this->syntheticAcademicDegreeId();
+        $degreeB = $this->syntheticAcademicDegreeId();
+        $degreeTarget = $this->syntheticAcademicDegreeId();
+        $q1 = $this->insertQualification($this->pg(), $personId, $degreeA, null, true);
+        $q2 = $this->insertQualification($this->pg(), $personId, $degreeB, null, false);
+        $person = Person::query()->findOrFail($personId);
+        $qualification2 = PersonQualification::query()->findOrFail($q2);
+        $holder = $this->second();
+
+        $actorPrincipalId = $this->principalId();
+
+        try {
+            $holder->beginTransaction();
+            $this->correctRaw($holder, $personId, $q1, 2, $degreeTarget, null); // in flight: q1 -> degreeTarget, not committed yet
+
+            DB::statement("set lock_timeout = '300ms'");
+            $blocked = $this->databaseError(fn () => app(CorrectPersonQualification::class)->handle(
+                $person, $qualification2, 1, AcademicDegree::query()->find($degreeTarget), null, null, 'سبب الاختبار', $actorPrincipalId,
+            ));
+            $this->assertTrue(Errors::isLockNotAvailable($blocked), 'the second correction waits on the Person row lock the first one holds (D25/D40)');
+            $this->assertSame(1, (int) $this->scalar('select version_number from hr.person_qualification_versions where person_qualification_id = ? and is_current', [$q2]), 'nothing was written to q2 while blocked');
+
+            $holder->commit();
+            DB::statement('set lock_timeout = 0');
+
+            try {
+                app(CorrectPersonQualification::class)->handle(
+                    $person, $qualification2->refresh(), 1, AcademicDegree::query()->find($degreeTarget), null, null, 'سبب الاختبار', $actorPrincipalId,
+                );
+                $this->fail('the now-redundant second correction to the same combination is rejected, not silently accepted');
+            } catch (DuplicatePersonQualificationException) {
+            }
+
+            $this->assertSame(1, (int) $this->scalar('select count(*) from hr.person_qualification_versions where person_id = ? and is_current and academic_degree_id = ?', [$personId, $degreeTarget]), 'exactly one of the two now holds the combination');
+            $this->assertSame(1, (int) $this->scalar('select version_number from hr.person_qualification_versions where person_qualification_id = ? and is_current', [$q2]), "q2's rejected attempt left no trace — still at version 1, still degree B");
+            $this->assertSame($degreeB, $this->scalar('select academic_degree_id from hr.person_qualification_versions where person_qualification_id = ? and is_current', [$q2]));
+        } finally {
+            foreach ([DB::connection(), $this->hasSecond() ? $this->second() : null] as $connection) {
+                while ($connection !== null && $connection->transactionLevel() > 0) {
+                    $connection->rollBack();
+                }
+            }
+            DB::statement('set lock_timeout = 0');
+            $this->forceDeletePersonQualificationFixtures([$personId]);
+            DB::table('ref.academic_degrees')->whereIn('id', [$degreeA, $degreeB, $degreeTarget])->delete();
+        }
+    }
+
+    /**
+     * Required check 2 (D40, non-event): two DIFFERENT Persons, corrected to the identical
+     * combination — both succeed, concurrently or not. The current-identity index is scoped by
+     * person_id (§S48.8), so this is a confirmation, not a race with a winner and a loser. Proven
+     * under genuine concurrency: Person A's row stays locked by a second session throughout, yet
+     * Person B's correction to the exact same combination proceeds immediately, unblocked.
+     */
+    public function test_two_different_persons_corrected_concurrently_to_the_same_combination_both_succeed(): void
+    {
+        $personA = $this->person();
+        $personB = $this->person();
+        $degreeA = $this->syntheticAcademicDegreeId();
+        $degreeB = $this->syntheticAcademicDegreeId();
+        $degreeShared = $this->syntheticAcademicDegreeId();
+        $qa = $this->insertQualification($this->pg(), $personA, $degreeA, null, true);
+        $qb = $this->insertQualification($this->pg(), $personB, $degreeB, null, true);
+        $holder = $this->second();
+
+        try {
+            $holder->beginTransaction();
+            $holder->selectOne('select id from hr.persons where id = ? for update', [$personA]); // Person A held throughout — never touched below
+
+            $actorPrincipalId = $this->principalId();
+
+            DB::statement("set lock_timeout = '300ms'");
+            app(CorrectPersonQualification::class)->handle(
+                Person::query()->findOrFail($personB), PersonQualification::query()->findOrFail($qb), 1,
+                AcademicDegree::query()->find($degreeShared), null, null, 'سبب الاختبار', $actorPrincipalId,
+            ); // never blocks: Person A's lock protects nothing cross-Person (D40)
+            DB::statement('set lock_timeout = 0');
+
+            $holder->commit();
+
+            app(CorrectPersonQualification::class)->handle(
+                Person::query()->findOrFail($personA), PersonQualification::query()->findOrFail($qa), 1,
+                AcademicDegree::query()->find($degreeShared), null, null, 'سبب الاختبار', $actorPrincipalId,
+            );
+
+            $this->assertSame(2, (int) $this->scalar('select count(*) from hr.person_qualification_versions where is_current and academic_degree_id = ? and person_id in (?, ?)', [$degreeShared, $personA, $personB]), 'both corrections succeeded — sharing a combination across two Persons is not a duplicate');
+        } finally {
+            foreach ([DB::connection(), $this->hasSecond() ? $this->second() : null] as $connection) {
+                while ($connection !== null && $connection->transactionLevel() > 0) {
+                    $connection->rollBack();
+                }
+            }
+            DB::statement('set lock_timeout = 0');
+            $this->forceDeletePersonQualificationFixtures([$personA, $personB]);
+            DB::table('ref.academic_degrees')->whereIn('id', [$degreeA, $degreeB, $degreeShared])->delete();
+        }
+    }
+
+    /**
+     * Required test 3 (D25): concurrent RecordPersonQualification and CorrectPersonQualification
+     * for the SAME Person serialize cleanly on the Person-row lock both now take first — one
+     * proceeds, the other waits, both complete, neither deadlocks. Demonstrated in both
+     * directions, since the unified lock order (§S48.9) makes the same claim about either command
+     * waiting behind the other.
+     */
+    public function test_concurrent_record_and_correct_for_the_same_person_serialize_without_deadlock(): void
+    {
+        $personId = $this->person();
+        $degreeA = $this->syntheticAcademicDegreeId();
+        $degreeB = $this->syntheticAcademicDegreeId();
+        $degreeC = $this->syntheticAcademicDegreeId();
+        $q1 = $this->insertQualification($this->pg(), $personId, $degreeA, null, true);
+        $person = Person::query()->findOrFail($personId);
+        $holder = $this->second();
+
+        $actorPrincipalId = $this->principalId();
+
+        try {
+            // Direction 1: a correct-in-flight (simulated: the Person row held, exactly what
+            // CorrectPersonQualification's own step 1 does) makes a concurrent record wait, then
+            // succeed cleanly once the correction commits.
+            $holder->beginTransaction();
+            $holder->selectOne('select id from hr.persons where id = ? for update', [$personId]);
+
+            DB::statement("set lock_timeout = '300ms'");
+            $blocked = $this->databaseError(fn () => app(RecordPersonQualification::class)->handle($person, AcademicDegree::query()->find($degreeB), null, null, $actorPrincipalId));
+            $this->assertTrue(Errors::isLockNotAvailable($blocked), 'RecordPersonQualification waits behind an in-flight correction on the same Person (D25)');
+            DB::statement('set lock_timeout = 0');
+
+            $holder->commit();
+
+            $recorded = app(RecordPersonQualification::class)->handle($person->refresh(), AcademicDegree::query()->find($degreeB), null, null, $actorPrincipalId);
+            $this->assertFalse($recorded->qualification->is_primary, 'unblocked, it completes normally — no deadlock, no corruption');
+
+            // Direction 2: a record-in-flight (same Person-row lock) makes a concurrent correction wait, then succeed cleanly.
+            $holder->beginTransaction();
+            $holder->selectOne('select id from hr.persons where id = ? for update', [$personId]);
+
+            DB::statement("set lock_timeout = '300ms'");
+            $blocked = $this->databaseError(fn () => app(CorrectPersonQualification::class)->handle(
+                $person, PersonQualification::query()->findOrFail($q1), 1, AcademicDegree::query()->find($degreeC), null, null, 'سبب الاختبار', $actorPrincipalId,
+            ));
+            $this->assertTrue(Errors::isLockNotAvailable($blocked), 'CorrectPersonQualification waits behind an in-flight recording on the same Person (D25)');
+            DB::statement('set lock_timeout = 0');
+
+            $holder->commit();
+
+            app(CorrectPersonQualification::class)->handle(
+                $person->refresh(), PersonQualification::query()->findOrFail($q1), 1, AcademicDegree::query()->find($degreeC), null, null, 'سبب الاختبار', $actorPrincipalId,
+            );
+            $this->assertSame($degreeC, $this->scalar('select academic_degree_id from hr.person_qualification_versions where person_qualification_id = ? and is_current', [$q1]), 'unblocked, the correction completes normally too');
+        } finally {
+            foreach ([DB::connection(), $this->hasSecond() ? $this->second() : null] as $connection) {
+                while ($connection !== null && $connection->transactionLevel() > 0) {
+                    $connection->rollBack();
+                }
+            }
+            DB::statement('set lock_timeout = 0');
+            $this->forceDeletePersonQualificationFixtures([$personId]);
+            DB::table('ref.academic_degrees')->whereIn('id', [$degreeA, $degreeB, $degreeC])->delete();
+        }
+    }
+
+    /**
+     * Required test 4 (D39, unaffected by RC5): DesignateQualificationAsPrimary and
+     * CorrectPersonQualification against the same qualification, for the same Person, issued
+     * concurrently — demonstrated directly, not inferred from the other concurrency tests, none of
+     * which exercise this exact pairing. Both lock the Person row first (§S48.9) and serialize
+     * cleanly, with neither reporting a deadlock.
+     */
+    public function test_concurrent_designate_primary_and_correct_for_the_same_qualification_serialize_without_deadlock(): void
+    {
+        $personId = $this->person();
+        $degreeA = $this->syntheticAcademicDegreeId();
+        $degreeB = $this->syntheticAcademicDegreeId();
+        $degreeC = $this->syntheticAcademicDegreeId();
+        $q1 = $this->insertQualification($this->pg(), $personId, $degreeA, null, true);
+        $q2 = $this->insertQualification($this->pg(), $personId, $degreeB, null, false);
+        $person = Person::query()->findOrFail($personId);
+        $holder = $this->second();
+
+        $actorPrincipalId = $this->principalId();
+
+        try {
+            // Direction 1: a correct-in-flight on q1 makes a concurrent designate-primary(q2) wait, then succeed.
+            $holder->beginTransaction();
+            $holder->selectOne('select id from hr.persons where id = ? for update', [$personId]);
+
+            DB::statement("set lock_timeout = '300ms'");
+            $blocked = $this->databaseError(fn () => app(DesignateQualificationAsPrimary::class)->handle($person, PersonQualification::query()->findOrFail($q2)));
+            $this->assertTrue(Errors::isLockNotAvailable($blocked), 'designate-primary waits behind an in-flight correction on the same Person (D39/D25)');
+            DB::statement('set lock_timeout = 0');
+
+            $holder->commit();
+
+            $designation = app(DesignateQualificationAsPrimary::class)->handle($person->refresh(), PersonQualification::query()->findOrFail($q2));
+            $this->assertTrue($designation->changed);
+            $this->assertSame([$q2], array_column(DB::select('select id from hr.person_qualifications where person_id = ? and is_primary', [$personId]), 'id'));
+
+            // Direction 2: a designate-in-flight makes a concurrent correction (now on q1, the former Primary) wait, then succeed.
+            $holder->beginTransaction();
+            $holder->selectOne('select id from hr.persons where id = ? for update', [$personId]);
+
+            DB::statement("set lock_timeout = '300ms'");
+            $blocked = $this->databaseError(fn () => app(CorrectPersonQualification::class)->handle(
+                $person, PersonQualification::query()->findOrFail($q1), 1, AcademicDegree::query()->find($degreeC), null, null, 'سبب الاختبار', $actorPrincipalId,
+            ));
+            $this->assertTrue(Errors::isLockNotAvailable($blocked), 'correct waits behind an in-flight designate-primary on the same Person (D39/D25)');
+            DB::statement('set lock_timeout = 0');
+
+            $holder->commit();
+
+            app(CorrectPersonQualification::class)->handle(
+                $person->refresh(), PersonQualification::query()->findOrFail($q1), 1, AcademicDegree::query()->find($degreeC), null, null, 'سبب الاختبار', $actorPrincipalId,
+            );
+            $this->assertSame($degreeC, $this->scalar('select academic_degree_id from hr.person_qualification_versions where person_qualification_id = ? and is_current', [$q1]), 'unblocked, both complete normally — no deadlock');
+        } finally {
+            foreach ([DB::connection(), $this->hasSecond() ? $this->second() : null] as $connection) {
+                while ($connection !== null && $connection->transactionLevel() > 0) {
+                    $connection->rollBack();
+                }
+            }
+            DB::statement('set lock_timeout = 0');
+            $this->forceDeletePersonQualificationFixtures([$personId]);
+            DB::table('ref.academic_degrees')->whereIn('id', [$degreeA, $degreeB, $degreeC])->delete();
+        }
+    }
+
+    /**
+     * Required test 5: two correction requests for the SAME qualification serialize on the row
+     * lock; the second is evaluated against the first's already-committed version, not against
+     * the stale version it was issued against — so once unblocked, it is rejected as stale
+     * (StaleQualificationVersionException, 409), never silently re-applied or treated as a
+     * duplicate.
+     */
+    public function test_two_corrections_of_the_same_qualification_serialize_and_the_second_is_evaluated_against_the_committed_version(): void
+    {
+        $personId = $this->person();
+        $degreeA = $this->syntheticAcademicDegreeId();
+        $degreeB = $this->syntheticAcademicDegreeId();
+        $degreeC = $this->syntheticAcademicDegreeId();
+        $q1 = $this->insertQualification($this->pg(), $personId, $degreeA, null, true);
+        $person = Person::query()->findOrFail($personId);
+        $qualification = PersonQualification::query()->findOrFail($q1);
+        $holder = $this->second();
+
+        $actorPrincipalId = $this->principalId();
+
+        try {
+            $holder->beginTransaction();
+            $this->correctRaw($holder, $personId, $q1, 2, $degreeB, null); // in flight: q1 v1 -> v2 (degreeB), not committed yet
+
+            DB::statement("set lock_timeout = '300ms'");
+            $blocked = $this->databaseError(fn () => app(CorrectPersonQualification::class)->handle(
+                $person, $qualification, 1, AcademicDegree::query()->find($degreeC), null, null, 'سبب الاختبار', $actorPrincipalId,
+            ));
+            $this->assertTrue(Errors::isLockNotAvailable($blocked), 'the second correction request waits on the qualification row lock the first one holds');
+
+            $holder->commit();
+            DB::statement('set lock_timeout = 0');
+
+            // Unblocked, it still carries its original expected_version (1) — but the real current
+            // version is now 2 (the first request's own commit). It must be rejected as stale, not
+            // re-applied and not treated as a duplicate (degree C was never contended for).
+            try {
+                app(CorrectPersonQualification::class)->handle(
+                    $person->refresh(), $qualification->refresh(), 1, AcademicDegree::query()->find($degreeC), null, null, 'سبب الاختبار', $actorPrincipalId,
+                );
+                $this->fail('a correction issued against a version that is no longer current is rejected as stale');
+            } catch (StaleQualificationVersionException) {
+            }
+
+            $this->assertSame(2, (int) $this->scalar('select version_number from hr.person_qualification_versions where person_qualification_id = ? and is_current', [$q1]));
+            $this->assertSame($degreeB, $this->scalar('select academic_degree_id from hr.person_qualification_versions where person_qualification_id = ? and is_current', [$q1]), "the first request's committed value stands; the stale second request wrote nothing");
+        } finally {
+            foreach ([DB::connection(), $this->hasSecond() ? $this->second() : null] as $connection) {
+                while ($connection !== null && $connection->transactionLevel() > 0) {
+                    $connection->rollBack();
+                }
+            }
+            DB::statement('set lock_timeout = 0');
+            $this->forceDeletePersonQualificationFixtures([$personId]);
+            DB::table('ref.academic_degrees')->whereIn('id', [$degreeA, $degreeB, $degreeC])->delete();
+        }
+    }
+
+    /**
+     * D32/MA005 (§S48.8) at a REAL top-level COMMIT, with nothing forcing the deferred trigger
+     * early. This class extends PostgresIntegrationTestCase directly — not the
+     * DatabaseTransactions-based hierarchy PersonQualificationHistoryFoundationTest uses — so
+     * $this->pg() carries no ambient test transaction: beginTransaction()/commit() below are
+     * genuine top-level BEGIN/COMMIT statements sent to the server, and the deferred constraint
+     * trigger evaluates exactly where production relies on it to evaluate: at that real COMMIT.
+     *
+     * PersonQualificationHistoryFoundationTest::test_parent_table_insert_without_a_matching_version_is_rejected_at_commit_with_ma005
+     * remains in place as supplementary evidence: it proves the same trigger logic rejects the
+     * same state when evaluated early via SET CONSTRAINTS ALL IMMEDIATE inside a savepoint (the
+     * only way to observe this deferred trigger at all inside a DatabaseTransactions-based test,
+     * since a savepoint release is never a real COMMIT). This test is the one that exercises the
+     * actual COMMIT boundary itself, with no early-evaluation statement anywhere in it.
+     */
+    public function test_a_parent_qualification_with_no_version_is_rejected_at_a_real_top_level_commit_with_ma005(): void
+    {
+        $personId = $this->person();
+        $connection = $this->pg();
+
+        $connection->beginTransaction();
+        $qualificationId = (string) Str::uuid7();
+        $connection->insert(
+            'insert into hr.person_qualifications (id, person_id, is_primary, created_at) values (?, ?, false, now())',
+            [$qualificationId, $personId],
+        ); // no matching hr.person_qualification_versions row is ever inserted
+
+        // No SET CONSTRAINTS ALL IMMEDIATE anywhere above: the deferred "at least one current
+        // version" trigger (D32) is left to fire exactly where PostgreSQL defines it to — right
+        // here, at this real top-level commit().
+        $error = $this->databaseError(fn () => $connection->commit());
+        $this->assertTrue(
+            Errors::isQualificationMissingCurrentVersion($error),
+            'a qualification with zero versions must never commit (D32, MA005), at a real top-level COMMIT, not merely under SET CONSTRAINTS ALL IMMEDIATE',
+        );
+
+        // PostgreSQL itself already rolled the whole transaction back the moment the deferred
+        // trigger raised at COMMIT (a failed COMMIT is, for PostgreSQL, equivalent to a ROLLBACK)
+        // — confirmed separately against this same database: $pdo->inTransaction() reads false
+        // immediately after the failed commit(), before anything here calls rollBack(). The
+        // rollBack() call below performs no further work against the server (its own
+        // performRollBack() checks $pdo->inTransaction() first and finds it already false); it
+        // exists only to reconcile Laravel's own transaction-level counter, which commit() never
+        // decremented because the PDO commit() call threw before reaching that line.
+        $connection->rollBack();
+        $this->assertSame(0, $connection->transactionLevel(), 'the connection is left clean for the rest of the suite');
+
+        // Verified from a genuinely independent second session — not the same connection that
+        // just failed — that the rejected parent row left no trace anywhere in the database, not
+        // merely that this session's own view of it rolled back.
+        $this->assertSame(
+            0,
+            (int) $this->second()->selectOne('select count(*) as c from hr.person_qualifications where id = ?', [$qualificationId])->c,
+            'no trace of the rejected parent row survives the failed real COMMIT, seen from an independent session',
+        );
     }
 }

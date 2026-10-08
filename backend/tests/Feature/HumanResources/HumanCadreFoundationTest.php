@@ -122,7 +122,7 @@ class HumanCadreFoundationTest extends HumanResourcesTestCase
 
     private function qualify(Person $person, bool $degree = true)
     {
-        return app(RecordPersonQualification::class)->handle($person, $degree ? $this->createSyntheticAcademicDegree() : null, $degree ? null : $this->createSyntheticQualificationType());
+        return app(RecordPersonQualification::class)->handle($person, $degree ? $this->createSyntheticAcademicDegree() : null, $degree ? null : $this->createSyntheticQualificationType(), null, $this->syntheticActorPrincipalId());
     }
 
     /** @return list<string> every SQL statement issued while $fn runs */
@@ -304,7 +304,7 @@ class HumanCadreFoundationTest extends HumanResourcesTestCase
     public function test_the_primary_qualification_is_the_only_one_used_and_a_later_one_never_replaces_it(): void
     {
         [$person] = $this->emp();
-        $first = $this->qualify($person);
+        $first = $this->qualify($person)->qualification;
         $this->qualify($person, false);
 
         $record = $this->record($person);
@@ -319,8 +319,14 @@ class HumanCadreFoundationTest extends HumanResourcesTestCase
         [$person] = $this->emp();
         $degree = $this->createSyntheticAcademicDegree();
         $type = $this->createSyntheticQualificationType();
+        // S48 (§S48.3): identity (hr.person_qualifications) and fact value
+        // (hr.person_qualification_versions) are now separate tables.
         foreach ([[$degree->id, null], [null, $type->id]] as [$d, $t]) {
-            DB::table('hr.person_qualifications')->insert(['id' => (string) Str::uuid7(), 'person_id' => $person->id, 'academic_degree_id' => $d, 'qualification_type_id' => $t, 'is_primary' => false, 'created_at' => now()]);
+            $qualificationId = (string) Str::uuid7();
+            DB::table('hr.person_qualifications')->insert(['id' => $qualificationId, 'person_id' => $person->id, 'is_primary' => false, 'created_at' => now()]);
+            DB::table('hr.person_qualification_versions')->insert(['id' => (string) Str::uuid7(), 'person_qualification_id' => $qualificationId,
+                'person_id' => $person->id, 'version_number' => 1, 'academic_degree_id' => $d, 'qualification_type_id' => $t,
+                'obtained_on' => null, 'is_current' => true, 'reason' => null, 'created_by_principal_id' => null, 'created_at' => now()]);
         }
 
         $record = $this->record($person);
@@ -332,8 +338,8 @@ class HumanCadreFoundationTest extends HumanResourcesTestCase
     public function test_qualification_is_current_recorded_so_a_rerun_of_an_old_month_uses_the_current_primary(): void
     {
         [$person] = $this->emp('permanent', '2025-01-01');
-        $first = $this->qualify($person);
-        $second = $this->qualify($person, false);
+        $first = $this->qualify($person)->qualification;
+        $second = $this->qualify($person, false)->qualification;
         $this->assertSame($first->id, $this->record($person, '2026-03-01')->qualification['qualification_id']);
 
         app(DesignateQualificationAsPrimary::class)->handle($person, $second);

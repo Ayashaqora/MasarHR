@@ -39,6 +39,29 @@ final class PostgresErrorClassifier
      */
     public const AUDIT_IMMUTABILITY_VIOLATION = 'MA001';
 
+    /**
+     * S48 (docs/person-qualification-history-foundation-specification.md §S48.8): a
+     * hr.person_qualification_versions row's person_id disagrees with its parent qualification's
+     * own person_id, on INSERT or UPDATE.
+     */
+    public const QUALIFICATION_VERSION_PERSON_MISMATCH = 'MA002';
+
+    /** S48 §S48.8: an UPDATE on a version row other than the single is_current: true -> false flip. */
+    public const QUALIFICATION_VERSION_IMMUTABLE_UPDATE = 'MA003';
+
+    /** S48 §S48.8: any DELETE attempt on a version row — never permitted. */
+    public const QUALIFICATION_VERSION_IMMUTABLE_DELETE = 'MA004';
+
+    /**
+     * S48 §S48.8: the deferred "at least one current version" guarantee failed at COMMIT, on
+     * either hr.person_qualification_versions or the parent hr.person_qualifications table's own
+     * INSERT (D32).
+     */
+    public const QUALIFICATION_MISSING_CURRENT_VERSION = 'MA005';
+
+    /** S48 §S48.8 (D33): hr.person_qualifications.id or .person_id was changed on an existing row. */
+    public const QUALIFICATION_IDENTITY_IMMUTABLE = 'MA006';
+
     /** Returns the 5-character SQLSTATE found anywhere in the exception chain, or null. */
     public static function sqlState(Throwable $error): ?string
     {
@@ -99,6 +122,31 @@ final class PostgresErrorClassifier
     public static function isAuditImmutabilityViolation(Throwable $error): bool
     {
         return self::sqlState($error) === self::AUDIT_IMMUTABILITY_VIOLATION;
+    }
+
+    public static function isQualificationVersionPersonMismatch(Throwable $error): bool
+    {
+        return self::sqlState($error) === self::QUALIFICATION_VERSION_PERSON_MISMATCH;
+    }
+
+    public static function isQualificationVersionImmutableUpdate(Throwable $error): bool
+    {
+        return self::sqlState($error) === self::QUALIFICATION_VERSION_IMMUTABLE_UPDATE;
+    }
+
+    public static function isQualificationVersionImmutableDelete(Throwable $error): bool
+    {
+        return self::sqlState($error) === self::QUALIFICATION_VERSION_IMMUTABLE_DELETE;
+    }
+
+    public static function isQualificationMissingCurrentVersion(Throwable $error): bool
+    {
+        return self::sqlState($error) === self::QUALIFICATION_MISSING_CURRENT_VERSION;
+    }
+
+    public static function isQualificationIdentityImmutable(Throwable $error): bool
+    {
+        return self::sqlState($error) === self::QUALIFICATION_IDENTITY_IMMUTABLE;
     }
 
     /**

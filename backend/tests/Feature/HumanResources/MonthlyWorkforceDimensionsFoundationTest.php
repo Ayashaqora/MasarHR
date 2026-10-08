@@ -703,7 +703,9 @@ class MonthlyWorkforceDimensionsFoundationTest extends HumanResourcesTestCase
         $this->assertSame('2026_10_17_000001_seed_security_monthly_not_on_duty_permission.php', $beforeS41->last());
         $this->assertSame(0, DB::table('information_schema.tables')->whereIn('table_schema', ['hr', 'ref', 'org', 'automation', 'reporting'])->where(fn ($q) => $q->where('table_name', 'like', '%dimension%')->orWhere('table_name', 'like', '%monthly_workforce%')->orWhere('table_name', 'like', '%monthly_population%'))->count());
         $this->assertSame(0, (int) DB::selectOne('select count(*) as c from pg_matviews')->c);
-        $this->assertSame(0, DB::table('information_schema.views')->whereIn('table_schema', ['hr', 'ref', 'org', 'automation', 'reporting'])->count());
+        // S48 (§S48.3) adds the one view the whole application reads qualifications through going
+        // forward — unrelated to S40, which still adds no view/schema object of its own.
+        $this->assertSame(['person_qualifications_current'], DB::table('information_schema.views')->whereIn('table_schema', ['hr', 'ref', 'org', 'automation', 'reporting'])->pluck('table_name')->all());
     }
 
     public function test_s40_exposes_no_route_controller_resource_or_permission(): void

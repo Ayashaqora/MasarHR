@@ -501,7 +501,9 @@ class EmployeeSpecialtyHistoryFoundationTest extends HumanResourcesTestCase
         $contract = app(RecordEmploymentContractPeriod::class)->handle($relationship, $this->createSyntheticContractType(), '2026-01-01', '2027-01-01');
         $jobTitle = app(RecordEmploymentJobTitlePeriod::class)->handle($relationship, $this->createSyntheticJobTitle(), '2026-01-01');
         $placement = $this->recordPlacement($relationship, $this->createUnit(), '2026-01-15');
-        $qualification = app(RecordPersonQualification::class)->handle($person, $this->createSyntheticAcademicDegree(), null);
+        // S48 (§S48.4/§S48.13): the command now returns a PersonQualificationRecording; this file
+        // only needs the identity row.
+        $qualification = app(RecordPersonQualification::class)->handle($person, $this->createSyntheticAcademicDegree(), null, null, $this->syntheticActorPrincipalId())->qualification;
         $before = $this->otherStreams($relationship);
         $specialty = $this->createSyntheticSpecialty();
         $catalogBefore = (array) DB::table('ref.specialties')->where('id', $specialty->id)->first();

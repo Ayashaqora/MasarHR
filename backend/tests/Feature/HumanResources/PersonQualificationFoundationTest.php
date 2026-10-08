@@ -82,8 +82,10 @@ class PersonQualificationFoundationTest extends HumanResourcesTestCase
         foreach ($response->json() as $row) {
             // S41 (R1-D44/D49) supersedes the S23 "no primary flag": the Primary designation is the ONLY ranking-like field;
             // there is still no highest/current flag, date or specialty.
-            $this->assertSame(['id', 'person_id', 'academic_degree_id', 'qualification_type_id', 'is_primary'], array_keys($row),
-                'only the S41 Primary designation is exposed; no highest/current flag, date, or specialty');
+            // S48 (§S48.4/§S48.13, D13/D36) adds obtained_on/created_at/version_number/provenance,
+            // sourced from the qualification's current version; still no highest/current-ranking flag.
+            $this->assertSame(['id', 'person_id', 'academic_degree_id', 'qualification_type_id', 'obtained_on', 'created_at', 'version_number', 'provenance', 'is_primary'], array_keys($row),
+                'only the S41 Primary designation is exposed as ranking; S48 adds history fields, no highest/current flag, date, or specialty beyond obtained_on');
         }
     }
 
@@ -178,8 +180,10 @@ class PersonQualificationFoundationTest extends HumanResourcesTestCase
         $this->assertTrue(Errors::isForeignKeyViolation($this->queryError(fn () => DB::table('ref.academic_degrees')->where('id', $degree->id)->delete())));
         $this->assertTrue(Errors::isForeignKeyViolation($this->queryError(fn () => DB::table('ref.qualification_types')->where('id', $type->id)->delete())));
         $this->assertTrue(Errors::isForeignKeyViolation($this->queryError(fn () => DB::table('hr.persons')->where('id', $person->id)->delete())), 'a Person with qualifications cannot be hard-deleted');
+        // S48: academic_degree_id/qualification_type_id no longer live on hr.person_qualifications
+        // (§S48.3) — this insert now only exercises the person_id foreign key on the identity table.
         $this->assertTrue(Errors::isForeignKeyViolation($this->queryError(fn () => DB::table('hr.person_qualifications')->insert([
-            'id' => (string) Str::uuid7(), 'person_id' => (string) Str::uuid7(), 'academic_degree_id' => $degree->id, 'created_at' => now(),
+            'id' => (string) Str::uuid7(), 'person_id' => (string) Str::uuid7(), 'created_at' => now(),
         ]))));
         $this->assertTrue(Errors::isForeignKeyViolation($this->queryError(fn () => $this->insertRaw($person, (string) Str::uuid7(), null))));
     }
@@ -315,13 +319,13 @@ class PersonQualificationFoundationTest extends HumanResourcesTestCase
         ksort($types);
 
         $this->assertSame([
-            'academic_degree_id' => 'uuid',
             'created_at' => 'timestamp with time zone',
             'id' => 'uuid',
             'is_primary' => 'boolean', // S41 SCHEMA-02 (R1-D44): the Primary designation
             'person_id' => 'uuid',
-            'qualification_type_id' => 'uuid',
-        ], $types, 'no acquisition/graduation date, knowledge state, specialty, highest flag, institution, or employment_relationship_id (is_primary is the S41 designation)');
+            // S48 (§S48.3, D13): academic_degree_id/qualification_type_id moved off this identity
+            // table onto hr.person_qualification_versions; this table is now identity-only.
+        ], $types, 'no acquisition/graduation date, knowledge state, specialty, highest flag, institution, employment_relationship_id, or value columns (identity-only; is_primary is the S41 designation, values live on versions)');
 
         foreach (DB::table('information_schema.columns')->where('table_schema', 'hr')->where('table_name', 'persons')->pluck('column_name') as $column) {
             $this->assertStringNotContainsString('qualification', $column, 'no single snapshot qualification column on Person');
@@ -403,9 +407,22 @@ class PersonQualificationFoundationTest extends HumanResourcesTestCase
     // Helpers
     // ---------------------------------------------------------------------
 
+    /**
+     * S48: the command now returns a PersonQualificationRecording (identity + its version_number = 1
+     * row, docs/person-qualification-history-foundation-specification.md §S48.4/§S48.13). This
+     * helper keeps the existing tests' direct `->academic_degree_id`/`->qualification_type_id`
+     * access working by grafting the version's values onto the returned identity model as plain
+     * (non-persisted) attributes, alongside the real `currentVersion` relation.
+     */
     private function record(Person $person, ?AcademicDegree $degree, ?QualificationType $type): PersonQualification
     {
-        return app(RecordPersonQualification::class)->handle($person, $degree, $type);
+        $recording = app(RecordPersonQualification::class)->handle($person, $degree, $type, null, $this->syntheticActorPrincipalId());
+        $qualification = $recording->qualification;
+        $qualification->setRelation('currentVersion', $recording->version);
+        $qualification->academic_degree_id = $recording->version->academic_degree_id;
+        $qualification->qualification_type_id = $recording->version->qualification_type_id;
+
+        return $qualification;
     }
 
     private function url(Person $person): string
@@ -418,20 +435,46 @@ class PersonQualificationFoundationTest extends HumanResourcesTestCase
         return app(ListPersonQualifications::class)($person)->count();
     }
 
-    /** @return list<array<string, mixed>> */
+    /**
+     * S48: snapshots both the identity table and its versions (§S48.3), since the identity table
+     * alone is no longer informative about whether a fact was actually left untouched.
+     *
+     * @return array{identity: list<array<string, mixed>>, versions: list<array<string, mixed>>}
+     */
     private function snapshot(Person $person): array
     {
-        return DB::table('hr.person_qualifications')->where('person_id', $person->id)->orderBy('id')
-            ->get()->map(fn ($row) => (array) $row)->all();
+        return [
+            'identity' => DB::table('hr.person_qualifications')->where('person_id', $person->id)->orderBy('id')
+                ->get()->map(fn ($row) => (array) $row)->all(),
+            'versions' => DB::table('hr.person_qualification_versions')->where('person_id', $person->id)->orderBy('id')
+                ->get()->map(fn ($row) => (array) $row)->all(),
+        ];
     }
 
     private function insertRaw(Person $person, ?string $degreeId, ?string $typeId): void
     {
+        // S48: identity (hr.person_qualifications) and fact value (hr.person_qualification_versions)
+        // are now separate tables (docs/person-qualification-history-foundation-specification.md
+        // §S48.3). This helper keeps the existing database-level tests (CHECK/FK/unique violations)
+        // meaningful by inserting both rows, with the value columns on the version row.
+        $qualificationId = (string) Str::uuid7();
         DB::table('hr.person_qualifications')->insert([
-            'id' => (string) Str::uuid7(),
+            'id' => $qualificationId,
             'person_id' => $person->id,
+            'is_primary' => false,
+            'created_at' => now(),
+        ]);
+        DB::table('hr.person_qualification_versions')->insert([
+            'id' => (string) Str::uuid7(),
+            'person_qualification_id' => $qualificationId,
+            'person_id' => $person->id,
+            'version_number' => 1,
             'academic_degree_id' => $degreeId,
             'qualification_type_id' => $typeId,
+            'obtained_on' => null,
+            'is_current' => true,
+            'reason' => null,
+            'created_by_principal_id' => null,
             'created_at' => now(),
         ]);
     }

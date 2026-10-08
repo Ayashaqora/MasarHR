@@ -38,13 +38,24 @@ class ReportingPersonFactsExposureTest extends HumanResourcesTestCase
         return [$person, $this->createEmploymentRelationship($person, 'permanent', null, $from)];
     }
 
-    /** Inserts a person qualification with an explicit id/created_at so ordering can be proven. */
+    /**
+     * Inserts a person qualification with an explicit id/created_at so ordering can be proven.
+     *
+     * S48 (§S48.3): identity (hr.person_qualifications, carrying created_at — what
+     * hr.person_qualifications_current.created_at reads from) and fact value
+     * (hr.person_qualification_versions) are now separate tables.
+     */
     private function qualification(Person $person, ?string $degreeId, ?string $typeId, string $createdAt, ?string $id = null): string
     {
         $id ??= (string) Str::uuid7();
         DB::table('hr.person_qualifications')->insert([
-            'id' => $id, 'person_id' => $person->id, 'academic_degree_id' => $degreeId,
-            'qualification_type_id' => $typeId, 'created_at' => $createdAt,
+            'id' => $id, 'person_id' => $person->id, 'is_primary' => false, 'created_at' => $createdAt,
+        ]);
+        DB::table('hr.person_qualification_versions')->insert([
+            'id' => (string) Str::uuid7(), 'person_qualification_id' => $id, 'person_id' => $person->id,
+            'version_number' => 1, 'academic_degree_id' => $degreeId, 'qualification_type_id' => $typeId,
+            'obtained_on' => null, 'is_current' => true, 'reason' => null,
+            'created_by_principal_id' => null, 'created_at' => $createdAt,
         ]);
 
         return $id;

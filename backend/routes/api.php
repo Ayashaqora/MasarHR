@@ -280,14 +280,24 @@ Route::middleware('web')->group(function (): void {
             // S23: Person Qualifications, nested directly under {person} — a Person fact, never an
             // Employment Relationship one (docs/person-qualification-foundation-specification.md
             // §S23.13). Plain Person-level RBAC like S09's hr.persons.* routes (ADR-S23-001 §9).
-            // Explicit record action only — no PATCH, no DELETE, no correction route.
             Route::get('/persons/{person}/qualifications', [PersonQualificationController::class, 'index'])
                 ->middleware('permission:'.HrPerm::PERSON_QUALIFICATIONS_VIEW)->name('persons.qualifications.index');
             Route::post('/persons/{person}/qualifications', [PersonQualificationController::class, 'store'])
                 ->middleware('permission:'.HrPerm::PERSON_QUALIFICATIONS_RECORD)->name('persons.qualifications.store');
+            // S48 (docs/person-qualification-history-foundation-specification.md §S48.14): the
+            // literal "primary-history" path MUST be registered before the {personQualification}
+            // routes below, or Laravel's route model binding would try (and fail) to resolve the
+            // literal segment "primary-history" as a qualification id.
+            Route::get('/persons/{person}/qualifications/primary-history', [PersonQualificationController::class, 'primaryHistory'])
+                ->middleware('permission:'.HrPerm::PERSON_QUALIFICATIONS_VIEW)->name('persons.qualifications.primary-history');
             // S41 (R1-D49): explicit Primary Qualification designation — no generic PATCH; Person-scoped ownership (404 otherwise).
             Route::post('/persons/{person}/qualifications/{personQualification}/designate-primary', [PersonQualificationController::class, 'designatePrimary'])
                 ->middleware('permission:'.HrPerm::PERSON_QUALIFICATIONS_DESIGNATE_PRIMARY)->name('persons.qualifications.designate-primary');
+            // S48: version history (read) and correction (write) — both still no generic PATCH/DELETE.
+            Route::get('/persons/{person}/qualifications/{personQualification}/versions', [PersonQualificationController::class, 'versions'])
+                ->middleware('permission:'.HrPerm::PERSON_QUALIFICATIONS_VIEW)->name('persons.qualifications.versions');
+            Route::post('/persons/{person}/qualifications/{personQualification}/corrections', [PersonQualificationController::class, 'correct'])
+                ->middleware('permission:'.HrPerm::PERSON_QUALIFICATIONS_CORRECT)->name('persons.qualifications.corrections');
 
             Route::get('/persons/{person}/employment-relationships', [EmploymentRelationshipController::class, 'index'])
                 ->middleware('permission:'.HrPerm::EMPLOYMENT_RELATIONSHIPS_VIEW)->name('persons.employment-relationships.index');

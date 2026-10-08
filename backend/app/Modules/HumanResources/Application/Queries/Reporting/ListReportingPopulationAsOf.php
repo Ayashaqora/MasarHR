@@ -159,7 +159,11 @@ final class ListReportingPopulationAsOf
                     'qualification_type_name_ar', qt.name_ar,
                     'qualification_type_name_en', qt.name_en
                 ) ORDER BY pq.created_at, pq.id) AS person_qualifications
-                FROM hr.person_qualifications pq
+                -- S48 (docs/person-qualification-history-foundation-specification.md §S48.13,
+                -- D13): a consumer this stage's own discovery found beyond the frozen spec's own
+                -- verified table — repointed to the CURRENT version of each qualification, the
+                -- same fix as every other direct academic_degree_id/qualification_type_id reader.
+                FROM hr.person_qualifications_current pq
                 LEFT JOIN ref.academic_degrees ad ON ad.id = pq.academic_degree_id
                 LEFT JOIN ref.qualification_types qt ON qt.id = pq.qualification_type_id
                 WHERE pq.person_id = r.person_id

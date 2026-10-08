@@ -996,7 +996,9 @@ class EmploymentStatusReportFoundationTest extends HumanResourcesTestCase
     {
         $this->assertSame('2026_10_20_000001_seed_security_monthly_employment_status_report_permission.php', collect(glob(base_path('database/migrations/*.php')))->map('basename')->sort()->filter(fn ($name) => $name < '2026_10_21')->last(), 'the only S43 migration is the permission seed (the last one before S44\'s)');
         $this->assertSame(0, (int) DB::selectOne('select count(*) as c from pg_matviews')->c);
-        $this->assertSame(0, DB::table('information_schema.views')->whereIn('table_schema', ['hr', 'ref', 'org', 'automation', 'reporting'])->count());
+        // S48 (§S48.3) adds the one view the whole application reads qualifications through going
+        // forward — unrelated to S43, which still adds no view/schema object of its own.
+        $this->assertSame(['person_qualifications_current'], DB::table('information_schema.views')->whereIn('table_schema', ['hr', 'ref', 'org', 'automation', 'reporting'])->pluck('table_name')->all());
         $this->assertSame(0, DB::table('information_schema.columns')->where('table_schema', 'hr')->where('table_name', 'employment_relationships')->whereIn('column_name', ['end_reason', 'is_active', 'status', 'return_intention'])->count(), 'no convenience column');
         foreach (glob(base_path('../frontend/src/*/*.ts*')) ?: [] as $file) {
             $this->assertStringNotContainsString('employment-status-report', (string) file_get_contents($file), 'no frontend consumer');

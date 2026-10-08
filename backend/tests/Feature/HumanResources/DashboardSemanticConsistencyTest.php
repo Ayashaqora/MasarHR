@@ -127,8 +127,11 @@ class DashboardSemanticConsistencyTest extends HumanResourcesTestCase
             $this->assertStringNotContainsStringIgnoringCase('dashboard', $route->uri(), 'S45 adds no Dashboard route: the S44 endpoint serves the page');
         }
         $this->assertSame(0, (int) DB::table('security.permissions')->where('code', 'like', '%dashboard%')->count(), 'no Dashboard permission: hr.workforce_analytics.view is reused');
-        $this->assertSame('2026_10_21_000001_seed_security_workforce_analytics_permission.php', collect(glob(base_path('database/migrations/*.php')))->map('basename')->sort()->last(), 'no S45 migration');
-        $this->assertCount(92, glob(base_path('database/migrations/*.php')));
+        // S48 (§S48.3/§S48.14/§S48.18) is the last stage added after S44, so its own last migration
+        // file is now the overall last one — not S45's absence, which this assertion is really
+        // about (there is still no S45 migration anywhere in the list).
+        $this->assertSame('2026_10_22_000004_drop_legacy_identity_columns_from_hr_person_qualifications.php', collect(glob(base_path('database/migrations/*.php')))->map('basename')->sort()->last(), 'no S45 migration');
+        $this->assertCount(96, glob(base_path('database/migrations/*.php')));
         $this->assertSame([], glob(base_path('app/Modules/*/*/*/*Dashboard*.php')), 'no Dashboard backend class');
 
         $s44 = array_values(array_filter(iterator_to_array(Route::getRoutes()), fn ($route) => $route->uri() === 'api/v1/hr/workforce-analytics'));

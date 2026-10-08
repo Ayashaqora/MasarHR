@@ -128,7 +128,10 @@ final class ListMonthlyReportingPopulation
                     ad.name_ar AS academic_degree_name_ar, ad.name_en AS academic_degree_name_en,
                     pq.qualification_type_id, qt.code AS qualification_type_code,
                     qt.name_ar AS qualification_type_name_ar, qt.name_en AS qualification_type_name_en
-             FROM hr.person_qualifications pq
+             -- S48 (docs/person-qualification-history-foundation-specification.md §S48.13, D13):
+             -- a consumer this stage's own discovery found beyond the frozen spec's own verified
+             -- table — repointed to the CURRENT version of each qualification.
+             FROM hr.person_qualifications_current pq
              LEFT JOIN ref.academic_degrees ad ON ad.id = pq.academic_degree_id
              LEFT JOIN ref.qualification_types qt ON qt.id = pq.qualification_type_id
              WHERE pq.person_id IN ({$overlappingPersons})

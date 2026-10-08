@@ -451,9 +451,15 @@ class MonthlyNotOnDutyFoundationTest extends HumanResourcesTestCase
     {
         $person = $this->onLeaveAllMonth('unpaid_leave');
         DB::table('hr.persons')->where('id', $person->id)->update(['birth_date' => '2000-02-29']);
+        // S48 (§S48.3): identity (hr.person_qualifications, carrying created_at) and fact value
+        // (hr.person_qualification_versions) are now separate tables.
         $qualificationId = (string) Str::uuid7();
-        DB::table('hr.person_qualifications')->insert(['id' => $qualificationId, 'person_id' => $person->id, 'academic_degree_id' => $this->createSyntheticAcademicDegree()->id,
-            'qualification_type_id' => null, 'created_at' => '2031-05-05 00:00:00+00']);   // "recorded" after the month: still returned, created_at is not an effective date
+        DB::table('hr.person_qualifications')->insert(['id' => $qualificationId, 'person_id' => $person->id,
+            'is_primary' => false, 'created_at' => '2031-05-05 00:00:00+00']);   // "recorded" after the month: still returned, created_at is not an effective date
+        DB::table('hr.person_qualification_versions')->insert(['id' => (string) Str::uuid7(), 'person_qualification_id' => $qualificationId,
+            'person_id' => $person->id, 'version_number' => 1, 'academic_degree_id' => $this->createSyntheticAcademicDegree()->id,
+            'qualification_type_id' => null, 'obtained_on' => null, 'is_current' => true, 'reason' => null,
+            'created_by_principal_id' => null, 'created_at' => '2031-05-05 00:00:00+00']);
         $this->viewer();
 
         $response = $this->api();
