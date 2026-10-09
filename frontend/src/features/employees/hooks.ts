@@ -6,6 +6,8 @@ import {
   fetchEffectiveStatus,
   fetchReturnIntentionPeriods,
   fetchPersonQualifications,
+  fetchPrimaryQualificationHistory,
+  fetchQualificationVersions,
   fetchReferenceValue,
   fetchRelationshipPeriods,
   fetchEmploymentRelationships,
@@ -27,6 +29,9 @@ import {
   type EmploymentSpecialtyPeriod,
   type PartialSecondmentPeriod,
   type PersonQualification,
+  type PersonQualificationVersion,
+  type PrimaryQualificationHistoryPage,
+  type QualificationPage,
   type ReferenceSegment,
   type ReferenceValue,
   type WorkSchedulePeriod,
@@ -227,6 +232,30 @@ export function useEmploymentSpecialtyPeriods(personId: string, relationshipId: 
 
 export function usePersonQualifications(personId: string): ApiResourceState<PersonQualification[]> & { retry: () => void } {
   return useApiResource((signal) => fetchPersonQualifications(personId, signal), [personId])
+}
+
+/**
+ * S48: GET .../qualifications/{id}/versions, one page at a time (Sec.6 of the spec) — `page`
+ * resets to 1 by the caller whenever `qualificationId` changes, never carried over from a
+ * previously-viewed qualification's page position.
+ */
+export function useQualificationVersions(
+  personId: string,
+  qualificationId: string,
+  page: number,
+): ApiResourceState<QualificationPage<PersonQualificationVersion>> & { retry: () => void } {
+  return useApiResource(
+    (signal) => fetchQualificationVersions(personId, qualificationId, page, signal),
+    [personId, qualificationId, page],
+  )
+}
+
+/** S48: GET .../qualifications/primary-history, one page at a time (Sec.6 of the spec). */
+export function usePrimaryQualificationHistory(
+  personId: string,
+  page: number,
+): ApiResourceState<PrimaryQualificationHistoryPage> & { retry: () => void } {
+  return useApiResource((signal) => fetchPrimaryQualificationHistory(personId, page, signal), [personId, page])
 }
 
 /**

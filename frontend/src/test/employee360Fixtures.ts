@@ -72,17 +72,24 @@ export interface Harness {
 
 export interface HarnessOptions {
   permissions?: string[]
+  /** S49: permissions to withhold from the default read-permission set (e.g. to test a gated section with that one permission removed, while every other read permission is still granted). */
+  excludePermissions?: string[]
   relationship?: Record<string, unknown>
   statusPeriods?: unknown[]
   secondments?: unknown[]
   assignments?: unknown[]
+  /** S49: overrides the default empty page for GET .../qualifications/{id}/versions. */
+  qualificationVersions?: unknown
+  /** S49: overrides the default empty page for GET .../qualifications/primary-history. */
+  primaryQualificationHistory?: unknown
   /** Return a response to override the default for a write, or undefined for the default 201. */
   onPost?: (record: PostRecord) => Response | Promise<Response> | undefined
 }
 
 /** Installs a URL-aware fetch stub for the whole Employee 360 page and records every write. */
 export function install360(options: HarnessOptions = {}): Harness {
-  const permissions = [...CURRENT_PRINCIPAL_BODY.permissions, ...READ_PERMISSIONS, ...(options.permissions ?? [])]
+  const basePermissions = [...CURRENT_PRINCIPAL_BODY.permissions, ...READ_PERMISSIONS, ...(options.permissions ?? [])]
+  const permissions = basePermissions.filter((permission) => !(options.excludePermissions ?? []).includes(permission))
   const principal: CurrentPrincipal = { ...CURRENT_PRINCIPAL_BODY, permissions }
   const relationship = { ...RELATIONSHIP, ...options.relationship }
   const harness: Harness = {
@@ -111,6 +118,23 @@ export function install360(options: HarnessOptions = {}): Harness {
     if (url.includes('/rel-1/partial-secondment-periods')) return jsonResponse([])
     if (url.includes('/rel-1/work-schedule-periods')) return jsonResponse([])
     if (/\/rel-1\/employment-(category|contract|job-title|specialty)-periods/.test(url)) return jsonResponse([])
+    // S49: both of these contain '/hr/persons/person-1/qualifications' as a PREFIX, so they MUST
+    // be checked before the generic branch below -- a plain .includes() there would otherwise
+    // swallow them and return the wrong response shape ([] instead of a paginated envelope).
+    if (/\/qualifications\/[^/]+\/versions(\?|$)/.test(url)) {
+      return jsonResponse(
+        options.qualificationVersions ?? { data: [], meta: { current_page: 1, last_page: 1, per_page: 25, total: 0 } },
+      )
+    }
+    if (url.includes('/qualifications/primary-history')) {
+      return jsonResponse(
+        options.primaryQualificationHistory ?? {
+          events: [],
+          meta: { current_page: 1, last_page: 1, per_page: 25, total: 0 },
+          evidence_completeness: { gaps: [] },
+        },
+      )
+    }
     if (url.includes('/hr/persons/person-1/qualifications')) return jsonResponse([])
     if (url.includes('/reference/employment-status-details')) return jsonResponse(STATUS_CATALOG)
     if (url.includes('/reference/decision-types')) {

@@ -119,8 +119,34 @@ function defaultRoute(url: string): Response | undefined {
   for (const [suffix, rows] of Object.entries(RELATIONSHIP_STREAMS)) {
     if (url.includes(`/employment-relationships/rel-1${suffix}`)) return jsonResponse(rows)
   }
+  // S49: '/qualifications/{id}/versions' and '/qualifications/primary-history' both contain
+  // '/hr/persons/person-1/qualifications' as a prefix, so they are matched here, BEFORE the
+  // generic qualifications branch below -- otherwise they would wrongly fall into it and get the
+  // wrong response shape ([] instead of a paginated envelope).
+  if (/\/qualifications\/[^/]+\/versions(\?|$)/.test(url)) {
+    return jsonResponse({ data: [], meta: { current_page: 1, last_page: 1, per_page: 25, total: 0 } })
+  }
+  if (url.includes('/qualifications/primary-history')) {
+    return jsonResponse({
+      events: [],
+      meta: { current_page: 1, last_page: 1, per_page: 25, total: 0 },
+      evidence_completeness: { gaps: [] },
+    })
+  }
   if (url.includes('/hr/persons/person-1/qualifications')) {
-    return jsonResponse([{ id: 'q-1', person_id: 'person-1', academic_degree_id: 'deg-1', qualification_type_id: 'qt-1' }])
+    return jsonResponse([
+      {
+        id: 'q-1',
+        person_id: 'person-1',
+        academic_degree_id: 'deg-1',
+        qualification_type_id: 'qt-1',
+        obtained_on: '2015-06-01',
+        created_at: '2015-06-02T00:00:00Z',
+        version_number: 1,
+        provenance: 'RECORDED',
+        is_primary: true,
+      },
+    ])
   }
   for (const [path, value] of Object.entries(REFERENCE_VALUES)) {
     if (url.includes(path)) return jsonResponse({ id: path.split('/').pop(), code: 'x', ...value })
@@ -569,6 +595,40 @@ describe('Employee360Page', () => {
       const headerSection = await findHeaderSection()
       expect(await within(headerSection).findByText('Wants to return')).toBeInTheDocument()
       expect(within(headerSection).getByText('05/10/2026')).toBeInTheDocument()
+    })
+  })
+
+  describe('S49 person qualifications -- permission gating (Employee360QualificationsSection is mounted only inside its PermissionGate, in Employee360CareerHistory.tsx)', () => {
+    it('never requests any qualifications URL for a principal lacking hr.person_qualifications.view, while other sections still load normally', async () => {
+      const PRINCIPAL_WITHOUT_QUALIFICATIONS: CurrentPrincipal = {
+        ...AUTHENTICATED_HR_VIEWER,
+        permissions: AUTHENTICATED_HR_VIEWER.permissions.filter(
+          (permission) => permission !== 'hr.person_qualifications.view',
+        ),
+      }
+      const fetchMock = stub360App((url) =>
+        url.includes('/auth/me') ? jsonResponse(PRINCIPAL_WITHOUT_QUALIFICATIONS) : undefined,
+      )
+      const user = userEvent.setup()
+      renderApp(ROUTE)
+
+      // Every tabpanel force-mounts (see Employee360Page.tsx), so the career-history tab's
+      // PermissionGate-wrapped Employee360QualificationsSection is already in the tree from first
+      // render -- this assertion does not depend on ever clicking that tab.
+      const headerSection = await findHeaderSection()
+      expect(await within(headerSection).findByText('على رأس العمل')).toBeInTheDocument()
+
+      expect(await screen.findByText('لا تملك صلاحية الوصول')).toBeInTheDocument()
+
+      // A sibling section (status history), gated by a DIFFERENT permission the principal still
+      // holds, still loads -- the missing qualifications permission blocks only its own section.
+      await user.click(screen.getByRole('tab', { name: 'سجل الحالات الوظيفية' }))
+      const timeline = await screen.findByRole('list', { name: 'الخط الزمني للحالات الوظيفية' })
+      expect(within(timeline).getByText('على رأس العمل')).toBeInTheDocument()
+
+      const requestedUrls = (fetchMock.mock.calls as unknown[][]).map(([input]) => String(input))
+      expect(requestedUrls.some((url) => url.includes('/qualifications'))).toBe(false)
+      expect(requestedUrls.some((url) => url.includes('/status-periods'))).toBe(true)
     })
   })
 })

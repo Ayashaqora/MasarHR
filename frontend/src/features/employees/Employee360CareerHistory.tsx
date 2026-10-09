@@ -5,11 +5,13 @@ import type {
   EmploymentContractPeriod,
   EmploymentJobTitlePeriod,
   EmploymentSpecialtyPeriod,
-  PersonQualification,
   ReferenceValue,
 } from './api'
+import { PermissionGate } from '../auth/PermissionGate'
+import { HR_PERMISSIONS } from '../../shared/security/permissions'
 import { DateText } from '../../shared/ui/DateText'
 import { Employee360HistorySection } from './Employee360HistorySection'
+import { Employee360QualificationsSection } from './Employee360QualificationsSection'
 
 type Names = { status: 'loading' | 'ready'; values: Record<string, ReferenceValue> }
 type Retryable<T> = ApiResourceState<T[]> & { retry?: () => void }
@@ -21,29 +23,25 @@ type Retryable<T> = ApiResourceState<T[]> & { retry?: () => void }
  * supervisory concept is shown or implied.
  */
 export function Employee360CareerHistory({
+  personId,
   categories,
   contracts,
   jobTitles,
   specialties,
-  qualifications,
   categoryNames,
   contractTypeNames,
   jobTitleNames,
   specialtyNames,
-  degreeNames,
-  qualificationTypeNames,
 }: {
+  personId: string
   categories: Retryable<EmploymentCategoryPeriod>
   contracts: Retryable<EmploymentContractPeriod>
   jobTitles: Retryable<EmploymentJobTitlePeriod>
   specialties: Retryable<EmploymentSpecialtyPeriod>
-  qualifications: Retryable<PersonQualification>
   categoryNames: Names
   contractTypeNames: Names
   jobTitleNames: Names
   specialtyNames: Names
-  degreeNames: Names
-  qualificationTypeNames: Names
 }) {
   const { messages, locale } = useI18n()
   const e = messages.employee360
@@ -124,20 +122,19 @@ export function Employee360CareerHistory({
           { ...to, cell: (row) => <DateText value={row.effective_to} fallback={e.openEnded} /> },
         ]}
       />
-      <Employee360HistorySection
-        headingId="career-qualifications-heading"
-        title={e.qualifications}
-        state={
-          qualifications.status === 'success' && (degreeNames.status === 'loading' || qualificationTypeNames.status === 'loading')
-            ? { status: 'loading' }
-            : qualifications
-        }
-        emptyText={e.noQualifications}
-        columns={[
-          { header: e.academicDegree, cell: (row) => name(degreeNames, row.academic_degree_id) },
-          { header: e.qualificationType, cell: (row) => name(qualificationTypeNames, row.qualification_type_id) },
-        ]}
-      />
+      {/*
+        S49 (docs/person-qualification-history-ui-specification.md Sec.3): the fetch itself (current
+        list, plus any version/primary-history fetch it opens) lives ONLY inside
+        Employee360QualificationsSection, a child of this PermissionGate — React never invokes a
+        component's function, and so never runs its hooks, unless that component's element is part of
+        the rendered tree. Lacking hr.person_qualifications.view therefore blocks every qualification
+        request outright; it is not merely hidden after being fetched. `key={personId}` forces a full
+        remount on person switch, so no state or in-flight request from a previously-viewed person's
+        qualifications can ever be shown against the newly-selected person.
+      */}
+      <PermissionGate permission={HR_PERMISSIONS.personQualificationsView}>
+        <Employee360QualificationsSection key={personId} personId={personId} />
+      </PermissionGate>
     </div>
   )
 }

@@ -49,6 +49,10 @@ export const HR_PERMISSIONS = {
   // (docs/expiry-followups-ui-specification.md §2.2) — the two are independent and neither implies the other.
   movementExpiryFollowupsView: 'hr.movement_expiry_followups.view',
   employmentStatusExpiryFollowupsView: 'hr.employment_status_expiry_followups.view',
+  // S49 (docs/person-qualification-history-ui-specification.md Sec.5): the single read permission
+  // gating the current qualifications list, version history and primary-designation history alike
+  // (all three backend read endpoints share this one permission; see Sec.2 of the spec).
+  personQualificationsView: 'hr.person_qualifications.view',
 } as const
 
 /**

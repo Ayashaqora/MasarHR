@@ -30,7 +30,6 @@ import {
   useOrganizationalUnitNames,
   usePartialSecondmentPeriods,
   usePerson,
-  usePersonQualifications,
   usePlacementPeriods,
   useReferenceValues,
   useReturnIntentionPeriods,
@@ -118,7 +117,6 @@ export function Employee360Page() {
   const contractPeriods = useEmploymentContractPeriods(personId, relationshipId)
   const jobTitlePeriods = useEmploymentJobTitlePeriods(personId, relationshipId)
   const specialtyPeriods = useEmploymentSpecialtyPeriods(personId, relationshipId)
-  const qualifications = usePersonQualifications(personId)
 
   const idsOf = <T,>(state: { status: string; data?: T[] }, pick: (row: T) => string): string[] =>
     state.status === 'success' && state.data ? state.data.map(pick) : []
@@ -126,14 +124,10 @@ export function Employee360Page() {
   const contractTypeIds = useMemo(() => idsOf(contractPeriods, (r) => r.contract_type_id), [contractPeriods])
   const jobTitleIds = useMemo(() => idsOf(jobTitlePeriods, (r) => r.job_title_id), [jobTitlePeriods])
   const specialtyIds = useMemo(() => idsOf(specialtyPeriods, (r) => r.specialty_id), [specialtyPeriods])
-  const degreeIds = useMemo(() => idsOf(qualifications, (r) => r.academic_degree_id), [qualifications])
-  const qualificationTypeIds = useMemo(() => idsOf(qualifications, (r) => r.qualification_type_id), [qualifications])
   const categoryNames = useReferenceValues('employment-categories', categoryIds)
   const contractTypeNames = useReferenceValues('contract-types', contractTypeIds)
   const jobTitleNames = useReferenceValues('job-titles', jobTitleIds)
   const specialtyNames = useReferenceValues('specialties', specialtyIds)
-  const degreeNames = useReferenceValues('academic-degrees', degreeIds)
-  const qualificationTypeNames = useReferenceValues('qualification-types', qualificationTypeIds)
 
   const unitIds = useMemo(() => {
     const ids = new Set<string>()
@@ -366,17 +360,15 @@ export function Employee360Page() {
           </TabsContent>
           <TabsContent value="career-history" forceMount hidden={tab !== 'career-history'} className="mt-4">
             <Employee360CareerHistory
+              personId={personId}
               categories={categoryPeriods}
               contracts={contractPeriods}
               jobTitles={jobTitlePeriods}
               specialties={specialtyPeriods}
-              qualifications={qualifications}
               categoryNames={categoryNames}
               contractTypeNames={contractTypeNames}
               jobTitleNames={jobTitleNames}
               specialtyNames={specialtyNames}
-              degreeNames={degreeNames}
-              qualificationTypeNames={qualificationTypeNames}
             />
           </TabsContent>
         </Tabs>
